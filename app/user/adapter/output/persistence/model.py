@@ -1,6 +1,7 @@
+from typing import Optional
 from sqlalchemy import String, Boolean, Enum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
-from core.db.session import Base
+from core.db.mixins import Base
 from core.db.mixins import TimestampMixin, OptimisticLockMixin
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from app.user.domain.entity.user import UserStatus
