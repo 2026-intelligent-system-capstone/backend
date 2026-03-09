@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 
@@ -14,8 +14,8 @@ class UserPersistenceAdapter(UserRepository):
         session.add(user)
         return user
 
-    async def get_by_id(self, id: Any) -> User | None:
-        query = select(User).where(user_table.c.id == id, user_table.c.is_deleted.is_(False))
+    async def get_by_id(self, user_id: UUID) -> User | None:
+        query = select(User).where(user_table.c.id == user_id, user_table.c.is_deleted.is_(False))
         result = await session.execute(query)
         return result.scalar_one_or_none()
 

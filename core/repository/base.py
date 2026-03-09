@@ -11,7 +11,7 @@ class BaseRepository[T: Entity](ABC):
         pass
 
     @abstractmethod
-    async def get_by_id(self, id: UUID) -> T | None:
+    async def get_by_id(self, entity_id: UUID) -> T | None:
         pass
 
     @abstractmethod

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import pytest
 
 from app.user.application.dto.request import CreateUserRequest
@@ -15,7 +17,8 @@ class InMemoryUserRepository(UserRepository):
         self.users[entity.email] = entity
         return entity
 
-    async def get_by_id(self, _id):
+    async def get_by_id(self, user_id: UUID):
+        _ = user_id
         return None
 
     async def get_by_email(self, email: str):
