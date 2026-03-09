@@ -17,7 +17,3 @@ class BaseRepository[T: Entity](ABC):
     @abstractmethod
     async def list(self) -> Sequence[T]:
         pass
-
-    @abstractmethod
-    async def delete(self, entity: T) -> None:
-        pass

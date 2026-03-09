@@ -28,6 +28,3 @@ class UserPersistenceAdapter(UserRepository):
         query = select(User).where(user_table.c.is_deleted.is_(False))
         result = await session.execute(query)
         return result.scalars().all()
-
-    async def delete(self, user: User) -> None:
-        session.add(user)

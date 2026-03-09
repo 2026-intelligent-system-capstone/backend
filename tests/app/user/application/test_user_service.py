@@ -27,9 +27,6 @@ class InMemoryUserRepository(UserRepository):
     async def list(self):
         return list(self.users.values())
 
-    async def delete(self, entity: User) -> None:
-        self.users.pop(entity.email, None)
-
 
 @pytest.mark.asyncio
 async def test_create_user_success():
