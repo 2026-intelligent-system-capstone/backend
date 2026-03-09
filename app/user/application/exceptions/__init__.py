@@ -1,3 +1,11 @@
-from .user import UserEmailAlreadyExistsException
+from .user import (
+    UserEmailAlreadyExistsException,
+    UserNameAlreadyExistsException,
+    UserNotFoundException,
+)
 
-__all__ = ["UserEmailAlreadyExistsException"]
+__all__ = [
+    "UserEmailAlreadyExistsException",
+    "UserNameAlreadyExistsException",
+    "UserNotFoundException",
+]
