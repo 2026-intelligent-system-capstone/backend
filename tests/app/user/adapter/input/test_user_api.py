@@ -12,6 +12,37 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def test_create_user_returns_serialized_id(client, monkeypatch):
+    async def create_stub_user(*_args, **_kwargs):
+        from app.user.domain.entity.user import Profile, User
+
+        return User(
+            username="testuser",
+            password="hashed_password",
+            email="test@example.com",
+            profile=Profile(nickname="tester", real_name="김테스트", phone_number="010-1234-5678"),
+        )
+
+    monkeypatch.setattr(UserService, "create_user", create_stub_user)
+
+    response = client.post(
+        "/api/users",
+        json={
+            "username": "testuser",
+            "password": "secure_password123",
+            "email": "test@example.com",
+            "nickname": "tester",
+            "real_name": "김테스트",
+            "phone_number": "010-1234-5678",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["data"]["id"], str)
+    assert body["data"]["email"] == "test@example.com"
+
+
 def test_create_user_duplicate_email_returns_400(client, monkeypatch):
     async def raise_duplicate_email(*_args, **_kwargs):
         raise UserEmailAlreadyExistsException()

@@ -18,7 +18,7 @@ async def create_user(
     user = await service.create_user(request)
     return CreateUserResponse(
         data=UserResponse(
-            id=user.id,
+            id=str(user.id),
             username=user.username,
             email=user.email,
             nickname=user.profile.nickname,
