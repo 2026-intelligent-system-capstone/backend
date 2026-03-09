@@ -15,8 +15,6 @@ from core.fastapi.router import register_routers
 def create_app() -> ExtendedFastAPI:
     env = get_env()
     container = AppContainer()
-    container.config.from_dict(config.model_dump())
-    container.wire(packages=["app.user.adapter.input.api.v1"])
 
     init_orm_mappers()
 
