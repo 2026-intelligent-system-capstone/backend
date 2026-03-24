@@ -17,14 +17,7 @@ from app.organization.domain.entity import (
 from app.organization.domain.service import OrganizationAuthService
 from app.user.domain.entity import UserRole
 
-LOGIN_SUCCESS_STATUS_CODE = 302
-
-CLIENT_REDIRECT_MARKERS = (
-    "parent.location='/'",
-    'parent.location="/"',
-    "top.location='/'",
-    'top.location="/"',
-)
+LOGIN_REDIRECT_STATUS_CODE = 302
 
 NAME_PATTERNS = (
     re.compile(r"([가-힣]{2,10})\s*님"),
@@ -36,7 +29,9 @@ NAME_PATTERNS = (
 @dataclass(frozen=True)
 class HansungAuthConfig:
     login_url: str = "https://info.hansung.ac.kr/servlet/s_gong.gong_login_ssl"
-    info_url: str = (
+    login_page_url: str = "https://info.hansung.ac.kr/"
+    portal_url: str = "https://info.hansung.ac.kr/h_dae/dae_main.html"
+    referer_url: str = (
         "https://info.hansung.ac.kr/jsp/sugang/h_sugang_sincheong_main.jsp"
     )
     timeout_seconds: float = 10.0
@@ -55,7 +50,7 @@ class HansungAuthConfig:
             "Connection": "keep-alive",
             "DNT": "1",
             "Host": "info.hansung.ac.kr",
-            "Referer": self.info_url,
+            "Referer": self.referer_url,
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
@@ -90,7 +85,7 @@ class HansungAuthService(OrganizationAuthService):
 
         payload = {
             "id": login_id,
-            "password": password,
+            "passwd": password,
             "changePass": "",
             "return_url": "null",
         }
@@ -101,11 +96,16 @@ class HansungAuthService(OrganizationAuthService):
                 follow_redirects=False,
                 timeout=self.config.timeout_seconds,
             ) as client:
+                await client.get(self.config.login_page_url)
                 login_response = await client.post(
                     self.config.login_url,
                     data=payload,
                 )
-                info_response = await client.get(self.config.info_url)
+                self._ensure_login_succeeded(login_response=login_response)
+                portal_response = await client.get(
+                    login_response.headers["location"],
+                    follow_redirects=True,
+                )
         except httpx.TimeoutException as exc:
             raise AuthIdentityProviderUnavailableException(
                 detail={
@@ -121,22 +121,13 @@ class HansungAuthService(OrganizationAuthService):
                 }
             ) from exc
 
-        self._ensure_login_succeeded(login_response=login_response)
-        self._ensure_session_is_authenticated(info_response=info_response)
+        self._ensure_portal_access(portal_response=portal_response)
 
-        page_text = info_response.text
+        page_text = portal_response.text
         name = self._extract_name(page_text)
         role = self._infer_role(
             page_text, login_id=login_id, has_name=name is not None
         )
-
-        if name is None and role is None:
-            raise AuthInvalidCredentialsException(
-                detail={
-                    "organization_code": organization.code,
-                    "reason": "authenticated_identity_not_detected",
-                }
-            )
 
         return OrganizationIdentity(
             login_id=login_id,
@@ -149,31 +140,36 @@ class HansungAuthService(OrganizationAuthService):
         if login_response.status_code >= 500:
             raise AuthIdentityProviderUnavailableException()
 
-        if login_response.status_code != LOGIN_SUCCESS_STATUS_CODE:
+        if login_response.status_code != LOGIN_REDIRECT_STATUS_CODE:
             raise AuthInvalidCredentialsException()
 
         location = login_response.headers.get("location")
         if location is None:
             raise AuthInvalidCredentialsException()
 
-        if urlparse(location).path != urlparse(HansungAuthConfig.info_url).path:
+        if (
+            urlparse(location).path
+            != urlparse(HansungAuthConfig.portal_url).path
+        ):
             raise AuthInvalidCredentialsException()
 
     @staticmethod
-    def _ensure_session_is_authenticated(
+    def _ensure_portal_access(
         *,
-        info_response: httpx.Response,
+        portal_response: httpx.Response,
     ) -> None:
-        if info_response.status_code >= 500:
+        if portal_response.status_code >= 500:
             raise AuthIdentityProviderUnavailableException()
 
-        if info_response.status_code >= 400:
+        if portal_response.status_code >= 400:
             raise AuthInvalidCredentialsException()
 
-        lowered_text = info_response.text.lower()
-        if any(marker in lowered_text for marker in CLIENT_REDIRECT_MARKERS):
+        if (
+            urlparse(str(portal_response.url)).path
+            != urlparse(HansungAuthConfig.portal_url).path
+        ):
             raise AuthInvalidCredentialsException(
-                detail={"reason": "unauthenticated_session"}
+                detail={"reason": "unexpected_portal_redirect"}
             )
 
     @staticmethod
@@ -196,7 +192,7 @@ class HansungAuthService(OrganizationAuthService):
 
     @staticmethod
     def _fallback_role(login_id: str) -> UserRole:
-        if login_id.isdigit() and len(login_id) >= 8:
+        if login_id.isdigit() and len(login_id) >= 6:
             return UserRole.STUDENT
 
         return UserRole.PROFESSOR
