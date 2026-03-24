@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:18
-    container_name: fastapi-hexagonal-boilerplate-postgres
+    container_name: dialearn-backend-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
@@ -20,7 +20,7 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
-    container_name: fastapi-hexagonal-boilerplate-valkey
+    container_name: dialearn-backend-valkey
     ports:
       - "6379:6379"
     volumes:

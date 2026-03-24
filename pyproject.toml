@@ -1,7 +1,7 @@
 [project]
-name = "fastapi-hexagonal-boilerplate"
+name = "dialearn-backend"
 version = "0.1.0"
-description = "FastAPI boilerplate with hexagonal architecture, JWT cookie auth, PostgreSQL, and Valkey"
+description = "Backend for Dialearn, a conversational AI learning competency assessment platform"
 requires-python = ">=3.13"
 authors = [
     {name = "Boilerplate Maintainers", email = "maintainers@example.com"}

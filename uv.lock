@@ -225,6 +225,71 @@ wheels = [
 ]
 
 [[package]]
+name = "dialearn-backend"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "alembic" },
+    { name = "argon2-cffi" },
+    { name = "asyncpg" },
+    { name = "dependency-injector" },
+    { name = "fastapi", extra = ["standard"] },
+    { name = "greenlet" },
+    { name = "httpx" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-sdk" },
+    { name = "orjson" },
+    { name = "pydantic", extra = ["email"] },
+    { name = "pydantic-settings" },
+    { name = "pyjwt" },
+    { name = "sqlalchemy" },
+    { name = "stamina" },
+    { name = "uuid-utils" },
+    { name = "uvicorn" },
+    { name = "valkey" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.18.4" },
+    { name = "argon2-cffi", specifier = ">=25.1.0" },
+    { name = "asyncpg", specifier = ">=0.31.0" },
+    { name = "dependency-injector", specifier = ">=4.0.0" },
+    { name = "fastapi", extras = ["standard"], specifier = ">=0.135.1" },
+    { name = "greenlet", specifier = ">=3.3.2" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "opentelemetry-api", specifier = ">=1.40.0" },
+    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
+    { name = "opentelemetry-sdk", specifier = ">=1.40.0" },
+    { name = "orjson", specifier = ">=3.11.7" },
+    { name = "pydantic", extras = ["email"], specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "pyjwt", specifier = ">=2.12.0" },
+    { name = "sqlalchemy", specifier = ">=2.0.48" },
+    { name = "stamina", specifier = ">=25.2.0" },
+    { name = "uuid-utils", specifier = ">=0.14.1" },
+    { name = "uvicorn", specifier = ">=0.42.0" },
+    { name = "valkey", specifier = ">=6.1.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=0.25.3" },
+    { name = "pytest-mock", specifier = ">=3.14.0" },
+    { name = "ruff", specifier = ">=0.15.7" },
+]
+
+[[package]]
 name = "dnspython"
 version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -311,71 +376,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/de/0b/f07f4976784978ef159fd2e8f5c16f1f9d610578fb1fd976ff1315c11ea6/fastapi_cloud_cli-0.13.0.tar.gz", hash = "sha256:4d8f42337e8021c648f6cb0672de7d5b31b0fc7387a83d7b12f974600ac3f2fd", size = 38436, upload-time = "2026-02-17T05:18:19.033Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b4/88/71a1e989d17b9edb483f32e28b7891ffdd3005271518c98ba6415987c430/fastapi_cloud_cli-0.13.0-py3-none-any.whl", hash = "sha256:874a9ed8dba34ec828f198c72de9f9a38de77ac1b15083d6bc3a4d772b0bc477", size = 27631, upload-time = "2026-02-17T05:18:18.094Z" },
-]
-
-[[package]]
-name = "fastapi-hexagonal-boilerplate"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "alembic" },
-    { name = "argon2-cffi" },
-    { name = "asyncpg" },
-    { name = "dependency-injector" },
-    { name = "fastapi", extra = ["standard"] },
-    { name = "greenlet" },
-    { name = "httpx" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation-fastapi" },
-    { name = "opentelemetry-sdk" },
-    { name = "orjson" },
-    { name = "pydantic", extra = ["email"] },
-    { name = "pydantic-settings" },
-    { name = "pyjwt" },
-    { name = "sqlalchemy" },
-    { name = "stamina" },
-    { name = "uuid-utils" },
-    { name = "uvicorn" },
-    { name = "valkey" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-mock" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.18.4" },
-    { name = "argon2-cffi", specifier = ">=25.1.0" },
-    { name = "asyncpg", specifier = ">=0.31.0" },
-    { name = "dependency-injector", specifier = ">=4.0.0" },
-    { name = "fastapi", extras = ["standard"], specifier = ">=0.135.1" },
-    { name = "greenlet", specifier = ">=3.3.2" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "opentelemetry-api", specifier = ">=1.40.0" },
-    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.60b1" },
-    { name = "opentelemetry-sdk", specifier = ">=1.40.0" },
-    { name = "orjson", specifier = ">=3.11.7" },
-    { name = "pydantic", extras = ["email"], specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.13.1" },
-    { name = "pyjwt", specifier = ">=2.12.0" },
-    { name = "sqlalchemy", specifier = ">=2.0.48" },
-    { name = "stamina", specifier = ">=25.2.0" },
-    { name = "uuid-utils", specifier = ">=0.14.1" },
-    { name = "uvicorn", specifier = ">=0.42.0" },
-    { name = "valkey", specifier = ">=6.1.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-asyncio", specifier = ">=0.25.3" },
-    { name = "pytest-mock", specifier = ">=3.14.0" },
-    { name = "ruff", specifier = ">=0.15.7" },
 ]
 
 [[package]]

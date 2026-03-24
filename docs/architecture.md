@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project is a FastAPI boilerplate built around hexagonal architecture.
+Dialearn backend is built around hexagonal architecture.
 
 The primary goal is to keep business logic isolated from framework and persistence details.
 
@@ -66,7 +66,7 @@ application -> adapter wrapper classes
 - `auth`
 - `file`
 
-These are part of the boilerplate baseline and should be treated as reusable starting modules.
+These are currently the baseline modules in the backend and will be expanded as Dialearn domain modules are added.
 
 ## Persistence Rule
 

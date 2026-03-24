@@ -2,7 +2,7 @@
 
 ## Strategy
 
-This boilerplate uses JWT cookie authentication.
+Dialearn currently uses JWT cookie authentication for its backend session flow.
 
 - Access token: short-lived
 - Refresh token: long-lived

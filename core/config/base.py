@@ -11,9 +11,9 @@ class CommonSettings(BaseSettings):
     DEBUG: bool = False
     PROFILING_ENABLED: bool = False
 
-    APP_NAME: str = "FastAPI Hexagonal Boilerplate"
+    APP_NAME: str = "Dialearn"
     APP_DESCRIPTION: str = (
-        "Production-ready FastAPI boilerplate with hexagonal architecture"
+        "Conversational AI learning competency assessment platform"
     )
     APP_VERSION: str = "0.1.0"
     API_PREFIX: str = "/api"

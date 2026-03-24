@@ -1,6 +1,15 @@
-# FastAPI Hexagonal Boilerplate
+# Dialearn Backend
 
-Production-ready FastAPI boilerplate with hexagonal architecture, JWT cookie authentication, PostgreSQL, Valkey, Alembic, SQLAlchemy async ORM, and dependency-injector.
+Backend for Dialearn, a conversational AI learning competency assessment platform built with FastAPI, hexagonal architecture, PostgreSQL, Valkey, Alembic, SQLAlchemy async ORM, and dependency-injector.
+
+## Product Focus
+
+Dialearn helps evaluate learning competency through interactive AI-driven assessment flows.
+
+- students answer open-ended questions in a conversational interface
+- AI generates contextual follow-up questions to probe depth of understanding
+- instructors manage assessments, materials, and evaluation criteria
+- reports highlight strengths, weaknesses, and learning trends
 
 ## Built-In Modules
 
@@ -8,7 +17,7 @@ Production-ready FastAPI boilerplate with hexagonal architecture, JWT cookie aut
 - `auth`: JWT cookie login, refresh rotation, logout, and Valkey-backed token storage
 - `file`: file metadata management with status transitions
 
-These are default boilerplate modules intended to stay in the template because they cover common service needs.
+These modules are currently part of the backend baseline and can support or be extended for Dialearn-specific domains.
 
 ## Stack
 
@@ -24,7 +33,7 @@ These are default boilerplate modules intended to stay in the template because t
 
 ## Architecture
 
-This boilerplate follows a hexagonal structure:
+The backend follows a hexagonal structure:
 
 ```text
 app/<domain>/
@@ -55,6 +64,8 @@ Key rules:
 - `domain/command` owns use-case input models
 - `domain/usecase` owns use-case interfaces
 - `adapter/output` implements persistence ports
+
+Planned Dialearn domains include assessment, classroom, learning material, conversational evaluation, and reporting.
 
 More detail:
 
