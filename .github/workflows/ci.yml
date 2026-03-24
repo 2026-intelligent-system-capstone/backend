@@ -4,12 +4,20 @@ on:
   push:
     branches: [ main, dev ]
   pull_request:
-    branches: [ dev ]
+    branches: [ main, dev ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   lint:
     name: Lint with Ruff
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       
@@ -34,6 +42,11 @@ jobs:
     name: Run Pytest
     needs: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@localhost:5432/test_db
+      VALKEY_URL: redis://localhost:6379/0
+      ENVIRONMENT: test
     services:
       postgres:
         image: postgres:18
@@ -72,9 +85,11 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
+      - name: Run startup smoke test
+        run: uv run python -c "from main import create_app; create_app()"
+
       - name: Run Tests
-        env:
-          DATABASE_URL: postgresql+asyncpg://postgres:password@localhost:5432/test_db
-          VALKEY_URL: redis://localhost:6379/0
-          ENVIRONMENT: test
         run: uv run pytest
