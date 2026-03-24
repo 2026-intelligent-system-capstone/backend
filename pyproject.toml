@@ -1,26 +1,71 @@
 [project]
-name = "development-outsourcing-platform"
+name = "fastapi-hexagonal-boilerplate"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastAPI boilerplate with hexagonal architecture, JWT cookie auth, PostgreSQL, and Valkey"
 requires-python = ">=3.13"
 authors = [
-    {name = "PRESSO", email = "caff1nepill@rmtechs.co.kr"}
+    {name = "Boilerplate Maintainers", email = "maintainers@example.com"}
 ]
+
 dependencies = [
-    "ruff>=0.15.2",
+    "alembic>=1.18.4",
+    "argon2-cffi>=25.1.0",
+    "asyncpg>=0.31.0",
+    "dependency-injector>=4.0.0",
+    "fastapi[standard]>=0.135.1",
+    "greenlet>=3.3.2",
+    "httpx>=0.28.1",
+    "opentelemetry-api>=1.40.0",
+    "opentelemetry-instrumentation-fastapi>=0.60b1",
+    "opentelemetry-sdk>=1.40.0",
+    "orjson>=3.11.7",
+    "pydantic-settings>=2.13.1",
+    "pydantic[email]>=2.0.0",
+    "pyjwt>=2.12.0",
+    "sqlalchemy>=2.0.48",
+    "stamina>=25.2.0",
+    "uuid-utils>=0.14.1",
+    "uvicorn>=0.42.0",
+    "valkey>=6.1.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-mock>=3.14.0",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.25.3",
+    "ruff>=0.15.7",
 ]
 
 [tool.ruff]
-target-version = "py313"
-line-length = 120
+target-version = "py314"
+line-length = 80
 indent-width = 4
 
 [tool.ruff.lint]
-select = ["B", "E", "F", "I", "UP", "W"]
-ignore = ["B008"]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "ARG",  # flake8-unused-arguments
+    "PT",   # flake8-pytest-style
+]
+ignore = [
+    "B008", # do not perform function calls in argument defaults
+    "W191", # indentation contains tabs
+]
 fixable = ["ALL"]
 unfixable = []
 preview = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
 
 [tool.ruff.format]
 indent-style = "space"

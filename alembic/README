@@ -1,0 +1,3 @@
+Alembic migrations live in alembic/versions.
+Use `uv run alembic revision --autogenerate -m \"...\"` to create a revision.
+Use `uv run alembic upgrade head` to apply migrations.
