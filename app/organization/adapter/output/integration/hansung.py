@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from html import unescape
 
 import httpx
@@ -8,40 +9,13 @@ from app.auth.application.exception import (
     AuthIdentityProviderUnavailableException,
     AuthInvalidCredentialsException,
 )
-from app.auth.domain.entity import AuthenticatedIdentity
-from app.auth.domain.repository import IdentityVerifier
 from app.organization.domain.entity import (
     Organization,
     OrganizationAuthProvider,
+    OrganizationIdentity,
 )
+from app.organization.domain.service import OrganizationAuthService
 from app.user.domain.entity import UserRole
-from core.config import config
-
-LOGIN_HEADERS = {
-    "Accept": "text/html, */*; q=0.01",
-    "Accept-Encoding": "gzip, deflate, br, zstd",
-    "Accept-Language": "ko,en-US;q=0.9,en;q=0.8,ja;q=0.7,zh-CN;q=0.6,zh;q=0.5",
-    "Connection": "keep-alive",
-    "DNT": "1",
-    "Host": "info.hansung.ac.kr",
-    "Referer": (
-        "https://info.hansung.ac.kr/jsp/sugang/h_sugang_sincheong_main.jsp"
-    ),
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/144.0.0.0 Safari/537.36"
-    ),
-    "X-Requested-With": "XMLHttpRequest",
-    "sec-ch-ua": (
-        '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"'
-    ),
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"macOS"',
-}
 
 FAILURE_MARKERS = (
     "아이디 또는 비밀번호",
@@ -66,14 +40,58 @@ NAME_PATTERNS = (
 )
 
 
-class HansungIdentityVerifier(IdentityVerifier):
-    async def verify(
+@dataclass(frozen=True)
+class HansungAuthConfig:
+    login_url: str = "https://info.hansung.ac.kr/servlet/s_gong.gong_login_ssl"
+    info_url: str = (
+        "https://info.hansung.ac.kr/jsp/sugang/h_sugang_sincheong_main.jsp"
+    )
+    timeout_seconds: float = 10.0
+    headers: dict[str, str] | None = None
+
+    def resolved_headers(self) -> dict[str, str]:
+        if self.headers is not None:
+            return self.headers
+
+        return {
+            "Accept": "text/html, */*; q=0.01",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": (
+                "ko,en-US;q=0.9,en;q=0.8,ja;q=0.7,zh-CN;q=0.6,zh;q=0.5"
+            ),
+            "Connection": "keep-alive",
+            "DNT": "1",
+            "Host": "info.hansung.ac.kr",
+            "Referer": self.info_url,
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/144.0.0.0 Safari/537.36"
+            ),
+            "X-Requested-With": "XMLHttpRequest",
+            "sec-ch-ua": (
+                '"Not(A:Brand";v="8", "Chromium";v="144", '
+                '"Google Chrome";v="144"'
+            ),
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+        }
+
+
+class HansungAuthService(OrganizationAuthService):
+    def __init__(self, *, config: HansungAuthConfig | None = None):
+        self.config = config or HansungAuthConfig()
+
+    async def authenticate(
         self,
         *,
         organization: Organization,
         login_id: str,
         password: str,
-    ) -> AuthenticatedIdentity:
+    ) -> OrganizationIdentity:
         if organization.auth_provider != OrganizationAuthProvider.HANSUNG_SIS:
             raise AuthIdentityProviderNotConfiguredException()
 
@@ -86,15 +104,15 @@ class HansungIdentityVerifier(IdentityVerifier):
 
         try:
             async with httpx.AsyncClient(
-                headers=LOGIN_HEADERS,
+                headers=self.config.resolved_headers(),
                 follow_redirects=True,
-                timeout=config.HANSUNG_REQUEST_TIMEOUT_SECONDS,
+                timeout=self.config.timeout_seconds,
             ) as client:
                 login_response = await client.post(
-                    config.HANSUNG_LOGIN_URL,
+                    self.config.login_url,
                     data=payload,
                 )
-                info_response = await client.get(config.HANSUNG_INFO_URL)
+                info_response = await client.get(self.config.info_url)
         except httpx.TimeoutException as exc:
             raise AuthIdentityProviderUnavailableException(
                 detail={
@@ -117,7 +135,7 @@ class HansungIdentityVerifier(IdentityVerifier):
         )
 
         page_text = self._merge_text(login_response.text, info_response.text)
-        return AuthenticatedIdentity(
+        return OrganizationIdentity(
             login_id=login_id,
             role=self._infer_role(page_text, login_id),
             name=self._extract_name(page_text, login_id),
@@ -142,7 +160,7 @@ class HansungIdentityVerifier(IdentityVerifier):
         ):
             raise AuthInvalidCredentialsException()
 
-        merged_text = HansungIdentityVerifier._merge_text(
+        merged_text = HansungAuthService._merge_text(
             login_response.text,
             info_response.text,
         )
@@ -151,7 +169,7 @@ class HansungIdentityVerifier(IdentityVerifier):
         if any(marker in lowered_text for marker in FAILURE_MARKERS):
             raise AuthInvalidCredentialsException()
 
-        if HansungIdentityVerifier._looks_like_login_page(lowered_text):
+        if HansungAuthService._looks_like_login_page(lowered_text):
             raise AuthInvalidCredentialsException(
                 detail={"login_id": login_id, "reason": "login_page_returned"}
             )

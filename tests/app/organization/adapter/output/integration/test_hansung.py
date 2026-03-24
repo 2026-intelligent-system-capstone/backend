@@ -3,17 +3,16 @@ from dataclasses import dataclass
 import httpx
 import pytest
 
-from app.auth.adapter.output.integration import HansungIdentityVerifier
 from app.auth.application.exception import (
     AuthIdentityProviderNotConfiguredException,
     AuthIdentityProviderUnavailableException,
     AuthInvalidCredentialsException,
 )
+from app.organization.adapter.output.integration import HansungAuthService
 from app.organization.domain.entity import (
     Organization,
     OrganizationAuthProvider,
 )
-from core.config import config
 
 
 @dataclass
@@ -77,19 +76,19 @@ def make_organization(
 
 
 @pytest.mark.asyncio
-async def test_verify_returns_student_identity(monkeypatch):
+async def test_authenticate_returns_student_identity(monkeypatch):
     fake_client = FakeAsyncClient(
         post_response=FakeResponse(text="로그인 성공"),
         get_response=FakeResponse(text="홍길동님 학생 포털"),
     )
 
     monkeypatch.setattr(
-        "app.auth.adapter.output.integration.hansung.httpx.AsyncClient",
+        "app.organization.adapter.output.integration.hansung.httpx.AsyncClient",
         fake_async_client_factory(fake_client),
     )
 
-    verifier = HansungIdentityVerifier()
-    identity = await verifier.verify(
+    service = HansungAuthService()
+    identity = await service.authenticate(
         organization=make_organization(),
         login_id="20260001",
         password="secret",
@@ -100,7 +99,7 @@ async def test_verify_returns_student_identity(monkeypatch):
     assert identity.role.value == "student"
     assert fake_client.post_calls == [
         (
-            config.HANSUNG_LOGIN_URL,
+            service.config.login_url,
             {
                 "id": "20260001",
                 "password": "secret",
@@ -109,23 +108,23 @@ async def test_verify_returns_student_identity(monkeypatch):
             },
         )
     ]
-    assert fake_client.get_calls == [config.HANSUNG_INFO_URL]
+    assert fake_client.get_calls == [service.config.info_url]
 
 
 @pytest.mark.asyncio
-async def test_verify_returns_professor_identity(monkeypatch):
+async def test_authenticate_returns_professor_identity(monkeypatch):
     fake_client = FakeAsyncClient(
         post_response=FakeResponse(text="로그인 성공"),
         get_response=FakeResponse(text="김교수님 교수 업무 시스템"),
     )
 
     monkeypatch.setattr(
-        "app.auth.adapter.output.integration.hansung.httpx.AsyncClient",
+        "app.organization.adapter.output.integration.hansung.httpx.AsyncClient",
         fake_async_client_factory(fake_client),
     )
 
-    verifier = HansungIdentityVerifier()
-    identity = await verifier.verify(
+    service = HansungAuthService()
+    identity = await service.authenticate(
         organization=make_organization(),
         login_id="prof001",
         password="secret",
@@ -136,7 +135,9 @@ async def test_verify_returns_professor_identity(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_verify_raises_invalid_credentials_for_login_page(monkeypatch):
+async def test_authenticate_raises_invalid_credentials_for_login_page(
+    monkeypatch,
+):
     fake_client = FakeAsyncClient(
         post_response=FakeResponse(text="로그인 폼입니다"),
         get_response=FakeResponse(
@@ -148,14 +149,14 @@ async def test_verify_raises_invalid_credentials_for_login_page(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "app.auth.adapter.output.integration.hansung.httpx.AsyncClient",
+        "app.organization.adapter.output.integration.hansung.httpx.AsyncClient",
         fake_async_client_factory(fake_client),
     )
 
-    verifier = HansungIdentityVerifier()
+    service = HansungAuthService()
 
     with pytest.raises(AuthInvalidCredentialsException):
-        await verifier.verify(
+        await service.authenticate(
             organization=make_organization(),
             login_id="20260001",
             password="wrong-secret",
@@ -163,16 +164,18 @@ async def test_verify_raises_invalid_credentials_for_login_page(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_verify_raises_provider_unavailable_on_timeout(monkeypatch):
+async def test_authenticate_raises_provider_unavailable_on_timeout(
+    monkeypatch,
+):
     monkeypatch.setattr(
-        "app.auth.adapter.output.integration.hansung.httpx.AsyncClient",
+        "app.organization.adapter.output.integration.hansung.httpx.AsyncClient",
         TimeoutAsyncClient,
     )
 
-    verifier = HansungIdentityVerifier()
+    service = HansungAuthService()
 
     with pytest.raises(AuthIdentityProviderUnavailableException):
-        await verifier.verify(
+        await service.authenticate(
             organization=make_organization(),
             login_id="20260001",
             password="secret",
@@ -180,13 +183,13 @@ async def test_verify_raises_provider_unavailable_on_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_verify_raises_when_provider_is_not_hansung():
+async def test_authenticate_raises_when_provider_is_not_hansung():
     organization = make_organization()
     organization.auth_provider = "other"
-    verifier = HansungIdentityVerifier()
+    service = HansungAuthService()
 
     with pytest.raises(AuthIdentityProviderNotConfiguredException):
-        await verifier.verify(
+        await service.authenticate(
             organization=organization,
             login_id="20260001",
             password="secret",

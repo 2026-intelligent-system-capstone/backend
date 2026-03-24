@@ -4,7 +4,7 @@ from app.user.domain.entity import UserRole
 
 
 @dataclass
-class AuthenticatedIdentity:
+class OrganizationIdentity:
     login_id: str
     role: UserRole
     name: str

@@ -14,9 +14,10 @@ from app.auth.domain.command import (
     LogoutCommand,
     RefreshTokenCommand,
 )
-from app.auth.domain.repository import AuthTokenRepository, IdentityVerifier
+from app.auth.domain.repository import AuthTokenRepository
 from app.auth.domain.usecase.auth import AuthUseCase
 from app.organization.domain.repository import OrganizationRepository
+from app.organization.domain.service import OrganizationAuthService
 from app.user.domain.entity import Profile, User, UserRole, UserStatus
 from app.user.domain.repository import UserRepository
 from core.config import config
@@ -31,12 +32,12 @@ class AuthService(AuthUseCase):
         organization_repository: OrganizationRepository,
         user_repository: UserRepository,
         auth_token_repository: AuthTokenRepository,
-        identity_verifier: IdentityVerifier,
+        organization_auth_service: OrganizationAuthService,
     ):
         self.organization_repository = organization_repository
         self.user_repository = user_repository
         self.auth_token_repository = auth_token_repository
-        self.identity_verifier = identity_verifier
+        self.organization_auth_service = organization_auth_service
 
     async def login(self, command: LoginCommand) -> AuthTokensDTO:
         organization = await self.organization_repository.get_by_code(
@@ -46,7 +47,7 @@ class AuthService(AuthUseCase):
             raise AuthInvalidCredentialsException()
 
         try:
-            identity = await self.identity_verifier.verify(
+            identity = await self.organization_auth_service.authenticate(
                 organization=organization,
                 login_id=command.login_id,
                 password=command.password,

@@ -1,3 +1,1 @@
-from .identity import AuthenticatedIdentity
-
-__all__ = ["AuthenticatedIdentity"]
+__all__: list[str] = []

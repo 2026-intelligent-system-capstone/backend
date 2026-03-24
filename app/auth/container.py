@@ -1,14 +1,11 @@
 from dependency_injector import containers, providers
 from valkey.asyncio import from_url
 
-from app.auth.adapter.output.integration import HansungIdentityVerifier
 from app.auth.adapter.output.persistence.valkey.auth_token import (
     ValkeyAuthTokenRepository,
 )
 from app.auth.application.service import AuthService
-from app.organization.adapter.output.persistence.sqlalchemy import (
-    OrganizationSQLAlchemyRepository,
-)
+from app.organization.container import OrganizationContainer
 from app.user.adapter.output.persistence.sqlalchemy import (
     UserSQLAlchemyRepository,
 )
@@ -29,15 +26,14 @@ class AuthContainer(containers.DeclarativeContainer):
         ValkeyAuthTokenRepository,
         client=valkey_client,
     )
-    organization_repository = providers.Singleton(
-        OrganizationSQLAlchemyRepository
-    )
+    organization = providers.Container(OrganizationContainer)
+    organization_repository = organization.repository
     user_repository = providers.Singleton(UserSQLAlchemyRepository)
-    identity_verifier = providers.Singleton(HansungIdentityVerifier)
+    organization_auth_service = organization.auth_service
     service = providers.Factory(
         AuthService,
         organization_repository=organization_repository,
         user_repository=user_repository,
         auth_token_repository=auth_token_repository,
-        identity_verifier=identity_verifier,
+        organization_auth_service=organization_auth_service,
     )

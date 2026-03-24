@@ -14,13 +14,14 @@ from app.auth.domain.command import (
     LogoutCommand,
     RefreshTokenCommand,
 )
-from app.auth.domain.entity import AuthenticatedIdentity
-from app.auth.domain.repository import AuthTokenRepository, IdentityVerifier
+from app.auth.domain.repository import AuthTokenRepository
 from app.organization.domain.entity import (
     Organization,
     OrganizationAuthProvider,
+    OrganizationIdentity,
 )
 from app.organization.domain.repository import OrganizationRepository
+from app.organization.domain.service import OrganizationAuthService
 from app.user.domain.entity import Profile, User, UserRole
 from app.user.domain.repository import UserRepository
 from core.domain.types import TokenType
@@ -109,25 +110,25 @@ class InMemoryAuthTokenRepository(AuthTokenRepository):
         self.tokens.pop(f"auth:user:{user_id}:refresh:{jti}", None)
 
 
-class FakeIdentityVerifier(IdentityVerifier):
-    def __init__(self, identity: AuthenticatedIdentity | None = None):
-        self.identity = identity or AuthenticatedIdentity(
+class FakeOrganizationAuthService(OrganizationAuthService):
+    def __init__(self, identity: OrganizationIdentity | None = None):
+        self.identity = identity or OrganizationIdentity(
             login_id="20260001",
             role=UserRole.STUDENT,
             name="김테스트",
             email="student@example.com",
         )
 
-    async def verify(
+    async def authenticate(
         self,
         *,
         organization: Organization,
         login_id: str,
         password: str,
-    ) -> AuthenticatedIdentity:
+    ) -> OrganizationIdentity:
         del organization
         del password
-        return AuthenticatedIdentity(
+        return OrganizationIdentity(
             login_id=login_id,
             role=self.identity.role,
             name=self.identity.name,
@@ -165,7 +166,7 @@ async def test_login_success_creates_user_and_stores_tokens():
         ]),
         user_repository=user_repository,
         auth_token_repository=auth_token_repository,
-        identity_verifier=FakeIdentityVerifier(),
+        organization_auth_service=FakeOrganizationAuthService(),
     )
 
     tokens = await service.login(
@@ -201,8 +202,8 @@ async def test_login_updates_existing_user_role():
         ]),
         user_repository=InMemoryUserRepository([existing_user]),
         auth_token_repository=InMemoryAuthTokenRepository(),
-        identity_verifier=FakeIdentityVerifier(
-            AuthenticatedIdentity(
+        organization_auth_service=FakeOrganizationAuthService(
+            OrganizationIdentity(
                 login_id="20260001",
                 role=UserRole.PROFESSOR,
                 name="김교수",
@@ -228,7 +229,7 @@ async def test_login_invalid_organization_raises():
         organization_repository=InMemoryOrganizationRepository(),
         user_repository=InMemoryUserRepository(),
         auth_token_repository=InMemoryAuthTokenRepository(),
-        identity_verifier=FakeIdentityVerifier(),
+        organization_auth_service=FakeOrganizationAuthService(),
     )
 
     with pytest.raises(AuthInvalidCredentialsException):
@@ -243,8 +244,8 @@ async def test_login_invalid_organization_raises():
 
 @pytest.mark.asyncio
 async def test_login_identity_provider_not_configured_bubbles_up():
-    class FailingVerifier(IdentityVerifier):
-        async def verify(self, **kwargs):
+    class FailingService(OrganizationAuthService):
+        async def authenticate(self, **kwargs):
             del kwargs
             raise AuthIdentityProviderNotConfiguredException()
 
@@ -254,7 +255,7 @@ async def test_login_identity_provider_not_configured_bubbles_up():
         ]),
         user_repository=InMemoryUserRepository(),
         auth_token_repository=InMemoryAuthTokenRepository(),
-        identity_verifier=FailingVerifier(),
+        organization_auth_service=FailingService(),
     )
 
     with pytest.raises(AuthIdentityProviderNotConfiguredException):
@@ -269,8 +270,8 @@ async def test_login_identity_provider_not_configured_bubbles_up():
 
 @pytest.mark.asyncio
 async def test_login_identity_provider_unavailable_bubbles_up():
-    class FailingVerifier(IdentityVerifier):
-        async def verify(self, **kwargs):
+    class FailingService(OrganizationAuthService):
+        async def authenticate(self, **kwargs):
             del kwargs
             raise AuthIdentityProviderUnavailableException()
 
@@ -280,7 +281,7 @@ async def test_login_identity_provider_unavailable_bubbles_up():
         ]),
         user_repository=InMemoryUserRepository(),
         auth_token_repository=InMemoryAuthTokenRepository(),
-        identity_verifier=FailingVerifier(),
+        organization_auth_service=FailingService(),
     )
 
     with pytest.raises(AuthIdentityProviderUnavailableException):
@@ -303,7 +304,7 @@ async def test_refresh_rotates_refresh_token():
         ]),
         user_repository=InMemoryUserRepository([user]),
         auth_token_repository=auth_token_repository,
-        identity_verifier=FakeIdentityVerifier(),
+        organization_auth_service=FakeOrganizationAuthService(),
     )
 
     first_tokens = await service.login(
@@ -345,7 +346,7 @@ async def test_refresh_with_unknown_token_raises():
         ]),
         user_repository=InMemoryUserRepository(),
         auth_token_repository=InMemoryAuthTokenRepository(),
-        identity_verifier=FakeIdentityVerifier(),
+        organization_auth_service=FakeOrganizationAuthService(),
     )
 
     invalid_refresh = TokenHelper.create_token(
@@ -368,7 +369,7 @@ async def test_logout_deletes_refresh_token():
         ]),
         user_repository=InMemoryUserRepository(),
         auth_token_repository=auth_token_repository,
-        identity_verifier=FakeIdentityVerifier(),
+        organization_auth_service=FakeOrganizationAuthService(),
     )
 
     tokens = await service.login(
