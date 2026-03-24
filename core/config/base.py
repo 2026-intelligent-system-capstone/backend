@@ -33,6 +33,14 @@ class CommonSettings(BaseSettings):
     AUTH_COOKIE_SECURE: bool = False
     AUTH_COOKIE_SAMESITE: CookieSameSite = "lax"
 
+    HANSUNG_LOGIN_URL: str = (
+        "https://info.hansung.ac.kr/servlet/s_gong.gong_login_ssl"
+    )
+    HANSUNG_INFO_URL: str = (
+        "https://info.hansung.ac.kr/jsp/sugang/h_sugang_sincheong_main.jsp"
+    )
+    HANSUNG_REQUEST_TIMEOUT_SECONDS: float = 10.0
+
     SQLALCHEMY_ECHO: bool = False
     FRONTEND_CORS_ORIGIN: list[str] = []
 

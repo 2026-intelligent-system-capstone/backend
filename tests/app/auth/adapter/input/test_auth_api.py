@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from app.auth.application.dto import AuthTokensDTO
 from app.auth.application.exception import (
     AuthIdentityProviderNotConfiguredException,
+    AuthIdentityProviderUnavailableException,
     AuthInvalidCredentialsException,
     AuthInvalidRefreshTokenException,
 )
@@ -87,6 +88,27 @@ def test_login_provider_not_configured_returns_503(client, monkeypatch):
     assert (
         response.json()["error_code"]
         == "AUTH__IDENTITY_PROVIDER_NOT_CONFIGURED"
+    )
+
+
+def test_login_provider_unavailable_returns_503(client, monkeypatch):
+    async def login_stub(*_args, **_kwargs):
+        raise AuthIdentityProviderUnavailableException()
+
+    monkeypatch.setattr(AuthService, "login", login_stub)
+
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "organization_code": "hansung",
+            "login_id": "20260001",
+            "password": "secure_password123",
+        },
+    )
+
+    assert response.status_code == 503
+    assert (
+        response.json()["error_code"] == "AUTH__IDENTITY_PROVIDER_UNAVAILABLE"
     )
 
 

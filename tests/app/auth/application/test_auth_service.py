@@ -4,6 +4,7 @@ import pytest
 
 from app.auth.application.exception import (
     AuthIdentityProviderNotConfiguredException,
+    AuthIdentityProviderUnavailableException,
     AuthInvalidCredentialsException,
     AuthInvalidRefreshTokenException,
 )
@@ -257,6 +258,32 @@ async def test_login_identity_provider_not_configured_bubbles_up():
     )
 
     with pytest.raises(AuthIdentityProviderNotConfiguredException):
+        await service.login(
+            LoginCommand(
+                organization_code="hansung",
+                login_id="20260001",
+                password="secure_password123",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_login_identity_provider_unavailable_bubbles_up():
+    class FailingVerifier(IdentityVerifier):
+        async def verify(self, **kwargs):
+            del kwargs
+            raise AuthIdentityProviderUnavailableException()
+
+    service = AuthService(
+        organization_repository=InMemoryOrganizationRepository([
+            make_organization()
+        ]),
+        user_repository=InMemoryUserRepository(),
+        auth_token_repository=InMemoryAuthTokenRepository(),
+        identity_verifier=FailingVerifier(),
+    )
+
+    with pytest.raises(AuthIdentityProviderUnavailableException):
         await service.login(
             LoginCommand(
                 organization_code="hansung",

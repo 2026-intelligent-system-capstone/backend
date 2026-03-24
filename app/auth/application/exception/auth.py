@@ -17,3 +17,9 @@ class AuthIdentityProviderNotConfiguredException(CustomException):
     code = 503
     error_code = "AUTH__IDENTITY_PROVIDER_NOT_CONFIGURED"
     message = "학교 인증 연동이 아직 구성되지 않았습니다."
+
+
+class AuthIdentityProviderUnavailableException(CustomException):
+    code = 503
+    error_code = "AUTH__IDENTITY_PROVIDER_UNAVAILABLE"
+    message = "학교 인증 시스템에 연결할 수 없습니다."

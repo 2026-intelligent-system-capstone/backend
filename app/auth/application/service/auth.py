@@ -5,6 +5,7 @@ from jwt import PyJWTError
 from app.auth.application.dto import AuthTokensDTO
 from app.auth.application.exception import (
     AuthIdentityProviderNotConfiguredException,
+    AuthIdentityProviderUnavailableException,
     AuthInvalidCredentialsException,
     AuthInvalidRefreshTokenException,
 )
@@ -50,7 +51,10 @@ class AuthService(AuthUseCase):
                 login_id=command.login_id,
                 password=command.password,
             )
-        except AuthIdentityProviderNotConfiguredException:
+        except (
+            AuthIdentityProviderNotConfiguredException,
+            AuthIdentityProviderUnavailableException,
+        ):
             raise
         except Exception as exc:
             raise AuthInvalidCredentialsException() from exc
