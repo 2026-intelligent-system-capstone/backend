@@ -13,5 +13,7 @@ file_table = BaseTable(
     Column("file_extension", String(10), nullable=False),
     Column("file_size", BigInteger, nullable=False),
     Column("mime_type", String(100), nullable=False),
-    Column("status", Enum(FileStatus), nullable=False, default=FileStatus.PENDING),
+    Column(
+        "status", Enum(FileStatus), nullable=False, default=FileStatus.PENDING
+    ),
 )
