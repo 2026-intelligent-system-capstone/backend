@@ -97,7 +97,11 @@ async def get_user(
     )
 
 
-@router.patch("/{user_id}", response_model=UserResponse)
+@router.patch(
+    "/{user_id}",
+    response_model=UserResponse,
+    dependencies=[Depends(PermissionDependency([IsAdmin]))],
+)
 @inject
 async def update_user(
     user_id: UUID,

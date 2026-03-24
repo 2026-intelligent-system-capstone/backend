@@ -172,7 +172,14 @@ def test_update_user_returns_200(client, monkeypatch):
         user.role = UserRole.PROFESSOR
         return user
 
+    admin_user = make_user(login_id="admin01", role=UserRole.ADMIN)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return admin_user
+
     monkeypatch.setattr(UserService, "update_user", update_stub_user)
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, admin_user)
 
     response = client.patch(
         f"/api/users/{uuid4()}",
@@ -185,6 +192,27 @@ def test_update_user_returns_200(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["data"]["login_id"] == "20269999"
     assert response.json()["data"]["role"] == "professor"
+
+
+def test_update_user_returns_403_for_non_admin(client, monkeypatch):
+    student_user = make_user(role=UserRole.STUDENT)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.patch(
+        f"/api/users/{uuid4()}",
+        json={
+            "name": "김업데이트",
+            "role": "professor",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "AUTH__FORBIDDEN"
 
 
 def test_delete_user_returns_200(client, monkeypatch):
