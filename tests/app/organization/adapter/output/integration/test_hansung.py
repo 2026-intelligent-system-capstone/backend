@@ -20,6 +20,11 @@ from app.organization.domain.entity import (
 class FakeResponse:
     status_code: int = 200
     text: str = ""
+    headers: dict[str, str] | None = None
+
+    def __post_init__(self):
+        if self.headers is None:
+            self.headers = {}
 
 
 class FakeAsyncClient:
@@ -79,7 +84,15 @@ def make_organization(
 @pytest.mark.asyncio
 async def test_authenticate_returns_student_identity(monkeypatch):
     fake_client = FakeAsyncClient(
-        post_response=FakeResponse(text="로그인 성공"),
+        post_response=FakeResponse(
+            status_code=302,
+            headers={
+                "location": (
+                    "https://info.hansung.ac.kr/jsp/sugang/"
+                    "h_sugang_sincheong_main.jsp"
+                )
+            },
+        ),
         get_response=FakeResponse(text="홍길동님 학생 포털"),
     )
 
@@ -115,7 +128,15 @@ async def test_authenticate_returns_student_identity(monkeypatch):
 @pytest.mark.asyncio
 async def test_authenticate_returns_professor_identity(monkeypatch):
     fake_client = FakeAsyncClient(
-        post_response=FakeResponse(text="로그인 성공"),
+        post_response=FakeResponse(
+            status_code=302,
+            headers={
+                "location": (
+                    "https://info.hansung.ac.kr/jsp/sugang/"
+                    "h_sugang_sincheong_main.jsp"
+                )
+            },
+        ),
         get_response=FakeResponse(text="김교수님 교수 업무 시스템"),
     )
 
@@ -140,13 +161,42 @@ async def test_authenticate_raises_invalid_credentials_for_login_page(
     monkeypatch,
 ):
     fake_client = FakeAsyncClient(
-        post_response=FakeResponse(text="로그인 폼입니다"),
-        get_response=FakeResponse(
-            text=(
-                '<form action="gong_login"><input name="password" />'
-                '<input name="changePass" /></form>'
-            )
+        post_response=FakeResponse(
+            status_code=302,
+            headers={
+                "location": (
+                    "https://info.hansung.ac.kr/jsp/sugang/"
+                    "h_sugang_sincheong_main.jsp"
+                )
+            },
         ),
+        get_response=FakeResponse(
+            text="<script>alert('로그인 실패'); parent.location='/'</script>"
+        ),
+    )
+
+    monkeypatch.setattr(
+        "app.organization.adapter.output.integration.hansung.httpx.AsyncClient",
+        fake_async_client_factory(fake_client),
+    )
+
+    service = HansungAuthService()
+
+    with pytest.raises(AuthInvalidCredentialsException):
+        await service.authenticate(
+            organization=make_organization(),
+            login_id="20260001",
+            password="wrong-secret",
+        )
+
+
+@pytest.mark.asyncio
+async def test_authenticate_rejects_non_redirect_login_response(
+    monkeypatch,
+):
+    fake_client = FakeAsyncClient(
+        post_response=FakeResponse(status_code=200, text="login failed"),
+        get_response=FakeResponse(text="홍길동님 학생 포털"),
     )
 
     monkeypatch.setattr(

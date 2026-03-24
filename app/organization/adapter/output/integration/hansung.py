@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from html import unescape
+from urllib.parse import urlparse
 
 import httpx
 
@@ -17,20 +17,13 @@ from app.organization.domain.entity import (
 from app.organization.domain.service import OrganizationAuthService
 from app.user.domain.entity import UserRole
 
-FAILURE_MARKERS = (
-    "아이디 또는 비밀번호",
-    "로그인 실패",
-    "다시 로그인",
-    "사용자 정보가 없습니다",
-    "not authorized",
-)
+LOGIN_SUCCESS_STATUS_CODE = 302
 
-LOGIN_PAGE_MARKERS = (
-    "changePass",
-    "return_url",
-    "gong_login",
-    'name="password"',
-    'type="password"',
+CLIENT_REDIRECT_MARKERS = (
+    "parent.location='/'",
+    'parent.location="/"',
+    "top.location='/'",
+    'top.location="/"',
 )
 
 NAME_PATTERNS = (
@@ -105,7 +98,7 @@ class HansungAuthService(OrganizationAuthService):
         try:
             async with httpx.AsyncClient(
                 headers=self.config.resolved_headers(),
-                follow_redirects=True,
+                follow_redirects=False,
                 timeout=self.config.timeout_seconds,
             ) as client:
                 login_response = await client.post(
@@ -128,78 +121,88 @@ class HansungAuthService(OrganizationAuthService):
                 }
             ) from exc
 
-        self._ensure_authenticated(
-            login_id=login_id,
-            login_response=login_response,
-            info_response=info_response,
+        self._ensure_login_succeeded(login_response=login_response)
+        self._ensure_session_is_authenticated(info_response=info_response)
+
+        page_text = info_response.text
+        name = self._extract_name(page_text)
+        role = self._infer_role(
+            page_text, login_id=login_id, has_name=name is not None
         )
 
-        page_text = self._merge_text(login_response.text, info_response.text)
+        if name is None and role is None:
+            raise AuthInvalidCredentialsException(
+                detail={
+                    "organization_code": organization.code,
+                    "reason": "authenticated_identity_not_detected",
+                }
+            )
+
         return OrganizationIdentity(
             login_id=login_id,
-            role=self._infer_role(page_text, login_id),
-            name=self._extract_name(page_text, login_id),
+            role=role or self._fallback_role(login_id),
+            name=name or login_id,
         )
 
     @staticmethod
-    def _ensure_authenticated(
-        *,
-        login_id: str,
-        login_response: httpx.Response,
-        info_response: httpx.Response,
-    ) -> None:
-        if (
-            login_response.status_code >= 500
-            or info_response.status_code >= 500
-        ):
+    def _ensure_login_succeeded(*, login_response: httpx.Response) -> None:
+        if login_response.status_code >= 500:
             raise AuthIdentityProviderUnavailableException()
 
-        if (
-            login_response.status_code >= 400
-            or info_response.status_code >= 400
-        ):
+        if login_response.status_code != LOGIN_SUCCESS_STATUS_CODE:
             raise AuthInvalidCredentialsException()
 
-        merged_text = HansungAuthService._merge_text(
-            login_response.text,
-            info_response.text,
-        )
-        lowered_text = merged_text.lower()
-
-        if any(marker in lowered_text for marker in FAILURE_MARKERS):
+        location = login_response.headers.get("location")
+        if location is None:
             raise AuthInvalidCredentialsException()
 
-        if HansungAuthService._looks_like_login_page(lowered_text):
+        if urlparse(location).path != urlparse(HansungAuthConfig.info_url).path:
+            raise AuthInvalidCredentialsException()
+
+    @staticmethod
+    def _ensure_session_is_authenticated(
+        *,
+        info_response: httpx.Response,
+    ) -> None:
+        if info_response.status_code >= 500:
+            raise AuthIdentityProviderUnavailableException()
+
+        if info_response.status_code >= 400:
+            raise AuthInvalidCredentialsException()
+
+        lowered_text = info_response.text.lower()
+        if any(marker in lowered_text for marker in CLIENT_REDIRECT_MARKERS):
             raise AuthInvalidCredentialsException(
-                detail={"login_id": login_id, "reason": "login_page_returned"}
+                detail={"reason": "unauthenticated_session"}
             )
 
     @staticmethod
-    def _looks_like_login_page(text: str) -> bool:
-        matched_markers = [
-            marker for marker in LOGIN_PAGE_MARKERS if marker in text
-        ]
-        return len(matched_markers) >= 2
-
-    @staticmethod
-    def _merge_text(*parts: str) -> str:
-        return " ".join(unescape(part or "") for part in parts)
-
-    @staticmethod
-    def _infer_role(text: str, login_id: str) -> UserRole:
+    def _infer_role(
+        text: str,
+        *,
+        login_id: str,
+        has_name: bool,
+    ) -> UserRole | None:
         if any(keyword in text for keyword in ("교수", "교원", "교직원")):
             return UserRole.PROFESSOR
 
         if "학생" in text:
             return UserRole.STUDENT
 
+        if has_name:
+            return HansungAuthService._fallback_role(login_id)
+
+        return None
+
+    @staticmethod
+    def _fallback_role(login_id: str) -> UserRole:
         if login_id.isdigit() and len(login_id) >= 8:
             return UserRole.STUDENT
 
         return UserRole.PROFESSOR
 
     @staticmethod
-    def _extract_name(text: str, fallback: str) -> str:
+    def _extract_name(text: str) -> str | None:
         compact_text = re.sub(r"\s+", " ", text)
         for pattern in NAME_PATTERNS:
             match = pattern.search(compact_text)
@@ -208,4 +211,4 @@ class HansungAuthService(OrganizationAuthService):
             name = match.group(1).strip()
             if name:
                 return name
-        return fallback
+        return None

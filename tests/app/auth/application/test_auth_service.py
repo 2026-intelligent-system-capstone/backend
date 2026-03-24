@@ -243,6 +243,35 @@ async def test_login_invalid_organization_raises():
 
 
 @pytest.mark.asyncio
+async def test_login_invalid_credentials_does_not_create_user():
+    class FailingService(OrganizationAuthService):
+        async def authenticate(self, **kwargs):
+            del kwargs
+            raise AuthInvalidCredentialsException()
+
+    user_repository = InMemoryUserRepository()
+    service = AuthService(
+        organization_repository=InMemoryOrganizationRepository([
+            make_organization()
+        ]),
+        user_repository=user_repository,
+        auth_token_repository=InMemoryAuthTokenRepository(),
+        organization_auth_service=FailingService(),
+    )
+
+    with pytest.raises(AuthInvalidCredentialsException):
+        await service.login(
+            LoginCommand(
+                organization_code="univ_hansung",
+                login_id="20260001",
+                password="wrong-password",
+            )
+        )
+
+    assert user_repository.users == {}
+
+
+@pytest.mark.asyncio
 async def test_login_identity_provider_not_configured_bubbles_up():
     class FailingService(OrganizationAuthService):
         async def authenticate(self, **kwargs):
