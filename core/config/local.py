@@ -18,7 +18,7 @@ class LocalSettings(CommonSettings):
     LOG_DEBUG: bool = True
 
     model_config = SettingsConfigDict(
-        env_file=(".env", ".env.local"),
+        env_file=(".env.local", ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
