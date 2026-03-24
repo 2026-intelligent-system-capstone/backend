@@ -12,17 +12,23 @@ class UserStatus(ValueObject, StrEnum):
     BLOCKED = "blocked"
 
 
+class UserRole(ValueObject, StrEnum):
+    STUDENT = "student"
+    PROFESSOR = "professor"
+    ADMIN = "admin"
+
+
 @dataclass
 class Profile(ValueObject):
     nickname: str
-    real_name: str
+    name: str
     phone_number: str | None = None
     profile_image_id: UUID | None = None
 
-    def __composite_values__(self) -> tuple[str, str, str | None, UUID | None]:
+    def __composite_values__(self):
         return (
             self.nickname,
-            self.real_name,
+            self.name,
             self.phone_number,
             self.profile_image_id,
         )
@@ -30,9 +36,10 @@ class Profile(ValueObject):
 
 @dataclass
 class User(Entity):
-    username: str
-    password: str
-    email: str
+    organization_id: UUID
+    login_id: str
+    role: UserRole
+    email: str | None
     profile: Profile
     status: UserStatus = UserStatus.ACTIVE
     is_deleted: bool = False

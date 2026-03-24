@@ -10,25 +10,22 @@ from core.db.sqlalchemy.models.user import user_table
 
 
 class UserSQLAlchemyRepository(UserRepository):
-    async def get_by_id(self, user_id: UUID) -> User | None:
+    async def get_by_id(self, entity_id: UUID) -> User | None:
         query = select(User).where(
-            user_table.c.id == user_id,
+            user_table.c.id == entity_id,
             user_table.c.is_deleted.is_(False),
         )
         result = await session.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_by_username(self, username: str) -> User | None:
+    async def get_by_organization_and_login_id(
+        self,
+        organization_id: UUID,
+        login_id: str,
+    ) -> User | None:
         query = select(User).where(
-            user_table.c.username == username,
-            user_table.c.is_deleted.is_(False),
-        )
-        result = await session.execute(query)
-        return result.scalar_one_or_none()
-
-    async def get_by_email(self, email: str) -> User | None:
-        query = select(User).where(
-            user_table.c.email == email,
+            user_table.c.organization_id == organization_id,
+            user_table.c.login_id == login_id,
             user_table.c.is_deleted.is_(False),
         )
         result = await session.execute(query)
@@ -39,6 +36,6 @@ class UserSQLAlchemyRepository(UserRepository):
         result = await session.execute(query)
         return result.scalars().all()
 
-    async def save(self, user: User) -> User:
-        session.add(user)
-        return user
+    async def save(self, entity: User) -> User:
+        session.add(entity)
+        return entity

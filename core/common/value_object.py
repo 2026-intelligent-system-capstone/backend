@@ -7,7 +7,7 @@ ValueObjectType = TypeVar("ValueObjectType", bound="ValueObject")
 
 
 class ValueObject:
-    def __composite_values__(self):
+    def __composite_values__(self) -> tuple[Any, ...]:
         return (self.value,)
 
     @classmethod

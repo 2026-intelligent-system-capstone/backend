@@ -52,7 +52,13 @@ async def login(
     tokens = await usecase.login(LoginCommand(**request.model_dump()))
     _set_auth_cookies(response, tokens)
     return AuthResponse(
-        data=AuthPayload(user_id=tokens.user_id, authenticated=True),
+        data=AuthPayload(
+            user_id=tokens.user_id,
+            organization_id=tokens.organization_id,
+            organization_code=tokens.organization_code,
+            role=tokens.role,
+            authenticated=True,
+        ),
     )
 
 
@@ -71,7 +77,13 @@ async def refresh(
     )
     _set_auth_cookies(response, tokens)
     return AuthResponse(
-        data=AuthPayload(user_id=tokens.user_id, authenticated=True),
+        data=AuthPayload(
+            user_id=tokens.user_id,
+            organization_id=tokens.organization_id,
+            organization_code=tokens.organization_code,
+            role=tokens.role,
+            authenticated=True,
+        ),
     )
 
 

@@ -14,7 +14,7 @@ def init_user_mappers():
             "profile": composite(
                 Profile,
                 user_table.c.nickname,
-                user_table.c.real_name,
+                user_table.c.name,
                 user_table.c.phone_number,
                 user_table.c.profile_image_id,
             )

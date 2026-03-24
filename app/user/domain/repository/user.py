@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from uuid import UUID
 
 from app.user.domain.entity.user import User
 from core.repository.base import BaseRepository
@@ -6,9 +7,9 @@ from core.repository.base import BaseRepository
 
 class UserRepository(BaseRepository[User]):
     @abstractmethod
-    async def get_by_username(self, username: str) -> User | None:
-        pass
-
-    @abstractmethod
-    async def get_by_email(self, email: str) -> User | None:
+    async def get_by_organization_and_login_id(
+        self,
+        organization_id: UUID,
+        login_id: str,
+    ) -> User | None:
         pass

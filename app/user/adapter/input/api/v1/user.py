@@ -29,11 +29,14 @@ async def create_user(
     return UserResponse(
         data=UserPayload(
             id=str(user.id),
-            username=user.username,
+            organization_id=str(user.organization_id),
+            login_id=user.login_id,
+            role=user.role.value,
             email=user.email,
             nickname=user.profile.nickname,
-            real_name=user.profile.real_name,
+            name=user.profile.name,
             phone_number=user.profile.phone_number,
+            status=user.status.value,
             is_deleted=user.is_deleted,
         )
     )
@@ -49,11 +52,14 @@ async def list_users(
         data=[
             UserPayload(
                 id=str(user.id),
-                username=user.username,
+                organization_id=str(user.organization_id),
+                login_id=user.login_id,
+                role=user.role.value,
                 email=user.email,
                 nickname=user.profile.nickname,
-                real_name=user.profile.real_name,
+                name=user.profile.name,
                 phone_number=user.profile.phone_number,
+                status=user.status.value,
                 is_deleted=user.is_deleted,
             )
             for user in users
@@ -71,11 +77,14 @@ async def get_user(
     return UserResponse(
         data=UserPayload(
             id=str(user.id),
-            username=user.username,
+            organization_id=str(user.organization_id),
+            login_id=user.login_id,
+            role=user.role.value,
             email=user.email,
             nickname=user.profile.nickname,
-            real_name=user.profile.real_name,
+            name=user.profile.name,
             phone_number=user.profile.phone_number,
+            status=user.status.value,
             is_deleted=user.is_deleted,
         )
     )
@@ -95,11 +104,14 @@ async def update_user(
     return UserResponse(
         data=UserPayload(
             id=str(user.id),
-            username=user.username,
+            organization_id=str(user.organization_id),
+            login_id=user.login_id,
+            role=user.role.value,
             email=user.email,
             nickname=user.profile.nickname,
-            real_name=user.profile.real_name,
+            name=user.profile.name,
             phone_number=user.profile.phone_number,
+            status=user.status.value,
             is_deleted=user.is_deleted,
         )
     )
@@ -115,11 +127,14 @@ async def delete_user(
     return UserResponse(
         data=UserPayload(
             id=str(user.id),
-            username=user.username,
+            organization_id=str(user.organization_id),
+            login_id=user.login_id,
+            role=user.role.value,
             email=user.email,
             nickname=user.profile.nickname,
-            real_name=user.profile.real_name,
+            name=user.profile.name,
             phone_number=user.profile.phone_number,
+            status=user.status.value,
             is_deleted=user.is_deleted,
         )
     )

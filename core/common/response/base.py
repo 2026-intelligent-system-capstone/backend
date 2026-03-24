@@ -5,5 +5,5 @@ from pydantic import BaseModel
 
 class BaseResponse(BaseModel):
     message: str = ""
-    data: Any = None
+    data: Any = ...
     meta: Any = None
