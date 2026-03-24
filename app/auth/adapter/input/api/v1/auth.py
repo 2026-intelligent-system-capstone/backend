@@ -16,6 +16,18 @@ from core.config import config
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _build_auth_response(tokens: AuthTokensDTO) -> AuthResponse:
+    return AuthResponse(
+        data=AuthPayload(
+            user_id=tokens.user_id,
+            organization_id=tokens.organization_id,
+            organization_code=tokens.organization_code,
+            role=tokens.role,
+            authenticated=True,
+        ),
+    )
+
+
 def _set_auth_cookies(response: Response, tokens: AuthTokensDTO) -> None:
     response.set_cookie(
         key=config.ACCESS_TOKEN_COOKIE_NAME,
@@ -51,15 +63,7 @@ async def login(
 ):
     tokens = await usecase.login(LoginCommand(**request.model_dump()))
     _set_auth_cookies(response, tokens)
-    return AuthResponse(
-        data=AuthPayload(
-            user_id=tokens.user_id,
-            organization_id=tokens.organization_id,
-            organization_code=tokens.organization_code,
-            role=tokens.role,
-            authenticated=True,
-        ),
-    )
+    return _build_auth_response(tokens)
 
 
 @router.post("/refresh", response_model=AuthResponse)
@@ -76,15 +80,7 @@ async def refresh(
         RefreshTokenCommand(refresh_token=refresh_token)
     )
     _set_auth_cookies(response, tokens)
-    return AuthResponse(
-        data=AuthPayload(
-            user_id=tokens.user_id,
-            organization_id=tokens.organization_id,
-            organization_code=tokens.organization_code,
-            role=tokens.role,
-            authenticated=True,
-        ),
-    )
+    return _build_auth_response(tokens)
 
 
 @router.post("/logout", response_model=AuthResponse)
