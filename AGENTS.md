@@ -132,6 +132,11 @@ This file is for coding agents working in `backend/`.
 - Define routes under adapter input modules such as `app/.../adapter/input/api/v1/`
 - Use `APIRouter` with explicit `prefix` and `tags`
 - Wire dependencies with `Depends(Provide[...])`
+- Keep route authorization class-based in `app/auth/adapter/input/api/v1/deps.py`
+- Permission classes should inherit from `BasePermission` and implement async `has_permission(request, current_user)`
+- Pass permission classes into `PermissionDependency([...])`; do not inline ad hoc role checks in routers
+- Use `dependencies=[Depends(PermissionDependency([...]))]` when a route only needs access gating
+- Use `current_user: CurrentUser = Depends(PermissionDependency([...]))` when the use case needs actor context
 - Keep HTTP request/response Pydantic models in the API adapter layer, for example `request/__init__.py` and `response/__init__.py`
 - Keep command models in `domain/command/` and pass them from routers to use cases/services
 - Type router dependencies with domain use case interfaces when possible
@@ -153,6 +158,7 @@ This file is for coding agents working in `backend/`.
 ## Current API Pattern
 - The current preferred pattern is:
   - request schema in `adapter/input/api/v1/request/__init__.py`
+  - authorization dependency in `app/auth/adapter/input/api/v1/deps.py`
   - command model in `domain/command/__init__.py`
   - use case interface in `domain/usecase/*.py`
   - response payload and envelopes in `adapter/input/api/v1/response/__init__.py`
@@ -169,6 +175,8 @@ This file is for coding agents working in `backend/`.
 - Do not place command models in `application/dto/command.py`
 - Do not place HTTP response models in `application/dto/response.py`
 - Do not place FastAPI request models outside the adapter input layer
+- Compose authorization at the API adapter boundary before calling services/use cases
+- When actor context is needed, pass `CurrentUser` from the router into the use case; do not re-decode tokens or repeat role checks in routers
 - Do not make application services depend on adapter wrapper classes; depend on domain repository ports directly
 - Add `result.py` only if multiple adapters share the same read model or the service should stop returning entities
 
@@ -184,6 +192,8 @@ This file is for coding agents working in `backend/`.
 - Raise app-specific exceptions for expected business failures
 - Reuse `CustomException` subclasses so APIs return consistent `error_code`, `message`, and `detail`
 - Use `404`-style exceptions for missing resources and `400`-style exceptions for business conflicts
+- `IsAuthenticated` failures should raise `AuthUnauthorizedException`; role or permission failures should raise `AuthForbiddenException`
+- Prefer adding reusable permission classes in `app/auth/adapter/input/api/v1/deps.py` over duplicating authorization logic in routers
 - Let FastAPI/Pydantic validation errors flow into the existing `SERVER__REQUEST_VALIDATION_ERROR` handler
 - Do not swallow exceptions silently
 - Roll back DB work on failures inside transactional flows
