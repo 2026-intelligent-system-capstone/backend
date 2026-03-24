@@ -14,7 +14,10 @@ from core.config import config
 
 class AuthContainer(containers.DeclarativeContainer):
     wiring_config = containers.WiringConfiguration(
-        modules=["app.auth.adapter.input.api.v1.auth"]
+        modules=[
+            "app.auth.adapter.input.api.v1.auth",
+            "app.auth.adapter.input.api.v1.deps",
+        ]
     )
 
     valkey_client = providers.Singleton(

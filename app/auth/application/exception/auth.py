@@ -13,6 +13,12 @@ class AuthInvalidRefreshTokenException(CustomException):
     message = "리프레시 토큰이 유효하지 않습니다."
 
 
+class AuthUnauthorizedException(CustomException):
+    code = 401
+    error_code = "AUTH__UNAUTHORIZED"
+    message = "인증이 필요합니다."
+
+
 class AuthIdentityProviderNotConfiguredException(CustomException):
     code = 503
     error_code = "AUTH__IDENTITY_PROVIDER_NOT_CONFIGURED"

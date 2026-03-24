@@ -3,12 +3,18 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from app.user.adapter.output.persistence.sqlalchemy import (
+    UserSQLAlchemyRepository,
+)
 from app.user.application.exception import (
     UserAccountAlreadyExistsException,
     UserNotFoundException,
 )
 from app.user.application.service import UserService
 from app.user.domain.entity import User, UserRole
+from core.config import config
+from core.domain.types import TokenType
+from core.helpers.token import TokenHelper
 from main import create_app
 
 ORGANIZATION_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -31,6 +37,14 @@ def make_user(
         email=email,
         name="김테스트",
     )
+
+
+def set_access_token_cookie(client: TestClient, user: User) -> None:
+    access_token = TokenHelper.create_token(
+        payload={"sub": str(user.id)},
+        token_type=TokenType.ACCESS,
+    )
+    client.cookies.set(config.ACCESS_TOKEN_COOKIE_NAME, access_token)
 
 
 def test_create_user_returns_serialized_id(client, monkeypatch):
@@ -56,6 +70,22 @@ def test_create_user_returns_serialized_id(client, monkeypatch):
     assert body["data"]["login_id"] == "20260001"
 
 
+def test_list_users_returns_401_without_access_token(client):
+    response = client.get("/api/users")
+
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "AUTH__UNAUTHORIZED"
+
+
+def test_list_users_returns_401_with_invalid_access_token(client):
+    client.cookies.set(config.ACCESS_TOKEN_COOKIE_NAME, "invalid-token")
+
+    response = client.get("/api/users")
+
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "AUTH__UNAUTHORIZED"
+
+
 def test_list_users_returns_200(client, monkeypatch):
     async def list_stub_users(*_args, **_kwargs):
         return [
@@ -63,7 +93,14 @@ def test_list_users_returns_200(client, monkeypatch):
             make_user(login_id="20260002", email="second@example.com"),
         ]
 
+    authenticated_user = make_user()
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return authenticated_user
+
     monkeypatch.setattr(UserService, "list_users", list_stub_users)
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, authenticated_user)
 
     response = client.get("/api/users")
 

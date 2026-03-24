@@ -3,6 +3,8 @@ from uuid import UUID
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends
 
+from app.auth.adapter.input.api.v1.deps import require_authenticated_user
+from app.auth.domain.entity import CurrentUser
 from app.user.adapter.input.api.v1.request import (
     CreateUserRequest,
     UpdateUserRequest,
@@ -43,8 +45,10 @@ async def create_user(
 @router.get("", response_model=UserListResponse)
 @inject
 async def list_users(
+    current_user: CurrentUser = Depends(require_authenticated_user),
     usecase: UserUseCase = Depends(Provide[UserContainer.service]),
 ):
+    del current_user
     users = await usecase.list_users()
     return UserListResponse(
         data=[

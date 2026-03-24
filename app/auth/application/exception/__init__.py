@@ -3,6 +3,7 @@ from app.auth.application.exception.auth import (
     AuthIdentityProviderUnavailableException,
     AuthInvalidCredentialsException,
     AuthInvalidRefreshTokenException,
+    AuthUnauthorizedException,
 )
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "AuthIdentityProviderUnavailableException",
     "AuthInvalidCredentialsException",
     "AuthInvalidRefreshTokenException",
+    "AuthUnauthorizedException",
 ]
