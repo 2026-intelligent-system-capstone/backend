@@ -23,6 +23,10 @@ NAME_PATTERNS = (
     re.compile(r"([가-힣]{2,10})\s*님"),
     re.compile(r"성명\s*[:：]?\s*([가-힣A-Za-z ]{2,40})"),
     re.compile(r"이름\s*[:：]?\s*([가-힣A-Za-z ]{2,40})"),
+    re.compile(
+        r'<div class="info">.*?<a[^>]*class="d-block"[^>]*>(.*?)</a>',
+        re.S,
+    ),
 )
 
 
@@ -31,6 +35,7 @@ class HansungAuthConfig:
     login_url: str = "https://info.hansung.ac.kr/servlet/s_gong.gong_login_ssl"
     login_page_url: str = "https://info.hansung.ac.kr/"
     portal_url: str = "https://info.hansung.ac.kr/h_dae/dae_main.html"
+    responsive_index_url: str = "https://info.hansung.ac.kr/jsp_21/index.jsp"
     referer_url: str = (
         "https://info.hansung.ac.kr/jsp/sugang/h_sugang_sincheong_main.jsp"
     )
@@ -106,6 +111,10 @@ class HansungAuthService(OrganizationAuthService):
                     login_response.headers["location"],
                     follow_redirects=True,
                 )
+                identity_response = await client.get(
+                    self.config.responsive_index_url,
+                    follow_redirects=True,
+                )
         except httpx.TimeoutException as exc:
             raise AuthIdentityProviderUnavailableException(
                 detail={
@@ -123,7 +132,9 @@ class HansungAuthService(OrganizationAuthService):
 
         self._ensure_portal_access(portal_response=portal_response)
 
-        page_text = portal_response.text
+        page_text = self._resolve_identity_text(
+            identity_response, portal_response
+        )
         name = self._extract_name(page_text)
         role = self._infer_role(
             page_text, login_id=login_id, has_name=name is not None
@@ -173,16 +184,43 @@ class HansungAuthService(OrganizationAuthService):
             )
 
     @staticmethod
+    def _resolve_identity_text(
+        identity_response: httpx.Response,
+        portal_response: httpx.Response,
+    ) -> str:
+        if (
+            identity_response.status_code < 400
+            and urlparse(str(identity_response.url)).path
+            == urlparse(HansungAuthConfig.responsive_index_url).path
+        ):
+            return identity_response.text
+
+        return portal_response.text
+
+    @staticmethod
     def _infer_role(
         text: str,
         *,
         login_id: str,
         has_name: bool,
     ) -> UserRole | None:
-        if any(keyword in text for keyword in ("교수", "교원", "교직원")):
+        if any(
+            marker in text
+            for marker in (
+                "/jsp_21/professor/",
+                "/jsp_21/teacher/",
+                "/jsp_21/staff/",
+            )
+        ):
             return UserRole.PROFESSOR
 
-        if "학생" in text:
+        if any(
+            marker in text
+            for marker in (
+                "/jsp_21/student/",
+                "hakbun=",
+            )
+        ):
             return UserRole.STUDENT
 
         if has_name:
@@ -204,7 +242,11 @@ class HansungAuthService(OrganizationAuthService):
             match = pattern.search(compact_text)
             if match is None:
                 continue
-            name = match.group(1).strip()
+            name = re.sub(r"<br\s*/?>", " ", match.group(1), flags=re.I)
+            name = re.sub(r"<[^>]+>", " ", name)
+            name = re.sub(r"\s+", " ", name).strip()
+            if " " in name:
+                name = name.split()[-1]
             if name:
                 return name
         return None

@@ -30,11 +30,25 @@ class FakeResponse:
 
 class FakeAsyncClient:
     def __init__(
-        self, *, post_response: FakeResponse, get_response: FakeResponse
+        self,
+        *,
+        post_response: FakeResponse,
+        portal_response: FakeResponse,
+        identity_response: FakeResponse | None = None,
     ):
+        service = HansungAuthService()
         self.post_response = post_response
-        self.get_response = get_response
+        self.portal_response = portal_response
+        self.identity_response = identity_response or FakeResponse(
+            status_code=portal_response.status_code,
+            text=portal_response.text,
+            headers=dict(portal_response.headers or {}),
+            url=portal_response.url,
+        )
+        self.portal_response.url = service.config.portal_url
+        self.identity_response.url = service.config.responsive_index_url
         self.root_response = FakeResponse(text="login page")
+        self.root_response.url = service.config.login_page_url
         self.post_calls: list[tuple[str, dict[str, str]]] = []
         self.get_calls: list[str] = []
 
@@ -56,9 +70,12 @@ class FakeAsyncClient:
     ) -> FakeResponse:
         del follow_redirects
         self.get_calls.append(url)
-        if url == HansungAuthService().config.login_page_url:
+        service = HansungAuthService()
+        if url == service.config.login_page_url:
             return self.root_response
-        return self.get_response
+        if url == service.config.responsive_index_url:
+            return self.identity_response
+        return self.portal_response
 
 
 def fake_async_client_factory(fake_client: FakeAsyncClient):
@@ -99,7 +116,17 @@ async def test_authenticate_returns_student_identity(monkeypatch):
                 "location": ("https://info.hansung.ac.kr/h_dae/dae_main.html")
             },
         ),
-        get_response=FakeResponse(text="홍길동님 학생 포털"),
+        portal_response=FakeResponse(text="portal page"),
+        identity_response=FakeResponse(
+            text="""
+            <div class="info">
+                <a href="/jsp_21/index.jsp" class="d-block">
+                    웹공학트랙<br/> 지능시스템트랙<br/> 홍길동
+                </a>
+            </div>
+            학생 메뉴
+            """,
+        ),
     )
 
     monkeypatch.setattr(
@@ -131,6 +158,7 @@ async def test_authenticate_returns_student_identity(monkeypatch):
     assert fake_client.get_calls == [
         service.config.login_page_url,
         service.config.portal_url,
+        service.config.responsive_index_url,
     ]
 
 
@@ -143,7 +171,17 @@ async def test_authenticate_returns_professor_identity(monkeypatch):
                 "location": ("https://info.hansung.ac.kr/h_dae/dae_main.html")
             },
         ),
-        get_response=FakeResponse(text="김교수님 교수 업무 시스템"),
+        portal_response=FakeResponse(text="portal page"),
+        identity_response=FakeResponse(
+            text="""
+            <div class="info">
+                <a href="/jsp_21/index.jsp" class="d-block">
+                    교수지원<br/> 김교수
+                </a>
+            </div>
+            교수 업무 시스템
+            """,
+        ),
     )
 
     monkeypatch.setattr(
@@ -173,7 +211,7 @@ async def test_authenticate_falls_back_when_portal_has_no_identity_text(
                 "location": "https://info.hansung.ac.kr/h_dae/dae_main.html"
             },
         ),
-        get_response=FakeResponse(text="<html><body>portal</body></html>"),
+        portal_response=FakeResponse(text="<html><body>portal</body></html>"),
     )
 
     monkeypatch.setattr(
@@ -203,13 +241,13 @@ async def test_authenticate_raises_invalid_credentials_for_login_page(
                 "location": ("https://info.hansung.ac.kr/h_dae/dae_main.html")
             },
         ),
-        get_response=FakeResponse(
+        portal_response=FakeResponse(
             text="portal page",
             headers={},
         ),
     )
 
-    fake_client.get_response.url = "https://info.hansung.ac.kr/"
+    fake_client.portal_response.url = "https://info.hansung.ac.kr/"
 
     monkeypatch.setattr(
         "app.organization.adapter.output.integration.hansung.httpx.AsyncClient",
@@ -232,7 +270,7 @@ async def test_authenticate_rejects_non_redirect_login_response(
 ):
     fake_client = FakeAsyncClient(
         post_response=FakeResponse(status_code=200, text="login failed"),
-        get_response=FakeResponse(text="홍길동님 학생 포털"),
+        portal_response=FakeResponse(text="홍길동님 학생 포털"),
     )
 
     monkeypatch.setattr(
@@ -262,7 +300,7 @@ async def test_authenticate_rejects_wrong_redirect_target(monkeypatch):
                 )
             },
         ),
-        get_response=FakeResponse(text="portal page"),
+        portal_response=FakeResponse(text="portal page"),
     )
 
     monkeypatch.setattr(
