@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from core.config import config
 from core.db.sqlalchemy.models import classroom as classroom_model  # noqa: F401
+from core.db.sqlalchemy.models import (
+    classroom_material as classroom_material_model,  # noqa: F401
+)
 from core.db.sqlalchemy.models import file as file_model  # noqa: F401
 from core.db.sqlalchemy.models import (
     organization as organization_model,  # noqa: F401

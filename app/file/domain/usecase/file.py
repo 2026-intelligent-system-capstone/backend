@@ -2,13 +2,24 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from app.file.domain.command import CreateFileCommand, UpdateFileCommand
-from app.file.domain.entity.file import File
+from app.file.domain.entity.file import File, FileStatus
+from app.file.domain.service import FileUploadData
 
 
 class FileUseCase(ABC):
     @abstractmethod
     async def create_file(self, command: CreateFileCommand) -> File:
         """Create file."""
+
+    @abstractmethod
+    async def upload_file(
+        self,
+        *,
+        file_upload: FileUploadData,
+        directory: str,
+        status: FileStatus = FileStatus.PENDING,
+    ) -> File:
+        """Upload file content and persist metadata."""
 
     @abstractmethod
     async def get_file(self, file_id: UUID) -> File:

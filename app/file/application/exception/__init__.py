@@ -1,3 +1,6 @@
-from app.file.application.exception.file import FileNotFoundException
+from app.file.application.exception.file import (
+    FileNotFoundException,
+    FileUploadFailedException,
+)
 
-__all__ = ["FileNotFoundException"]
+__all__ = ["FileNotFoundException", "FileUploadFailedException"]

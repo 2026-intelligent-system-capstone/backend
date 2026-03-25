@@ -31,6 +31,15 @@ class ClassroomUseCase(ABC):
         """Get classroom."""
 
     @abstractmethod
+    async def get_manageable_classroom(
+        self,
+        *,
+        classroom_id: UUID,
+        current_user: CurrentUser,
+    ) -> Classroom:
+        """Get classroom current actor can manage."""
+
+    @abstractmethod
     async def list_classrooms(
         self,
         *,

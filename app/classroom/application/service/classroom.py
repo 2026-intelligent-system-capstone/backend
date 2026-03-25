@@ -100,6 +100,21 @@ class ClassroomService(ClassroomUseCase):
 
         return classroom
 
+    async def get_manageable_classroom(
+        self,
+        *,
+        classroom_id: UUID,
+        current_user: CurrentUser,
+    ) -> Classroom:
+        self._ensure_professor_or_admin(current_user)
+
+        classroom = await self.get_classroom(
+            classroom_id=classroom_id,
+            current_user=current_user,
+        )
+        self._ensure_classroom_manager(classroom, current_user)
+        return classroom
+
     async def list_classrooms(
         self,
         *,
@@ -122,13 +137,10 @@ class ClassroomService(ClassroomUseCase):
         current_user: CurrentUser,
         command: UpdateClassroomCommand,
     ) -> Classroom:
-        self._ensure_professor_or_admin(current_user)
-
-        classroom = await self.get_classroom(
+        classroom = await self.get_manageable_classroom(
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        self._ensure_classroom_manager(classroom, current_user)
         delivered_fields = command.model_fields_set
 
         name = classroom.name
@@ -197,7 +209,10 @@ class ClassroomService(ClassroomUseCase):
         classroom.section = section
         if "description" in delivered_fields:
             classroom.description = command.description
-        if "allow_student_material_access" in delivered_fields:
+        if (
+            "allow_student_material_access" in delivered_fields
+            and command.allow_student_material_access is not None
+        ):
             classroom.allow_student_material_access = (
                 command.allow_student_material_access
             )
@@ -213,13 +228,10 @@ class ClassroomService(ClassroomUseCase):
         classroom_id: UUID,
         current_user: CurrentUser,
     ) -> Classroom:
-        self._ensure_professor_or_admin(current_user)
-
-        classroom = await self.get_classroom(
+        classroom = await self.get_manageable_classroom(
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        self._ensure_classroom_manager(classroom, current_user)
         await self.repository.delete(classroom)
         return classroom
 
@@ -231,13 +243,10 @@ class ClassroomService(ClassroomUseCase):
         current_user: CurrentUser,
         command: InviteClassroomStudentsCommand,
     ) -> Classroom:
-        self._ensure_professor_or_admin(current_user)
-
-        classroom = await self.get_classroom(
+        classroom = await self.get_manageable_classroom(
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        self._ensure_classroom_manager(classroom, current_user)
 
         invited_student_ids = _unique_ids(command.student_ids)
         duplicate_ids = [
@@ -268,13 +277,10 @@ class ClassroomService(ClassroomUseCase):
         current_user: CurrentUser,
         command: RemoveClassroomStudentCommand,
     ) -> Classroom:
-        self._ensure_professor_or_admin(current_user)
-
-        classroom = await self.get_classroom(
+        classroom = await self.get_manageable_classroom(
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        self._ensure_classroom_manager(classroom, current_user)
 
         if command.student_id not in classroom.student_ids:
             raise ClassroomStudentNotEnrolledException(

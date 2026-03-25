@@ -33,6 +33,12 @@ class CommonSettings(BaseSettings):
     AUTH_COOKIE_SECURE: bool = False
     AUTH_COOKIE_SAMESITE: CookieSameSite = "lax"
 
+    R2_ENDPOINT_URL: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = ""
+    R2_REGION_NAME: str = "auto"
+
     SQLALCHEMY_ECHO: bool = False
     FRONTEND_CORS_ORIGIN: list[str] = []
 
