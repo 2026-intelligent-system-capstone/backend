@@ -398,3 +398,11 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/python,venv,dotenv,windows,linux,macos,visualstudiocode,jetbrains,uv
+
+# OpenCode local tooling/cache
+/.tmp/
+/.opencode/*
+!/.opencode/context/
+/.opencode/context/*
+!/.opencode/context/project-intelligence/
+!/.opencode/context/project-intelligence/**
