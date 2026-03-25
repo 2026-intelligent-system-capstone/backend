@@ -158,6 +158,51 @@ async def test_update_organization_duplicate_code_raises():
 
 
 @pytest.mark.asyncio
+async def test_update_organization_not_found_raises():
+    service = OrganizationService(repository=InMemoryOrganizationRepository())
+
+    with pytest.raises(OrganizationNotFoundException):
+        await service.update_organization(
+            uuid4(),
+            UpdateOrganizationCommand(name="수정된 조직"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_organization_changes_code_and_auth_provider():
+    service = OrganizationService(
+        repository=InMemoryOrganizationRepository([make_organization()])
+    )
+
+    organization = await service.update_organization(
+        HANSUNG_ID,
+        UpdateOrganizationCommand(
+            code="univ_hansung_new",
+            auth_provider=OrganizationAuthProvider.HANSUNG_SIS,
+        ),
+    )
+
+    assert organization.code == "univ_hansung_new"
+    assert organization.auth_provider == (OrganizationAuthProvider.HANSUNG_SIS)
+
+
+@pytest.mark.asyncio
+async def test_update_organization_keeps_omitted_fields_unchanged():
+    service = OrganizationService(
+        repository=InMemoryOrganizationRepository([make_organization()])
+    )
+
+    organization = await service.update_organization(
+        HANSUNG_ID,
+        UpdateOrganizationCommand(name="이름만 변경"),
+    )
+
+    assert organization.name == "이름만 변경"
+    assert organization.code == "univ_hansung"
+    assert organization.is_active is True
+
+
+@pytest.mark.asyncio
 async def test_delete_organization_sets_inactive():
     service = OrganizationService(
         repository=InMemoryOrganizationRepository([make_organization()])
@@ -166,3 +211,11 @@ async def test_delete_organization_sets_inactive():
     organization = await service.delete_organization(HANSUNG_ID)
 
     assert organization.is_active is False
+
+
+@pytest.mark.asyncio
+async def test_delete_organization_not_found_raises():
+    service = OrganizationService(repository=InMemoryOrganizationRepository())
+
+    with pytest.raises(OrganizationNotFoundException):
+        await service.delete_organization(uuid4())
