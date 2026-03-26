@@ -55,6 +55,11 @@ class CommonSettings(BaseSettings):
     DOCS_URL: str | None = "/api/docs"
     REDOC_URL: str | None = "/api/redoc"
 
+    OPENAI_API_KEY: str = ""
+    OPENAI_REALTIME_MODEL: str = "gpt-realtime"
+    OPENAI_REALTIME_VOICE: str = "alloy"
+    OPENAI_REALTIME_SECRET_EXPIRE_SECONDS: int = 600
+
     LOG_LEVEL: LogLevel = "INFO"
     LOG_FORMAT: LogFormat = "plain"
     LOG_DEBUG: bool = False
