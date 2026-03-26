@@ -6,6 +6,7 @@ from app.exam.adapter.output.persistence.sqlalchemy import (
     ExamResultSQLAlchemyRepository,
     ExamSessionSQLAlchemyRepository,
     ExamSQLAlchemyRepository,
+    ExamTurnSQLAlchemyRepository,
 )
 from app.exam.application.service import ExamService
 
@@ -18,6 +19,7 @@ class ExamContainer(containers.DeclarativeContainer):
     repository = providers.Singleton(ExamSQLAlchemyRepository)
     session_repository = providers.Singleton(ExamSessionSQLAlchemyRepository)
     result_repository = providers.Singleton(ExamResultSQLAlchemyRepository)
+    turn_repository = providers.Singleton(ExamTurnSQLAlchemyRepository)
     realtime_session_port = providers.Singleton(OpenAIRealtimeSessionAdapter)
     service = providers.Factory(
         ExamService,
@@ -25,5 +27,6 @@ class ExamContainer(containers.DeclarativeContainer):
         classroom_usecase=ClassroomContainer.service,
         session_repository=session_repository,
         result_repository=result_repository,
+        turn_repository=turn_repository,
         realtime_session_port=realtime_session_port,
     )

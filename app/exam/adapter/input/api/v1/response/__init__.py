@@ -42,8 +42,9 @@ class ExamSessionPayload(BaseModel):
     student_id: str
     status: str
     started_at: str
+    ended_at: str | None = None
     expires_at: str | None
-    client_secret: str
+    client_secret: str | None = None
 
 
 class ExamSessionResponse(BaseResponse):
@@ -63,3 +64,22 @@ class ExamResultPayload(BaseModel):
 
 class ExamResultListResponse(BaseResponse):
     data: list[ExamResultPayload] = Field(default=...)
+
+
+class ExamResultResponse(BaseResponse):
+    data: ExamResultPayload = Field(default=...)
+
+
+class ExamTurnPayload(BaseModel):
+    id: str
+    session_id: str
+    sequence: int
+    role: str
+    event_type: str
+    content: str
+    created_at: str
+    metadata: dict[str, str]
+
+
+class ExamTurnResponse(BaseResponse):
+    data: ExamTurnPayload = Field(default=...)

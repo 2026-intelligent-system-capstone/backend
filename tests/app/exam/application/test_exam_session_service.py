@@ -9,6 +9,11 @@ from app.auth.domain.entity import CurrentUser
 from app.classroom.domain.entity import Classroom
 from app.classroom.domain.usecase import ClassroomUseCase
 from app.exam.application.service import ExamService
+from app.exam.domain.command import (
+    CompleteExamSessionCommand,
+    FinalizeExamResultCommand,
+    RecordExamTurnCommand,
+)
 from app.exam.domain.entity import (
     Exam,
     ExamCriterion,
@@ -17,6 +22,9 @@ from app.exam.domain.entity import (
     ExamSession,
     ExamSessionStatus,
     ExamStatus,
+    ExamTurn,
+    ExamTurnEventType,
+    ExamTurnRole,
     ExamType,
     RealtimeClientSecret,
 )
@@ -24,6 +32,7 @@ from app.exam.domain.repository import (
     ExamRepository,
     ExamResultRepository,
     ExamSessionRepository,
+    ExamTurnRepository,
 )
 from app.exam.domain.service import RealtimeSessionPort
 from app.user.domain.entity import UserRole
@@ -108,6 +117,29 @@ class InMemoryExamResultRepository(ExamResultRepository):
             result
             for result in self.results.values()
             if result.exam_id == exam_id and result.student_id == student_id
+        ]
+
+
+class InMemoryExamTurnRepository(ExamTurnRepository):
+    def __init__(self):
+        self.turns: dict[UUID, ExamTurn] = {}
+
+    async def save(self, entity: ExamTurn) -> None:
+        self.turns[entity.id] = entity
+
+    async def get_by_id(self, entity_id: UUID) -> ExamTurn | None:
+        return self.turns.get(entity_id)
+
+    async def list(self) -> Sequence[ExamTurn]:
+        return list(self.turns.values())
+
+    async def list_by_session(self, *, session_id: UUID) -> Sequence[ExamTurn]:
+        return [
+            turn
+            for turn in sorted(
+                self.turns.values(), key=lambda item: item.sequence
+            )
+            if turn.session_id == session_id
         ]
 
 
@@ -419,3 +451,205 @@ async def test_list_my_exam_results_returns_current_student_results_only():
 
     assert len(results) == 1
     assert results[0].student_id == STUDENT_ID
+
+
+@pytest.mark.asyncio
+async def test_record_exam_turn_saves_question_and_answer_history():
+    now = datetime(2026, 4, 1, 9, 5, tzinfo=UTC)
+    session_repository = InMemoryExamSessionRepository()
+    turn_repository = InMemoryExamTurnRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.IN_PROGRESS,
+        started_at=STARTS_AT,
+        last_activity_at=STARTS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam()]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=turn_repository,
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    question_turn = await service.record_exam_turn(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        session_id=session.id,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+        command=RecordExamTurnCommand(
+            role=ExamTurnRole.ASSISTANT,
+            event_type=ExamTurnEventType.QUESTION,
+            content="머신러닝과 딥러닝의 차이를 설명해보세요.",
+            metadata={"message_id": "msg-question-1"},
+            occurred_at=now,
+        ),
+    )
+    answer_turn = await service.record_exam_turn(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        session_id=session.id,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+        command=RecordExamTurnCommand(
+            role=ExamTurnRole.STUDENT,
+            event_type=ExamTurnEventType.ANSWER,
+            content="딥러닝은 머신러닝의 하위 분야입니다.",
+            metadata={"message_id": "msg-answer-1"},
+            occurred_at=now,
+        ),
+    )
+
+    assert question_turn.sequence == 1
+    assert question_turn.event_type is ExamTurnEventType.QUESTION
+    assert answer_turn.sequence == 2
+    assert answer_turn.role is ExamTurnRole.STUDENT
+    assert answer_turn.content == "딥러닝은 머신러닝의 하위 분야입니다."
+    assert session_repository.sessions[session.id].last_activity_at == now
+
+
+@pytest.mark.asyncio
+async def test_record_exam_turn_rejects_other_students_session():
+    session_repository = InMemoryExamSessionRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        status=ExamSessionStatus.IN_PROGRESS,
+        started_at=STARTS_AT,
+        last_activity_at=STARTS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam()]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    with pytest.raises(AuthForbiddenException):
+        await service.record_exam_turn(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            session_id=session.id,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+            command=RecordExamTurnCommand(
+                role=ExamTurnRole.STUDENT,
+                event_type=ExamTurnEventType.ANSWER,
+                content="답변",
+                metadata={},
+                occurred_at=STARTS_AT,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_complete_exam_session_marks_session_completed():
+    now = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+    session_repository = InMemoryExamSessionRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.IN_PROGRESS,
+        started_at=STARTS_AT,
+        last_activity_at=STARTS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam()]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    completed_session = await service.complete_exam_session(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        session_id=session.id,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+        command=CompleteExamSessionCommand(occurred_at=now),
+    )
+
+    assert completed_session.status is ExamSessionStatus.COMPLETED
+    assert completed_session.ended_at == now
+    assert session_repository.sessions[session.id].last_activity_at == now
+
+
+@pytest.mark.asyncio
+async def test_finalize_exam_result_updates_pending_result():
+    now = datetime(2026, 4, 1, 10, 1, tzinfo=UTC)
+    session_repository = InMemoryExamSessionRepository()
+    result_repository = InMemoryExamResultRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.COMPLETED,
+        started_at=STARTS_AT,
+        last_activity_at=ENDS_AT,
+        ended_at=ENDS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+    pending_result = ExamResult(
+        exam_id=EXAM_ID,
+        session_id=session.id,
+        student_id=STUDENT_ID,
+        status=ExamResultStatus.PENDING,
+    )
+    await result_repository.save(pending_result)
+
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam()]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    result = await service.finalize_exam_result(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        session_id=session.id,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+        command=FinalizeExamResultCommand(
+            overall_score=92,
+            summary="개념 이해와 문제 해결 과정이 모두 우수합니다.",
+            occurred_at=now,
+        ),
+    )
+
+    assert result.status is ExamResultStatus.COMPLETED
+    assert result.overall_score == 92
+    assert result.submitted_at == now
+    assert result.summary == "개념 이해와 문제 해결 과정이 모두 우수합니다."

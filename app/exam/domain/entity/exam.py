@@ -34,6 +34,9 @@ class ExamTurnRole(StrEnum):
 
 
 class ExamTurnEventType(StrEnum):
+    QUESTION = "question"
+    ANSWER = "answer"
+    FOLLOW_UP = "follow_up"
     MESSAGE = "message"
     TRANSCRIPT = "transcript"
     SESSION_STARTED = "session_started"

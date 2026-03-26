@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.exam.domain.entity import ExamType
+from app.exam.domain.entity import ExamTurnEventType, ExamTurnRole, ExamType
 
 
 class ExamCriterionCommand(BaseModel):
@@ -34,3 +34,21 @@ class CreateExamCommand(BaseModel):
         if sum(criterion.weight for criterion in self.criteria) != 100:
             raise ValueError("criteria weights must sum to 100")
         return self
+
+
+class RecordExamTurnCommand(BaseModel):
+    role: ExamTurnRole
+    event_type: ExamTurnEventType
+    content: str = Field(..., min_length=1, max_length=10000)
+    metadata: dict[str, str] = Field(default_factory=dict)
+    occurred_at: datetime
+
+
+class CompleteExamSessionCommand(BaseModel):
+    occurred_at: datetime
+
+
+class FinalizeExamResultCommand(BaseModel):
+    overall_score: int = Field(..., ge=0, le=100)
+    summary: str = Field(..., min_length=1, max_length=2000)
+    occurred_at: datetime
