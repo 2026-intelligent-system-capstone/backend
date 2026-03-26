@@ -19,3 +19,29 @@ def test_app_registers_health_check_route():
     paths = {route.path for route in app.routes}
 
     assert f"{config.API_PREFIX}/healthz" in paths
+
+
+def test_app_openapi_registers_cookie_auth_security_scheme():
+    app = create_app()
+
+    schema = app.openapi()
+
+    assert schema["components"]["securitySchemes"]["CookieAuth"] == {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": config.ACCESS_TOKEN_COOKIE_NAME,
+    }
+
+
+def test_app_openapi_marks_authenticated_routes_with_security():
+    app = create_app()
+
+    schema = app.openapi()
+
+    assert schema["paths"][f"{config.API_PREFIX}/users"]["get"]["security"] == [
+        {"CookieAuth": []}
+    ]
+    assert (
+        "security"
+        not in schema["paths"][f"{config.API_PREFIX}/users/{{user_id}}"]["get"]
+    )

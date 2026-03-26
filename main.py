@@ -7,6 +7,7 @@ from core.fastapi import ExtendedFastAPI
 from core.fastapi.lifespan import lifespan
 from core.fastapi.listener import register_handlers
 from core.fastapi.middlewares import make_middleware
+from core.fastapi.openapi import configure_openapi_security
 from core.fastapi.router import register_routers
 
 
@@ -31,6 +32,7 @@ def create_app() -> ExtendedFastAPI:
     app_.container = container
 
     register_routers(app_)
+    configure_openapi_security(app_)
     register_handlers(app_)
 
     logger = logging.getLogger(__name__)
