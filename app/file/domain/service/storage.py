@@ -16,6 +16,11 @@ class StoredFile:
     size: int
 
 
+@dataclass
+class StoredFileContent:
+    content: BinaryIO
+
+
 class FileStorage(ABC):
     @abstractmethod
     async def upload(
@@ -29,3 +34,7 @@ class FileStorage(ABC):
     @abstractmethod
     async def delete(self, *, path: str) -> None:
         """Delete a file from storage."""
+
+    @abstractmethod
+    async def open(self, *, path: str) -> StoredFileContent:
+        """Open a file from storage for reading."""

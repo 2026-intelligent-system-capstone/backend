@@ -7,6 +7,7 @@ from app.classroom_material.domain.command import (
     UpdateClassroomMaterialCommand,
 )
 from app.classroom_material.domain.entity import ClassroomMaterialDetail
+from app.file.domain.entity.file_download import FileDownload
 from app.file.domain.service import FileUploadData
 
 
@@ -40,6 +41,16 @@ class ClassroomMaterialUseCase(ABC):
         current_user: CurrentUser,
     ) -> ClassroomMaterialDetail:
         """Get classroom material."""
+
+    @abstractmethod
+    async def get_classroom_material_download(
+        self,
+        *,
+        classroom_id: UUID,
+        material_id: UUID,
+        current_user: CurrentUser,
+    ) -> FileDownload:
+        """Get classroom material download content."""
 
     @abstractmethod
     async def update_classroom_material(

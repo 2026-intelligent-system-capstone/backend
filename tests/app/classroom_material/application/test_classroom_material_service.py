@@ -104,6 +104,7 @@ class FakeFileUseCase(FileUseCase):
         self.files: dict[UUID, File] = {}
         self.deleted_file_ids: list[UUID] = []
         self.uploaded_payloads: list[tuple[str, str, bytes, FileStatus]] = []
+        self.downloaded_file_ids: list[UUID] = []
 
     async def create_file(self, command):
         file = File(
@@ -149,6 +150,20 @@ class FakeFileUseCase(FileUseCase):
 
     async def get_file(self, file_id: UUID) -> File:
         return self.files[file_id]
+
+    async def get_file_download(self, file_id: UUID):
+        self.downloaded_file_ids.append(file_id)
+        file = self.files[file_id]
+        return type(
+            "FileDownload",
+            (),
+            {
+                "file": file,
+                "file_name": file.file_name,
+                "mime_type": file.mime_type,
+                "content": BytesIO(b"downloaded-content"),
+            },
+        )()
 
     async def update_file(self, file_id: UUID, command):
         del file_id, command
@@ -494,3 +509,39 @@ async def test_get_classroom_material_not_found_raises():
                 user_id=PROFESSOR_ID,
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_get_classroom_material_download_returns_stream():
+    material = make_material()
+    file_usecase = FakeFileUseCase()
+    file_usecase.files[FILE_ID] = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    file_usecase.files[FILE_ID].id = FILE_ID
+    service = ClassroomMaterialService(
+        repository=InMemoryClassroomMaterialRepository([material]),
+        classroom_usecase=FakeClassroomUseCase(
+            make_classroom(allow_student_material_access=True)
+        ),
+        file_usecase=file_usecase,
+    )
+
+    download = await service.get_classroom_material_download(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+    )
+
+    assert download.file_name == "week1.pdf"
+    assert download.mime_type == "application/pdf"
+    assert download.content.read() == b"downloaded-content"
+    assert file_usecase.downloaded_file_ids == [FILE_ID]

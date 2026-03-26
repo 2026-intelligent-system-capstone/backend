@@ -39,6 +39,8 @@ class FakeFileStorage(FileStorage):
     def __init__(self):
         self.upload_calls: list[tuple[str, str, bytes]] = []
         self.delete_calls: list[str] = []
+        self.open_calls: list[str] = []
+        self.contents_by_path: dict[str, bytes] = {}
 
     async def upload(
         self,
@@ -49,13 +51,23 @@ class FakeFileStorage(FileStorage):
         file_upload.content.seek(0)
         content = file_upload.content.read()
         self.upload_calls.append((directory, file_upload.file_name, content))
+        path = f"{directory}/{file_upload.file_name}"
+        self.contents_by_path[path] = content
         return StoredFile(
-            path=f"{directory}/{file_upload.file_name}",
+            path=path,
             size=len(content),
         )
 
     async def delete(self, *, path: str) -> None:
         self.delete_calls.append(path)
+
+    async def open(self, *, path: str):
+        self.open_calls.append(path)
+        return type(
+            "StoredContent",
+            (),
+            {"content": BytesIO(self.contents_by_path[path])},
+        )()
 
 
 def make_create_command() -> CreateFileCommand:
@@ -226,3 +238,27 @@ async def test_delete_file_not_found():
 
     with pytest.raises(FileNotFoundException):
         await service.delete_file(UUID("00000000-0000-0000-0000-000000000000"))
+
+
+@pytest.mark.asyncio
+async def test_get_file_download_returns_stream_and_metadata():
+    repo = InMemoryFileRepository()
+    storage = FakeFileStorage()
+    service = FileService(repository=repo, storage=storage)
+    created_file = await service.upload_file(
+        file_upload=FileUploadData(
+            file_name="week1.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"pdf-content"),
+        ),
+        directory="classrooms/materials",
+        status=FileStatus.ACTIVE,
+    )
+
+    download = await service.get_file_download(created_file.id)
+
+    assert download.file.id == created_file.id
+    assert download.file_name == "week1.pdf"
+    assert download.mime_type == "application/pdf"
+    assert download.content.read() == b"pdf-content"
+    assert storage.open_calls == ["classrooms/materials/week1.pdf"]

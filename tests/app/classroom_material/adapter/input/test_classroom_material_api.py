@@ -334,3 +334,44 @@ def test_update_classroom_material_empty_patch_returns_422(
 
     assert response.status_code == 422
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
+
+
+def test_download_classroom_material_returns_stream_response(
+    client,
+    monkeypatch,
+):
+    async def download_stub(*_args, **_kwargs):
+        return type(
+            "FileDownload",
+            (),
+            {
+                "file_name": "week1.pdf",
+                "mime_type": "application/pdf",
+                "content": BytesIO(b"pdf-content"),
+            },
+        )()
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ClassroomMaterialService,
+        "get_classroom_material_download",
+        download_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.get(
+        f"/api/classrooms/{CLASSROOM_ID}/materials/{MATERIAL_ID}/download"
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"pdf-content"
+    assert response.headers["content-type"] == "application/pdf"
+    assert (
+        response.headers["content-disposition"]
+        == 'attachment; filename="week1.pdf"'
+    )

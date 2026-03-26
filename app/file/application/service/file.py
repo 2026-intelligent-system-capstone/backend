@@ -7,6 +7,7 @@ from app.file.application.exception import (
 )
 from app.file.domain.command import CreateFileCommand, UpdateFileCommand
 from app.file.domain.entity.file import File, FileStatus
+from app.file.domain.entity.file_download import FileDownload
 from app.file.domain.repository.file import FileRepository
 from app.file.domain.service import FileStorage, FileUploadData
 from app.file.domain.usecase.file import FileUseCase
@@ -66,6 +67,11 @@ class FileService(FileUseCase):
         if file is None:
             raise FileNotFoundException()
         return file
+
+    async def get_file_download(self, file_id: UUID) -> FileDownload:
+        file = await self.get_file(file_id)
+        stored_file = await self.storage.open(path=file.file_path)
+        return FileDownload(file=file, content=stored_file.content)
 
     @transactional
     async def update_file(

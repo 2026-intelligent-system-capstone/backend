@@ -3,6 +3,7 @@ from uuid import UUID
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from app.auth.domain.entity import CurrentUser
@@ -33,6 +34,17 @@ from core.fastapi.dependencies import (
 router = APIRouter(
     prefix="/classrooms/{classroom_id}/materials", tags=["classroom-materials"]
 )
+
+
+def _iter_content(content, chunk_size: int = 64 * 1024):
+    while True:
+        chunk = content.read(chunk_size)
+        if not chunk:
+            break
+        yield chunk
+    close = getattr(content, "close", None)
+    if callable(close):
+        close()
 
 
 @router.post(
@@ -174,6 +186,35 @@ async def get_classroom_material(
                 mime_type=result.file.mime_type,
             ),
         )
+    )
+
+
+@router.get(
+    "/{material_id}/download",
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def download_classroom_material(
+    classroom_id: UUID,
+    material_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ClassroomMaterialUseCase = Depends(
+        Provide[ClassroomMaterialContainer.service]
+    ),
+):
+    download = await usecase.get_classroom_material_download(
+        classroom_id=classroom_id,
+        material_id=material_id,
+        current_user=current_user,
+    )
+    return StreamingResponse(
+        _iter_content(download.content),
+        media_type=download.mime_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{download.file_name}"'
+            )
+        },
     )
 
 

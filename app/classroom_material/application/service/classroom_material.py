@@ -17,6 +17,7 @@ from app.classroom_material.domain.entity import (
 from app.classroom_material.domain.repository import ClassroomMaterialRepository
 from app.classroom_material.domain.usecase import ClassroomMaterialUseCase
 from app.file.domain.entity.file import FileStatus
+from app.file.domain.entity.file_download import FileDownload
 from app.file.domain.service import FileUploadData
 from app.file.domain.usecase.file import FileUseCase
 from app.user.domain.entity import UserRole
@@ -94,6 +95,20 @@ class ClassroomMaterialService(ClassroomMaterialUseCase):
         if material.classroom_id != classroom.id:
             raise ClassroomMaterialNotFoundException()
         return await self._to_result(material)
+
+    async def get_classroom_material_download(
+        self,
+        *,
+        classroom_id: UUID,
+        material_id: UUID,
+        current_user: CurrentUser,
+    ) -> FileDownload:
+        result = await self.get_classroom_material(
+            classroom_id=classroom_id,
+            material_id=material_id,
+            current_user=current_user,
+        )
+        return await self.file_usecase.get_file_download(result.file.id)
 
     @transactional
     async def update_classroom_material(
