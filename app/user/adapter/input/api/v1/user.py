@@ -14,12 +14,21 @@ from app.user.adapter.input.api.v1.response import (
 )
 from app.user.container import UserContainer
 from app.user.domain.command import CreateUserCommand, UpdateUserCommand
-from app.user.domain.usecase.user import UserUseCase
+from app.user.domain.usecase import UserUseCase
+from core.fastapi.dependencies import (
+    IsAdmin,
+    IsAuthenticated,
+    PermissionDependency,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.post("", response_model=UserResponse)
+@router.post(
+    "",
+    response_model=UserResponse,
+    dependencies=[Depends(PermissionDependency([IsAdmin]))],
+)
 @inject
 async def create_user(
     request: CreateUserRequest,
@@ -29,17 +38,22 @@ async def create_user(
     return UserResponse(
         data=UserPayload(
             id=str(user.id),
-            username=user.username,
+            organization_id=str(user.organization_id),
+            login_id=user.login_id,
+            role=user.role.value,
             email=user.email,
-            nickname=user.profile.nickname,
-            real_name=user.profile.real_name,
-            phone_number=user.profile.phone_number,
+            name=user.name,
+            status=user.status.value,
             is_deleted=user.is_deleted,
         )
     )
 
 
-@router.get("", response_model=UserListResponse)
+@router.get(
+    "",
+    response_model=UserListResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
 @inject
 async def list_users(
     usecase: UserUseCase = Depends(Provide[UserContainer.service]),
@@ -49,11 +63,12 @@ async def list_users(
         data=[
             UserPayload(
                 id=str(user.id),
-                username=user.username,
+                organization_id=str(user.organization_id),
+                login_id=user.login_id,
+                role=user.role.value,
                 email=user.email,
-                nickname=user.profile.nickname,
-                real_name=user.profile.real_name,
-                phone_number=user.profile.phone_number,
+                name=user.name,
+                status=user.status.value,
                 is_deleted=user.is_deleted,
             )
             for user in users
@@ -71,17 +86,22 @@ async def get_user(
     return UserResponse(
         data=UserPayload(
             id=str(user.id),
-            username=user.username,
+            organization_id=str(user.organization_id),
+            login_id=user.login_id,
+            role=user.role.value,
             email=user.email,
-            nickname=user.profile.nickname,
-            real_name=user.profile.real_name,
-            phone_number=user.profile.phone_number,
+            name=user.name,
+            status=user.status.value,
             is_deleted=user.is_deleted,
         )
     )
 
 
-@router.patch("/{user_id}", response_model=UserResponse)
+@router.patch(
+    "/{user_id}",
+    response_model=UserResponse,
+    dependencies=[Depends(PermissionDependency([IsAdmin]))],
+)
 @inject
 async def update_user(
     user_id: UUID,
@@ -95,17 +115,22 @@ async def update_user(
     return UserResponse(
         data=UserPayload(
             id=str(user.id),
-            username=user.username,
+            organization_id=str(user.organization_id),
+            login_id=user.login_id,
+            role=user.role.value,
             email=user.email,
-            nickname=user.profile.nickname,
-            real_name=user.profile.real_name,
-            phone_number=user.profile.phone_number,
+            name=user.name,
+            status=user.status.value,
             is_deleted=user.is_deleted,
         )
     )
 
 
-@router.delete("/{user_id}", response_model=UserResponse)
+@router.delete(
+    "/{user_id}",
+    response_model=UserResponse,
+    dependencies=[Depends(PermissionDependency([IsAdmin]))],
+)
 @inject
 async def delete_user(
     user_id: UUID,
@@ -115,11 +140,12 @@ async def delete_user(
     return UserResponse(
         data=UserPayload(
             id=str(user.id),
-            username=user.username,
+            organization_id=str(user.organization_id),
+            login_id=user.login_id,
+            role=user.role.value,
             email=user.email,
-            nickname=user.profile.nickname,
-            real_name=user.profile.real_name,
-            phone_number=user.profile.phone_number,
+            name=user.name,
+            status=user.status.value,
             is_deleted=user.is_deleted,
         )
     )

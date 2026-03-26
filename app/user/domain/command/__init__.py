@@ -1,19 +1,21 @@
+from uuid import UUID
+
 from pydantic import BaseModel
+
+from app.user.domain.entity import UserRole, UserStatus
 
 
 class CreateUserCommand(BaseModel):
-    username: str
-    password: str
-    email: str
-    nickname: str
-    real_name: str
-    phone_number: str | None = None
+    organization_id: UUID
+    login_id: str
+    role: UserRole
+    email: str | None = None
+    name: str
 
 
 class UpdateUserCommand(BaseModel):
-    username: str | None = None
-    password: str | None = None
+    login_id: str | None = None
+    role: UserRole | None = None
     email: str | None = None
-    nickname: str | None = None
-    real_name: str | None = None
-    phone_number: str | None = None
+    name: str | None = None
+    status: UserStatus | None = None

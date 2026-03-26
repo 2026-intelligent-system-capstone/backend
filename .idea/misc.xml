@@ -3,7 +3,7 @@
   <component name="Black">
     <option name="sdkName" value="development-outsourcing-platform/backend" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="uv (fastapi-hexagonal-boilerplate)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="uv (2026-intelligent-system-capstone/backend)" project-jdk-type="Python SDK" />
   <component name="RuffConfiguration">
     <option name="enabled" value="true" />
   </component>

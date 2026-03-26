@@ -1,9 +1,9 @@
 from dependency_injector import containers, providers
 
-from app.user.adapter.output.persistence.sqlalchemy.user import (
+from app.user.adapter.output.persistence.sqlalchemy import (
     UserSQLAlchemyRepository,
 )
-from app.user.application.service.user import UserService
+from app.user.application.service import UserService
 
 
 class UserContainer(containers.DeclarativeContainer):

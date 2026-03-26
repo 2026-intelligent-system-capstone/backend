@@ -1,28 +1,62 @@
 services:
+  backend:
+    container_name: dialearn-backend
+    image: pressodh/dialearn:latest
+    restart: unless-stopped
+    env_file:
+      - .env.app
+    environment:
+      ENV: prod
+      ENVIRONMENT: prod
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-dialearn}
+      VALKEY_URL: redis://valkey:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - app
+      - proxy
+
   postgres:
-    image: postgres:18
+    image: postgres:18-alpine
     container_name: dialearn-backend-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: test_db
-    ports:
-      - "55432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-dialearn}
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d test_db"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U postgres -d ${POSTGRES_DB:-dialearn}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
     restart: unless-stopped
+    networks:
+      - app
 
   valkey:
     image: valkey/valkey:8-alpine
     container_name: dialearn-backend-valkey
-    ports:
-      - "6379:6379"
     volumes:
       - valkey_data:/data
     healthcheck:
@@ -32,7 +66,15 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+    networks:
+      - app
 
 volumes:
   postgres_data:
   valkey_data:
+
+networks:
+  app:
+    driver: bridge
+  proxy:
+    external: true

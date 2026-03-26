@@ -7,7 +7,7 @@ from core.common.value_object import ValueObject
 
 class FileStatus(ValueObject, StrEnum):
     PENDING = "pending"  # Uploaded to storage but not yet linked/confirmed
-    ACTIVE = "active"  # Linked to a domain (e.g., User profile)
+    ACTIVE = "active"  # Linked to another domain record
     DELETED = "deleted"
 
 

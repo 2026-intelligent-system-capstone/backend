@@ -1,16 +1,14 @@
 from uuid import UUID
 
 from app.user.application.exception import (
-    UserEmailAlreadyExistsException,
-    UserNameAlreadyExistsException,
+    UserAccountAlreadyExistsException,
     UserNotFoundException,
 )
 from app.user.domain.command import CreateUserCommand, UpdateUserCommand
-from app.user.domain.entity.user import Profile, User
-from app.user.domain.repository.user import UserRepository
-from app.user.domain.usecase.user import UserUseCase
+from app.user.domain.entity import User
+from app.user.domain.repository import UserRepository
+from app.user.domain.usecase import UserUseCase
 from core.db.transactional import transactional
-from core.helpers.argon2 import Argon2Helper
 
 
 class UserService(UserUseCase):
@@ -19,28 +17,23 @@ class UserService(UserUseCase):
 
     @transactional
     async def create_user(self, command: CreateUserCommand) -> User:
-        existing_user = await self.repository.get_by_username(command.username)
-        if existing_user:
-            raise UserNameAlreadyExistsException()
-
-        existing_user = await self.repository.get_by_email(command.email)
-        if existing_user:
-            raise UserEmailAlreadyExistsException()
-
-        hashed_password = Argon2Helper.hash(command.password)
-        profile = Profile(
-            nickname=command.nickname,
-            real_name=command.real_name,
-            phone_number=command.phone_number,
+        existing_user = await self.repository.get_by_organization_and_login_id(
+            command.organization_id,
+            command.login_id,
         )
+        if existing_user:
+            raise UserAccountAlreadyExistsException()
+
         user = User(
-            username=command.username,
-            password=hashed_password,
+            organization_id=command.organization_id,
+            login_id=command.login_id,
+            role=command.role,
             email=command.email,
-            profile=profile,
+            name=command.name,
         )
 
-        return await self.repository.save(user)
+        await self.repository.save(user)
+        return user
 
     async def get_user(self, user_id: UUID) -> User:
         user = await self.repository.get_by_id(user_id)
@@ -62,50 +55,34 @@ class UserService(UserUseCase):
         delivered_fields = command.model_fields_set
 
         if (
-            "username" in delivered_fields
-            and command.username is not None
-            and command.username != user.username
+            "login_id" in delivered_fields
+            and command.login_id is not None
+            and command.login_id != user.login_id
         ):
-            existing_user = await self.repository.get_by_username(
-                command.username
+            existing_user = (
+                await self.repository.get_by_organization_and_login_id(
+                    user.organization_id,
+                    command.login_id,
+                )
             )
             if existing_user is not None and existing_user.id != user.id:
-                raise UserNameAlreadyExistsException()
-            user.username = command.username
+                raise UserAccountAlreadyExistsException()
+            user.login_id = command.login_id
 
-        if (
-            "email" in delivered_fields
-            and command.email is not None
-            and command.email != user.email
-        ):
-            existing_user = await self.repository.get_by_email(command.email)
-            if existing_user is not None and existing_user.id != user.id:
-                raise UserEmailAlreadyExistsException()
+        if "email" in delivered_fields:
             user.email = command.email
 
-        if "password" in delivered_fields and command.password is not None:
-            user.password = Argon2Helper.hash(command.password)
+        if "role" in delivered_fields and command.role is not None:
+            user.role = command.role
 
-        nickname = user.profile.nickname
-        if "nickname" in delivered_fields and command.nickname is not None:
-            nickname = command.nickname
+        if "status" in delivered_fields and command.status is not None:
+            user.status = command.status
 
-        real_name = user.profile.real_name
-        if "real_name" in delivered_fields and command.real_name is not None:
-            real_name = command.real_name
+        if "name" in delivered_fields and command.name is not None:
+            user.name = command.name
 
-        phone_number = user.profile.phone_number
-        if "phone_number" in delivered_fields:
-            phone_number = command.phone_number
-
-        user.profile = Profile(
-            nickname=nickname,
-            real_name=real_name,
-            phone_number=phone_number,
-            profile_image_id=user.profile.profile_image_id,
-        )
-
-        return await self.repository.save(user)
+        await self.repository.save(user)
+        return user
 
     @transactional
     async def delete_user(self, user_id: UUID) -> User:
@@ -114,4 +91,5 @@ class UserService(UserUseCase):
             raise UserNotFoundException()
 
         user.delete()
-        return await self.repository.save(user)
+        await self.repository.save(user)
+        return user

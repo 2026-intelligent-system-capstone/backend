@@ -2,7 +2,7 @@ from uuid import UUID
 
 from valkey.asyncio import Valkey
 
-from app.auth.domain.repository.auth_token import AuthTokenRepository
+from app.auth.domain.repository import AuthTokenRepository
 
 
 class ValkeyAuthTokenRepository(AuthTokenRepository):

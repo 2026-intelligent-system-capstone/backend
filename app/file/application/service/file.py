@@ -1,16 +1,23 @@
+from pathlib import Path
 from uuid import UUID
 
-from app.file.application.exception import FileNotFoundException
+from app.file.application.exception import (
+    FileNotFoundException,
+    FileUploadFailedException,
+)
 from app.file.domain.command import CreateFileCommand, UpdateFileCommand
-from app.file.domain.entity.file import File
+from app.file.domain.entity.file import File, FileStatus
+from app.file.domain.entity.file_download import FileDownload
 from app.file.domain.repository.file import FileRepository
+from app.file.domain.service import FileStorage, FileUploadData
 from app.file.domain.usecase.file import FileUseCase
 from core.db.transactional import transactional
 
 
 class FileService(FileUseCase):
-    def __init__(self, *, repository: FileRepository):
+    def __init__(self, *, repository: FileRepository, storage: FileStorage):
         self.repository = repository
+        self.storage = storage
 
     @transactional
     async def create_file(self, command: CreateFileCommand) -> File:
@@ -21,7 +28,36 @@ class FileService(FileUseCase):
             file_size=command.file_size,
             mime_type=command.mime_type,
         )
-        return await self.repository.save(file)
+        await self.repository.save(file)
+        return file
+
+    @transactional
+    async def upload_file(
+        self,
+        *,
+        file_upload: FileUploadData,
+        directory: str,
+        status: FileStatus = FileStatus.PENDING,
+    ) -> File:
+        try:
+            stored_file = await self.storage.upload(
+                file_upload=file_upload,
+                directory=directory,
+            )
+        except Exception as exc:
+            raise FileUploadFailedException() from exc
+
+        file_extension = Path(file_upload.file_name).suffix.lstrip(".").lower()
+        file = File(
+            file_name=file_upload.file_name,
+            file_path=stored_file.path,
+            file_extension=file_extension,
+            file_size=stored_file.size,
+            mime_type=file_upload.mime_type,
+            status=status,
+        )
+        await self.repository.save(file)
+        return file
 
     async def list_files(self) -> list[File]:
         return list(await self.repository.list())
@@ -31,6 +67,11 @@ class FileService(FileUseCase):
         if file is None:
             raise FileNotFoundException()
         return file
+
+    async def get_file_download(self, file_id: UUID) -> FileDownload:
+        file = await self.get_file(file_id)
+        stored_file = await self.storage.open(path=file.file_path)
+        return FileDownload(file=file, content=stored_file.content)
 
     @transactional
     async def update_file(
@@ -55,10 +96,14 @@ class FileService(FileUseCase):
         if "status" in delivered_fields and command.status is not None:
             file.status = command.status
 
-        return await self.repository.save(file)
+        await self.repository.save(file)
+        return file
 
     @transactional
     async def delete_file(self, file_id: UUID) -> File:
         file = await self.get_file(file_id)
+        if file.status != FileStatus.DELETED:
+            await self.storage.delete(path=file.file_path)
         file.delete()
-        return await self.repository.save(file)
+        await self.repository.save(file)
+        return file

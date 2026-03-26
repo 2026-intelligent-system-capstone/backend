@@ -33,6 +33,21 @@ class CommonSettings(BaseSettings):
     AUTH_COOKIE_SECURE: bool = False
     AUTH_COOKIE_SAMESITE: CookieSameSite = "lax"
 
+    LOCAL_FILE_STORAGE_ROOT: str = ".tmp/storage"
+
+    R2_ENDPOINT_URL: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = ""
+    R2_REGION_NAME: str = "auto"
+
+    S3_ENDPOINT_URL: str = ""
+    S3_ACCESS_KEY_ID: str = ""
+    S3_SECRET_ACCESS_KEY: str = ""
+    S3_BUCKET_NAME: str = ""
+    S3_REGION_NAME: str = ""
+    S3_ADDRESSING_STYLE: str = "auto"
+
     SQLALCHEMY_ECHO: bool = False
     FRONTEND_CORS_ORIGIN: list[str] = []
 

@@ -1,8 +1,9 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 
 class LoginCommand(BaseModel):
-    email: EmailStr
+    organization_code: str
+    login_id: str
     password: str
 
 

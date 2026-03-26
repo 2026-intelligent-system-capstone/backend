@@ -13,7 +13,7 @@ Dialearn helps evaluate learning competency through interactive AI-driven assess
 
 ## Built-In Modules
 
-- `user`: account and profile management
+- `user`: account and identity management
 - `auth`: JWT cookie login, refresh rotation, logout, and Valkey-backed token storage
 - `file`: file metadata management with status transitions
 

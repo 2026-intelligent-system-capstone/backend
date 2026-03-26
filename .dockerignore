@@ -1,0 +1,14 @@
+.git
+.github
+.mypy_cache
+.opencode
+.pytest_cache
+.ruff_cache
+.tmp
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+docker/postgres/init
+tests

@@ -1,20 +1,20 @@
 from abc import ABC, abstractmethod
 
-from app.auth.application.dto import AuthTokensDTO
 from app.auth.domain.command import (
     LoginCommand,
     LogoutCommand,
     RefreshTokenCommand,
 )
+from app.auth.domain.entity import AuthTokens
 
 
 class AuthUseCase(ABC):
     @abstractmethod
-    async def login(self, command: LoginCommand) -> AuthTokensDTO:
+    async def login(self, command: LoginCommand) -> AuthTokens:
         """Login user and issue tokens."""
 
     @abstractmethod
-    async def refresh(self, command: RefreshTokenCommand) -> AuthTokensDTO:
+    async def refresh(self, command: RefreshTokenCommand) -> AuthTokens:
         """Refresh tokens."""
 
     @abstractmethod

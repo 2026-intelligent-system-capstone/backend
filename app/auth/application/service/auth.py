@@ -2,8 +2,9 @@ from uuid import UUID, uuid4
 
 from jwt import PyJWTError
 
-from app.auth.application.dto import AuthTokensDTO
 from app.auth.application.exception import (
+    AuthIdentityProviderNotConfiguredException,
+    AuthIdentityProviderUnavailableException,
     AuthInvalidCredentialsException,
     AuthInvalidRefreshTokenException,
 )
@@ -12,13 +13,16 @@ from app.auth.domain.command import (
     LogoutCommand,
     RefreshTokenCommand,
 )
-from app.auth.domain.repository.auth_token import AuthTokenRepository
+from app.auth.domain.entity import AuthTokens
+from app.auth.domain.repository import AuthTokenRepository
 from app.auth.domain.usecase.auth import AuthUseCase
-from app.user.domain.entity.user import UserStatus
-from app.user.domain.repository.user import UserRepository
+from app.organization.domain.repository import OrganizationRepository
+from app.organization.domain.service import OrganizationAuthService
+from app.user.domain.entity import User, UserRole, UserStatus
+from app.user.domain.repository import UserRepository
 from core.config import config
+from core.db.transactional import transactional
 from core.domain.types import TokenType
-from core.helpers.argon2 import Argon2Helper
 from core.helpers.token import TokenHelper
 
 
@@ -26,23 +30,69 @@ class AuthService(AuthUseCase):
     def __init__(
         self,
         *,
+        organization_repository: OrganizationRepository,
         user_repository: UserRepository,
         auth_token_repository: AuthTokenRepository,
+        organization_auth_service: OrganizationAuthService,
     ):
+        self.organization_repository = organization_repository
         self.user_repository = user_repository
         self.auth_token_repository = auth_token_repository
+        self.organization_auth_service = organization_auth_service
 
-    async def login(self, command: LoginCommand) -> AuthTokensDTO:
-        user = await self.user_repository.get_by_email(command.email)
-        if user is None or user.is_deleted or user.status == UserStatus.BLOCKED:
+    @transactional
+    async def login(self, command: LoginCommand) -> AuthTokens:
+        organization = await self.organization_repository.get_by_code(
+            command.organization_code
+        )
+        if organization is None or not organization.is_active:
             raise AuthInvalidCredentialsException()
 
-        if not Argon2Helper.verify(command.password, user.password):
-            raise AuthInvalidCredentialsException()
+        try:
+            identity = await self.organization_auth_service.authenticate(
+                organization=organization,
+                login_id=command.login_id,
+                password=command.password,
+            )
+        except (
+            AuthIdentityProviderNotConfiguredException,
+            AuthIdentityProviderUnavailableException,
+        ):
+            raise
+        except Exception as exc:
+            raise AuthInvalidCredentialsException() from exc
 
-        return await self._issue_tokens(user_id=user.id)
+        user = await self.user_repository.get_by_organization_and_login_id(
+            organization.id,
+            identity.login_id,
+        )
 
-    async def refresh(self, command: RefreshTokenCommand) -> AuthTokensDTO:
+        if user is None:
+            user = User(
+                organization_id=organization.id,
+                login_id=identity.login_id,
+                role=identity.role,
+                email=identity.email,
+                name=identity.name,
+            )
+        else:
+            if user.is_deleted or user.status == UserStatus.BLOCKED:
+                raise AuthInvalidCredentialsException()
+
+            user.role = identity.role
+            user.email = identity.email
+            user.name = identity.name
+
+        await self.user_repository.save(user)
+
+        return await self._issue_tokens(
+            user_id=user.id,
+            organization_id=organization.id,
+            organization_code=organization.code,
+            role=user.role,
+        )
+
+    async def refresh(self, command: RefreshTokenCommand) -> AuthTokens:
         if command.refresh_token is None:
             raise AuthInvalidRefreshTokenException()
 
@@ -57,8 +107,23 @@ class AuthService(AuthUseCase):
         if stored_token != command.refresh_token:
             raise AuthInvalidRefreshTokenException()
 
+        user = await self.user_repository.get_by_id(user_id)
+        if user is None or user.is_deleted:
+            raise AuthInvalidRefreshTokenException()
+
+        organization = await self.organization_repository.get_by_id(
+            user.organization_id
+        )
+        if organization is None:
+            raise AuthInvalidRefreshTokenException()
+
         await self.auth_token_repository.delete(user_id=user_id, jti=jti)
-        return await self._issue_tokens(user_id=user_id)
+        return await self._issue_tokens(
+            user_id=user_id,
+            organization_id=organization.id,
+            organization_code=organization.code,
+            role=user.role,
+        )
 
     async def logout(self, command: LogoutCommand) -> None:
         if command.refresh_token is None:
@@ -73,7 +138,14 @@ class AuthService(AuthUseCase):
 
         await self.auth_token_repository.delete(user_id=user_id, jti=jti)
 
-    async def _issue_tokens(self, *, user_id: UUID) -> AuthTokensDTO:
+    async def _issue_tokens(
+        self,
+        *,
+        user_id: UUID,
+        organization_id: UUID,
+        organization_code: str,
+        role: UserRole,
+    ) -> AuthTokens:
         access_token = TokenHelper.create_token(
             payload={"sub": str(user_id)},
             token_type=TokenType.ACCESS,
@@ -89,8 +161,11 @@ class AuthService(AuthUseCase):
             refresh_token=refresh_token,
             expires_in=config.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
         )
-        return AuthTokensDTO(
+        return AuthTokens(
             user_id=str(user_id),
+            organization_id=str(organization_id),
+            organization_code=organization_code,
+            role=role.value,
             access_token=access_token,
             refresh_token=refresh_token,
         )

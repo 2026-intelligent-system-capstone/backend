@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from app.user.domain.command import CreateUserCommand, UpdateUserCommand
-from app.user.domain.entity.user import User
+from app.user.domain.entity import User
 
 
 class UserUseCase(ABC):

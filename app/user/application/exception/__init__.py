@@ -1,11 +1,11 @@
 from app.user.application.exception.user import (
-    UserEmailAlreadyExistsException,
-    UserNameAlreadyExistsException,
+    UserAccountAlreadyExistsException,
+    UserInvalidRoleException,
     UserNotFoundException,
 )
 
 __all__ = [
-    "UserEmailAlreadyExistsException",
-    "UserNameAlreadyExistsException",
+    "UserAccountAlreadyExistsException",
+    "UserInvalidRoleException",
     "UserNotFoundException",
 ]

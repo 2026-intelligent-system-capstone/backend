@@ -9,12 +9,12 @@ from core.db.sqlalchemy.models.file import file_table
 
 
 class FileSQLAlchemyRepository(FileRepository):
-    async def save(self, file: File) -> File:
-        return await session.merge(file)
+    async def save(self, entity: File) -> None:
+        session.add(entity)
 
-    async def get_by_id(self, file_id: UUID) -> File | None:
+    async def get_by_id(self, entity_id: UUID) -> File | None:
         query = select(File).where(
-            file_table.c.id == file_id,
+            file_table.c.id == entity_id,
             file_table.c.status != FileStatus.DELETED,
         )
         result = await session.execute(query)

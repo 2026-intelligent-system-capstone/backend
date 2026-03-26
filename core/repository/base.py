@@ -7,7 +7,7 @@ from core.common.entity import Entity
 
 class BaseRepository[T: Entity](ABC):
     @abstractmethod
-    async def save(self, entity: T) -> T:
+    async def save(self, entity: T) -> None:
         pass
 
     @abstractmethod

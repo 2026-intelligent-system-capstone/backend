@@ -2,21 +2,20 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Cookie, Depends, Response
 
 from app.auth.adapter.input.api.v1.request import LoginRequest
-from app.auth.adapter.input.api.v1.response import AuthPayload, AuthResponse
-from app.auth.application.dto import AuthTokensDTO
 from app.auth.container import AuthContainer
 from app.auth.domain.command import (
     LoginCommand,
     LogoutCommand,
     RefreshTokenCommand,
 )
+from app.auth.domain.entity import AuthTokens
 from app.auth.domain.usecase.auth import AuthUseCase
 from core.config import config
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _set_auth_cookies(response: Response, tokens: AuthTokensDTO) -> None:
+def _set_auth_cookies(response: Response, tokens: AuthTokens) -> None:
     response.set_cookie(
         key=config.ACCESS_TOKEN_COOKIE_NAME,
         value=tokens.access_token,
@@ -42,7 +41,7 @@ def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(key=config.REFRESH_TOKEN_COOKIE_NAME, path="/")
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post("/login")
 @inject
 async def login(
     request: LoginRequest,
@@ -51,12 +50,10 @@ async def login(
 ):
     tokens = await usecase.login(LoginCommand(**request.model_dump()))
     _set_auth_cookies(response, tokens)
-    return AuthResponse(
-        data=AuthPayload(user_id=tokens.user_id, authenticated=True),
-    )
+    return None
 
 
-@router.post("/refresh", response_model=AuthResponse)
+@router.post("/refresh")
 @inject
 async def refresh(
     response: Response,
@@ -70,12 +67,10 @@ async def refresh(
         RefreshTokenCommand(refresh_token=refresh_token)
     )
     _set_auth_cookies(response, tokens)
-    return AuthResponse(
-        data=AuthPayload(user_id=tokens.user_id, authenticated=True),
-    )
+    return None
 
 
-@router.post("/logout", response_model=AuthResponse)
+@router.post("/logout")
 @inject
 async def logout(
     response: Response,
@@ -87,6 +82,4 @@ async def logout(
 ):
     await usecase.logout(LogoutCommand(refresh_token=refresh_token))
     _clear_auth_cookies(response)
-    return AuthResponse(
-        data=AuthPayload(authenticated=False),
-    )
+    return None
