@@ -27,7 +27,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY --from=builder /app /app
+COPY gunicorn_conf.py /app/gunicorn_conf.py
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uv run alembic -x env=prod upgrade head && uv run uvicorn main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "uv run alembic -x env=prod upgrade head && gunicorn -c gunicorn_conf.py main:app"]
