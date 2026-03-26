@@ -7,22 +7,25 @@ import pytest
 
 from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
-from app.classroom.domain.entity import Classroom
-from app.classroom.domain.usecase import ClassroomUseCase
-from app.classroom_material.application.exception import (
+from app.classroom.application.exception import (
     ClassroomMaterialNotFoundException,
 )
-from app.classroom_material.application.service import ClassroomMaterialService
-from app.classroom_material.domain.command import (
+from app.classroom.application.service import ClassroomService
+from app.classroom.domain.command import (
     CreateClassroomMaterialCommand,
     UpdateClassroomMaterialCommand,
 )
-from app.classroom_material.domain.entity import ClassroomMaterial
-from app.classroom_material.domain.repository import ClassroomMaterialRepository
+from app.classroom.domain.entity import Classroom, ClassroomMaterial
+from app.classroom.domain.repository import (
+    ClassroomMaterialRepository,
+    ClassroomRepository,
+)
 from app.file.domain.entity.file import File, FileStatus
+from app.file.domain.entity.file_download import FileDownload
 from app.file.domain.service import FileUploadData
 from app.file.domain.usecase.file import FileUseCase
-from app.user.domain.entity import UserRole
+from app.user.domain.entity import User, UserRole
+from app.user.domain.repository import UserRepository
 
 ORG_ID = UUID("11111111-1111-1111-1111-111111111111")
 CLASSROOM_ID = UUID("22222222-2222-2222-2222-222222222222")
@@ -60,43 +63,88 @@ class InMemoryClassroomMaterialRepository(ClassroomMaterialRepository):
         self.materials.pop(entity.id, None)
 
 
-class FakeClassroomUseCase(ClassroomUseCase):
-    def __init__(self, classroom: Classroom):
-        self.classroom = classroom
+class InMemoryClassroomRepository(ClassroomRepository):
+    def __init__(self, classrooms: list[Classroom] | None = None):
+        self.classrooms = {
+            classroom.id: classroom for classroom in classrooms or []
+        }
 
-    async def create_classroom(self, **kwargs):
-        raise NotImplementedError
+    async def save(self, entity: Classroom) -> None:
+        self.classrooms[entity.id] = entity
 
-    async def get_classroom(
-        self, *, classroom_id: UUID, current_user: CurrentUser
-    ):
-        del classroom_id, current_user
-        return self.classroom
+    async def get_by_id(self, entity_id: UUID) -> Classroom | None:
+        return self.classrooms.get(entity_id)
 
-    async def get_manageable_classroom(
+    async def list(self) -> list[Classroom]:
+        return list(self.classrooms.values())
+
+    async def get_by_organization_and_name_and_term(
         self,
         *,
-        classroom_id: UUID,
-        current_user: CurrentUser,
-    ) -> Classroom:
-        del classroom_id, current_user
-        return self.classroom
+        organization_id: UUID,
+        name: str,
+        grade: int,
+        semester: str,
+        section: str,
+    ) -> Classroom | None:
+        for classroom in self.classrooms.values():
+            if (
+                classroom.organization_id == organization_id
+                and classroom.name == name
+                and classroom.grade == grade
+                and classroom.semester == semester
+                and classroom.section == section
+            ):
+                return classroom
+        return None
 
-    async def list_classrooms(self, *, current_user: CurrentUser):
-        del current_user
-        return [self.classroom]
+    async def list_by_organization(
+        self, organization_id: UUID
+    ) -> Sequence[Classroom]:
+        return [
+            classroom
+            for classroom in self.classrooms.values()
+            if classroom.organization_id == organization_id
+        ]
 
-    async def update_classroom(self, **kwargs):
-        raise NotImplementedError
+    async def delete(self, entity: Classroom) -> None:
+        self.classrooms.pop(entity.id, None)
 
-    async def delete_classroom(self, **kwargs):
-        raise NotImplementedError
 
-    async def invite_classroom_students(self, **kwargs):
-        raise NotImplementedError
+class InMemoryUserRepository(UserRepository):
+    def __init__(self, users: list[User]):
+        self.users = {user.id: user for user in users}
 
-    async def remove_classroom_student(self, **kwargs):
-        raise NotImplementedError
+    async def save(self, entity: User) -> None:
+        self.users[entity.id] = entity
+
+    async def get_by_id(self, entity_id: UUID) -> User | None:
+        return self.users.get(entity_id)
+
+    async def list(self) -> list[User]:
+        return list(self.users.values())
+
+    async def list_by_organization(
+        self, organization_id: UUID
+    ) -> Sequence[User]:
+        return [
+            user
+            for user in self.users.values()
+            if user.organization_id == organization_id
+        ]
+
+    async def get_by_organization_and_login_id(
+        self,
+        organization_id: UUID,
+        login_id: str,
+    ) -> User | None:
+        for user in self.users.values():
+            if (
+                user.organization_id == organization_id
+                and user.login_id == login_id
+            ):
+                return user
+        return None
 
 
 class FakeFileUseCase(FileUseCase):
@@ -154,16 +202,7 @@ class FakeFileUseCase(FileUseCase):
     async def get_file_download(self, file_id: UUID):
         self.downloaded_file_ids.append(file_id)
         file = self.files[file_id]
-        return type(
-            "FileDownload",
-            (),
-            {
-                "file": file,
-                "file_name": file.file_name,
-                "mime_type": file.mime_type,
-                "content": BytesIO(b"downloaded-content"),
-            },
-        )()
+        return FileDownload(file=file, content=BytesIO(b"downloaded-content"))
 
     async def update_file(self, file_id: UUID, command):
         del file_id, command
@@ -204,6 +243,39 @@ def make_current_user(*, role: UserRole, user_id: UUID) -> CurrentUser:
     )
 
 
+def make_user(user_id: UUID, role: UserRole) -> User:
+    user = User(
+        organization_id=ORG_ID,
+        login_id=str(user_id.int)[:7],
+        role=role,
+        email=f"{user_id}@example.com",
+        name="사용자",
+    )
+    user.id = user_id
+    return user
+
+
+def build_service(
+    *,
+    materials: list[ClassroomMaterial] | None = None,
+    allow_student_material_access: bool = False,
+    file_usecase: FakeFileUseCase | None = None,
+) -> ClassroomService:
+    return ClassroomService(
+        repository=InMemoryClassroomRepository([
+            make_classroom(
+                allow_student_material_access=allow_student_material_access
+            )
+        ]),
+        user_repository=InMemoryUserRepository([
+            make_user(PROFESSOR_ID, UserRole.PROFESSOR),
+            make_user(STUDENT_ID, UserRole.STUDENT),
+        ]),
+        material_repository=InMemoryClassroomMaterialRepository(materials),
+        file_usecase=file_usecase or FakeFileUseCase(),
+    )
+
+
 def make_material() -> ClassroomMaterial:
     material = ClassroomMaterial(
         classroom_id=CLASSROOM_ID,
@@ -226,13 +298,8 @@ def make_other_classroom_material() -> ClassroomMaterial:
 
 @pytest.mark.asyncio
 async def test_create_classroom_material_success():
-    repository = InMemoryClassroomMaterialRepository()
     file_usecase = FakeFileUseCase()
-    service = ClassroomMaterialService(
-        repository=repository,
-        classroom_usecase=FakeClassroomUseCase(make_classroom()),
-        file_usecase=file_usecase,
-    )
+    service = build_service(file_usecase=file_usecase)
 
     result = await service.create_classroom_material(
         classroom_id=CLASSROOM_ID,
@@ -278,11 +345,9 @@ async def test_list_classroom_materials_for_student_with_access():
         status=FileStatus.ACTIVE,
     )
     file_usecase.files[FILE_ID].id = FILE_ID
-    service = ClassroomMaterialService(
-        repository=InMemoryClassroomMaterialRepository([material]),
-        classroom_usecase=FakeClassroomUseCase(
-            make_classroom(allow_student_material_access=True)
-        ),
+    service = build_service(
+        materials=[material],
+        allow_student_material_access=True,
         file_usecase=file_usecase,
     )
 
@@ -300,11 +365,7 @@ async def test_list_classroom_materials_for_student_with_access():
 
 @pytest.mark.asyncio
 async def test_list_classroom_materials_for_student_without_access_raises():
-    service = ClassroomMaterialService(
-        repository=InMemoryClassroomMaterialRepository([make_material()]),
-        classroom_usecase=FakeClassroomUseCase(make_classroom()),
-        file_usecase=FakeFileUseCase(),
-    )
+    service = build_service(materials=[make_material()])
 
     with pytest.raises(AuthForbiddenException):
         await service.list_classroom_materials(
@@ -319,7 +380,6 @@ async def test_list_classroom_materials_for_student_without_access_raises():
 @pytest.mark.asyncio
 async def test_update_classroom_material_replaces_file_and_deletes_old():
     material = make_material()
-    repository = InMemoryClassroomMaterialRepository([material])
     file_usecase = FakeFileUseCase()
     old_file = File(
         file_name="week1.pdf",
@@ -331,9 +391,8 @@ async def test_update_classroom_material_replaces_file_and_deletes_old():
     )
     old_file.id = FILE_ID
     file_usecase.files[FILE_ID] = old_file
-    service = ClassroomMaterialService(
-        repository=repository,
-        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+    service = build_service(
+        materials=[material],
         file_usecase=file_usecase,
     )
 
@@ -365,7 +424,6 @@ async def test_update_classroom_material_replaces_file_and_deletes_old():
 @pytest.mark.asyncio
 async def test_update_classroom_material_metadata_only_keeps_existing_file():
     material = make_material()
-    repository = InMemoryClassroomMaterialRepository([material])
     file_usecase = FakeFileUseCase()
     current_file = File(
         file_name="week1.pdf",
@@ -377,9 +435,8 @@ async def test_update_classroom_material_metadata_only_keeps_existing_file():
     )
     current_file.id = FILE_ID
     file_usecase.files[FILE_ID] = current_file
-    service = ClassroomMaterialService(
-        repository=repository,
-        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+    service = build_service(
+        materials=[material],
         file_usecase=file_usecase,
     )
 
@@ -417,11 +474,8 @@ async def test_get_classroom_material_from_other_classroom_raises_not_found():
         status=FileStatus.ACTIVE,
     )
     file_usecase.files[FILE_ID].id = FILE_ID
-    service = ClassroomMaterialService(
-        repository=InMemoryClassroomMaterialRepository([
-            make_other_classroom_material()
-        ]),
-        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+    service = build_service(
+        materials=[make_other_classroom_material()],
         file_usecase=file_usecase,
     )
 
@@ -438,13 +492,7 @@ async def test_get_classroom_material_from_other_classroom_raises_not_found():
 
 @pytest.mark.asyncio
 async def test_delete_other_classroom_material_raises_not_found():
-    service = ClassroomMaterialService(
-        repository=InMemoryClassroomMaterialRepository([
-            make_other_classroom_material()
-        ]),
-        classroom_usecase=FakeClassroomUseCase(make_classroom()),
-        file_usecase=FakeFileUseCase(),
-    )
+    service = build_service(materials=[make_other_classroom_material()])
 
     with pytest.raises(ClassroomMaterialNotFoundException):
         await service.delete_classroom_material(
@@ -460,7 +508,6 @@ async def test_delete_other_classroom_material_raises_not_found():
 @pytest.mark.asyncio
 async def test_delete_classroom_material_deletes_material_and_file():
     material = make_material()
-    repository = InMemoryClassroomMaterialRepository([material])
     file_usecase = FakeFileUseCase()
     file = File(
         file_name="week1.pdf",
@@ -472,9 +519,8 @@ async def test_delete_classroom_material_deletes_material_and_file():
     )
     file.id = FILE_ID
     file_usecase.files[FILE_ID] = file
-    service = ClassroomMaterialService(
-        repository=repository,
-        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+    service = build_service(
+        materials=[material],
         file_usecase=file_usecase,
     )
 
@@ -488,17 +534,12 @@ async def test_delete_classroom_material_deletes_material_and_file():
     )
 
     assert result.material.id == MATERIAL_ID
-    assert repository.materials == {}
     assert file_usecase.deleted_file_ids == [FILE_ID]
 
 
 @pytest.mark.asyncio
 async def test_get_classroom_material_not_found_raises():
-    service = ClassroomMaterialService(
-        repository=InMemoryClassroomMaterialRepository(),
-        classroom_usecase=FakeClassroomUseCase(make_classroom()),
-        file_usecase=FakeFileUseCase(),
-    )
+    service = build_service()
 
     with pytest.raises(ClassroomMaterialNotFoundException):
         await service.get_classroom_material(
@@ -524,11 +565,9 @@ async def test_get_classroom_material_download_returns_stream():
         status=FileStatus.ACTIVE,
     )
     file_usecase.files[FILE_ID].id = FILE_ID
-    service = ClassroomMaterialService(
-        repository=InMemoryClassroomMaterialRepository([material]),
-        classroom_usecase=FakeClassroomUseCase(
-            make_classroom(allow_student_material_access=True)
-        ),
+    service = build_service(
+        materials=[material],
+        allow_student_material_access=True,
         file_usecase=file_usecase,
     )
 

@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 
-from app.classroom_material.domain.entity.classroom_material import (
-    ClassroomMaterial,
-)
+from app.classroom.domain.entity.classroom_material import ClassroomMaterial
 from app.file.domain.entity.file import File
 
 

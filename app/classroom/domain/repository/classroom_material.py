@@ -2,7 +2,7 @@ from abc import abstractmethod
 from collections.abc import Sequence
 from uuid import UUID
 
-from app.classroom_material.domain.entity import ClassroomMaterial
+from app.classroom.domain.entity import ClassroomMaterial
 from core.repository.base import BaseRepository
 
 

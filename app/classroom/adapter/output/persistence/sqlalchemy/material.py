@@ -1,13 +1,16 @@
 from collections.abc import Sequence
 from uuid import UUID
 
-from app.classroom_material.domain.entity import ClassroomMaterial
-from app.classroom_material.domain.repository import ClassroomMaterialRepository
+from sqlalchemy import select
+
+from app.classroom.domain.entity import ClassroomMaterial
+from app.classroom.domain.repository.classroom_material import (
+    ClassroomMaterialRepository,
+)
 from core.db.session import session
 from core.db.sqlalchemy.models.classroom_material import (
     classroom_material_table,
 )
-from sqlalchemy import select
 
 
 class ClassroomMaterialSQLAlchemyRepository(ClassroomMaterialRepository):

@@ -182,6 +182,62 @@ class FakeClassroomUseCase(ClassroomUseCase):
     ) -> Classroom:
         raise NotImplementedError
 
+    async def create_classroom_material(
+        self,
+        *,
+        classroom_id,
+        current_user,
+        command,
+        file_upload,
+    ):
+        raise NotImplementedError
+
+    async def list_classroom_materials(
+        self,
+        *,
+        classroom_id,
+        current_user,
+    ):
+        raise NotImplementedError
+
+    async def get_classroom_material(
+        self,
+        *,
+        classroom_id,
+        material_id,
+        current_user,
+    ):
+        raise NotImplementedError
+
+    async def get_classroom_material_download(
+        self,
+        *,
+        classroom_id,
+        material_id,
+        current_user,
+    ):
+        raise NotImplementedError
+
+    async def update_classroom_material(
+        self,
+        *,
+        classroom_id,
+        material_id,
+        current_user,
+        command,
+        file_upload=None,
+    ):
+        raise NotImplementedError
+
+    async def delete_classroom_material(
+        self,
+        *,
+        classroom_id,
+        material_id,
+        current_user,
+    ):
+        raise NotImplementedError
+
 
 def make_classroom() -> Classroom:
     classroom = Classroom(

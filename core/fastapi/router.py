@@ -4,7 +4,7 @@ from app.auth.adapter.input.api.v1.auth import router as auth_router
 from app.classroom.adapter.input.api.v1.classroom import (
     router as classroom_router,
 )
-from app.classroom_material.adapter.input.api.v1.classroom_material import (
+from app.classroom.adapter.input.api.v1.material import (
     router as classroom_material_router,
 )
 from app.exam.adapter.input.api.v1.exam import router as exam_router

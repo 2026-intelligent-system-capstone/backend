@@ -1,3 +1,0 @@
-from app.classroom_material.domain.entity import ClassroomMaterialDetail
-
-ClassroomMaterialResult = ClassroomMaterialDetail

@@ -8,10 +8,14 @@ from app.classroom.application.exception.classroom import (
     ClassroomStudentNotEnrolledException,
     ClassroomStudentNotFoundException,
 )
+from app.classroom.application.exception.material import (
+    ClassroomMaterialNotFoundException,
+)
 
 __all__ = [
     "ClassroomAlreadyExistsException",
     "ClassroomInvalidProfessorRoleException",
+    "ClassroomMaterialNotFoundException",
     "ClassroomInvalidStudentRoleException",
     "ClassroomNotFoundException",
     "ClassroomProfessorNotFoundException",

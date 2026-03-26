@@ -6,10 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.auth.application.exception import AuthForbiddenException
-from app.classroom_material.application.exception import (
+from app.classroom.application.exception import (
     ClassroomMaterialNotFoundException,
 )
-from app.classroom_material.application.service import ClassroomMaterialService
+from app.classroom.application.service import ClassroomService
 from app.file.domain.entity.file import File, FileStatus
 from app.user.adapter.output.persistence.sqlalchemy import (
     UserSQLAlchemyRepository,
@@ -92,7 +92,7 @@ def test_create_classroom_material_returns_200_for_professor(
         return professor_user
 
     monkeypatch.setattr(
-        ClassroomMaterialService,
+        ClassroomService,
         "create_classroom_material",
         create_stub,
     )
@@ -161,7 +161,7 @@ def test_list_classroom_materials_returns_200_for_student(
         return student_user
 
     monkeypatch.setattr(
-        ClassroomMaterialService,
+        ClassroomService,
         "list_classroom_materials",
         list_stub,
     )
@@ -188,7 +188,7 @@ def test_get_classroom_material_returns_403_when_forbidden(
         return student_user
 
     monkeypatch.setattr(
-        ClassroomMaterialService,
+        ClassroomService,
         "get_classroom_material",
         raise_forbidden,
     )
@@ -218,7 +218,7 @@ def test_update_classroom_material_returns_200_for_professor(
         return professor_user
 
     monkeypatch.setattr(
-        ClassroomMaterialService,
+        ClassroomService,
         "update_classroom_material",
         update_stub,
     )
@@ -247,7 +247,7 @@ def test_delete_classroom_material_returns_200_for_professor(
         return professor_user
 
     monkeypatch.setattr(
-        ClassroomMaterialService,
+        ClassroomService,
         "delete_classroom_material",
         delete_stub,
     )
@@ -272,7 +272,7 @@ def test_get_classroom_material_not_found_returns_404(client, monkeypatch):
         return student_user
 
     monkeypatch.setattr(
-        ClassroomMaterialService,
+        ClassroomService,
         "get_classroom_material",
         raise_not_found,
     )
@@ -357,7 +357,7 @@ def test_download_classroom_material_returns_stream_response(
         return student_user
 
     monkeypatch.setattr(
-        ClassroomMaterialService,
+        ClassroomService,
         "get_classroom_material_download",
         download_stub,
     )

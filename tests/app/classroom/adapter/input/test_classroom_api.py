@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.auth.application.exception import AuthForbiddenException
 from app.classroom.application.exception import (
     ClassroomAlreadyExistsException,
+    ClassroomMaterialNotFoundException,
     ClassroomNotFoundException,
     ClassroomStudentAlreadyInvitedException,
     ClassroomStudentNotEnrolledException,
@@ -54,6 +56,28 @@ def make_classroom(
     )
     classroom.id = UUID("77777777-7777-7777-7777-777777777777")
     return classroom
+
+
+def make_classroom_material_result():
+    return SimpleNamespace(
+        material=SimpleNamespace(
+            id=UUID("99999999-9999-9999-9999-999999999999"),
+            classroom_id=make_classroom().id,
+            title="1주차 자료",
+            week=1,
+            description="소개 자료",
+            uploaded_by=PROFESSOR_ID,
+            created_at=None,
+        ),
+        file=SimpleNamespace(
+            id=UUID("88888888-8888-8888-8888-888888888888"),
+            file_name="week1.pdf",
+            file_path="classrooms/materials/week1.pdf",
+            file_extension="pdf",
+            file_size=10,
+            mime_type="application/pdf",
+        ),
+    )
 
 
 def make_user(
@@ -498,3 +522,52 @@ def test_update_classroom_empty_patch_returns_422(client, monkeypatch):
 
     assert response.status_code == 422
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
+
+
+def test_list_classroom_materials_returns_200(client, monkeypatch):
+    async def list_stub_materials(*_args, **_kwargs):
+        return [make_classroom_material_result()]
+
+    current_user = make_user()
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return current_user
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "list_classroom_materials",
+        list_stub_materials,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, current_user)
+
+    response = client.get(f"/api/classrooms/{make_classroom().id}/materials")
+
+    assert response.status_code == 200
+    assert response.json()["data"][0]["title"] == "1주차 자료"
+    assert response.json()["data"][0]["file"]["file_name"] == "week1.pdf"
+
+
+def test_get_classroom_material_not_found_returns_404(client, monkeypatch):
+    async def raise_not_found(*_args, **_kwargs):
+        raise ClassroomMaterialNotFoundException()
+
+    current_user = make_user()
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return current_user
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "get_classroom_material",
+        raise_not_found,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, current_user)
+
+    response = client.get(
+        f"/api/classrooms/{make_classroom().id}/materials/99999999-9999-9999-9999-999999999999"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "CLASSROOM_MATERIAL__NOT_FOUND"
