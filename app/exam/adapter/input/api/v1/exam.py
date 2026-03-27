@@ -4,7 +4,12 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends
 
 from app.auth.domain.entity import CurrentUser
-from app.exam.adapter.input.api.v1.request import CreateExamRequest
+from app.exam.adapter.input.api.v1.request import (
+    CompleteExamSessionRequest,
+    CreateExamRequest,
+    FinalizeExamResultRequest,
+    RecordExamTurnRequest,
+)
 from app.exam.adapter.input.api.v1.response import (
     ExamCriterionPayload,
     ExamListResponse,
@@ -12,11 +17,19 @@ from app.exam.adapter.input.api.v1.response import (
     ExamResponse,
     ExamResultListResponse,
     ExamResultPayload,
+    ExamResultResponse,
     ExamSessionPayload,
     ExamSessionResponse,
+    ExamTurnPayload,
+    ExamTurnResponse,
 )
 from app.exam.container import ExamContainer
-from app.exam.domain.command import CreateExamCommand
+from app.exam.domain.command import (
+    CompleteExamSessionCommand,
+    CreateExamCommand,
+    FinalizeExamResultCommand,
+    RecordExamTurnCommand,
+)
 from app.exam.domain.usecase import ExamUseCase
 from core.fastapi.dependencies.permission import (
     IsAuthenticated,
@@ -70,6 +83,38 @@ def _build_exam_result_payload(result) -> ExamResultPayload:
         ),
         overall_score=result.overall_score,
         summary=result.summary,
+    )
+
+
+def _build_exam_turn_payload(turn) -> ExamTurnPayload:
+    return ExamTurnPayload(
+        id=str(turn.id),
+        session_id=str(turn.session_id),
+        sequence=turn.sequence,
+        role=turn.role.value,
+        event_type=turn.event_type.value,
+        content=turn.content,
+        created_at=turn.created_at.isoformat(),
+        metadata=turn.metadata,
+    )
+
+
+def _build_exam_session_payload(
+    session,
+    *,
+    client_secret: str | None,
+) -> ExamSessionPayload:
+    ended_at = getattr(session, "ended_at", None)
+    expires_at = getattr(session, "expires_at", None)
+    return ExamSessionPayload(
+        session_id=str(session.id),
+        exam_id=str(session.exam_id),
+        student_id=str(session.student_id),
+        status=session.status.value,
+        started_at=session.started_at.isoformat(),
+        ended_at=ended_at.isoformat() if ended_at is not None else None,
+        expires_at=expires_at.isoformat() if expires_at is not None else None,
+        client_secret=client_secret,
     )
 
 
@@ -148,19 +193,9 @@ async def start_exam_session(
         exam_id=exam_id,
         current_user=current_user,
     )
-    session = result.session
     return ExamSessionResponse(
-        data=ExamSessionPayload(
-            session_id=str(session.id),
-            exam_id=str(session.exam_id),
-            student_id=str(session.student_id),
-            status=session.status.value,
-            started_at=session.started_at.isoformat(),
-            expires_at=(
-                session.expires_at.isoformat()
-                if session.expires_at is not None
-                else None
-            ),
+        data=_build_exam_session_payload(
+            result.session,
             client_secret=result.client_secret,
         )
     )
@@ -186,3 +221,77 @@ async def list_my_exam_results(
     return ExamResultListResponse(
         data=[_build_exam_result_payload(result) for result in results]
     )
+
+
+@router.post(
+    "/{exam_id}/sessions/{session_id}/turns",
+    response_model=ExamTurnResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def record_exam_turn(
+    classroom_id: UUID,
+    exam_id: UUID,
+    session_id: UUID,
+    request: RecordExamTurnRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    turn = await usecase.record_exam_turn(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        session_id=session_id,
+        current_user=current_user,
+        command=RecordExamTurnCommand(**request.model_dump()),
+    )
+    return ExamTurnResponse(data=_build_exam_turn_payload(turn))
+
+
+@router.post(
+    "/{exam_id}/sessions/{session_id}/complete",
+    response_model=ExamSessionResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def complete_exam_session(
+    classroom_id: UUID,
+    exam_id: UUID,
+    session_id: UUID,
+    request: CompleteExamSessionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    session = await usecase.complete_exam_session(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        session_id=session_id,
+        current_user=current_user,
+        command=CompleteExamSessionCommand(**request.model_dump()),
+    )
+    return ExamSessionResponse(
+        data=_build_exam_session_payload(session, client_secret=None)
+    )
+
+
+@router.post(
+    "/{exam_id}/sessions/{session_id}/results/finalize",
+    response_model=ExamResultResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def finalize_exam_result(
+    classroom_id: UUID,
+    exam_id: UUID,
+    session_id: UUID,
+    request: FinalizeExamResultRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    result = await usecase.finalize_exam_result(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        session_id=session_id,
+        current_user=current_user,
+        command=FinalizeExamResultCommand(**request.model_dump()),
+    )
+    return ExamResultResponse(data=_build_exam_result_payload(result))

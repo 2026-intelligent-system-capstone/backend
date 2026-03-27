@@ -1,4 +1,12 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 from core.db.sqlalchemy.models.base import BaseTable, metadata
@@ -93,4 +101,22 @@ exam_result_table = BaseTable(
     Column("submitted_at", DateTime(timezone=True), nullable=True),
     Column("overall_score", Integer(), nullable=True),
     Column("summary", String(2000), nullable=True),
+)
+
+exam_turn_table = BaseTable(
+    "t_exam_turn",
+    metadata,
+    Column("id", PG_UUID(as_uuid=True), primary_key=True),
+    Column(
+        "session_id",
+        PG_UUID(as_uuid=True),
+        ForeignKey("t_exam_session.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("sequence", Integer(), nullable=False),
+    Column("role", String(50), nullable=False),
+    Column("event_type", String(50), nullable=False),
+    Column("content", String(10000), nullable=False),
+    Column("metadata", JSON(), nullable=False, default=dict),
+    Column("created_at", DateTime(timezone=True), nullable=False),
 )

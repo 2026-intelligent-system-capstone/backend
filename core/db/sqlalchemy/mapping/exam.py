@@ -1,11 +1,18 @@
 from sqlalchemy.orm import relationship
 
-from app.exam.domain.entity import Exam, ExamCriterion, ExamResult, ExamSession
+from app.exam.domain.entity import (
+    Exam,
+    ExamCriterion,
+    ExamResult,
+    ExamSession,
+    ExamTurn,
+)
 from core.db.sqlalchemy.models.exam import (
     exam_criterion_table,
     exam_result_table,
     exam_session_table,
     exam_table,
+    exam_turn_table,
 )
 
 from .base import mapper_registry
@@ -34,4 +41,9 @@ def init_exam_mappers():
         ExamResult,
         exam_result_table,
         version_id_col=exam_result_table.c.version_id,
+    )
+    mapper_registry.map_imperatively(
+        ExamTurn,
+        exam_turn_table,
+        version_id_col=exam_turn_table.c.version_id,
     )

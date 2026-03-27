@@ -236,3 +236,118 @@ def test_list_my_exam_results_returns_200_for_student(client, monkeypatch):
     assert len(response.json()["data"]) == 1
     assert response.json()["data"][0]["student_id"] == str(STUDENT_ID)
     assert response.json()["data"][0]["status"] == "pending"
+
+
+def test_record_exam_turn_returns_200_for_student(client, monkeypatch):
+    async def record_turn_stub(*_args, **_kwargs):
+        class Turn:
+            id = UUID("88888888-8888-8888-8888-888888888888")
+            session_id = UUID("66666666-6666-6666-6666-666666666666")
+            sequence = 1
+            role = type("Role", (), {"value": "assistant"})()
+            event_type = type("EventType", (), {"value": "question"})()
+            content = "머신러닝과 딥러닝의 차이를 설명해보세요."
+            created_at = STARTS_AT
+            metadata = {"message_id": "msg-question-1"}
+
+        return Turn()
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(ExamService, "record_exam_turn", record_turn_stub)
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/sessions/"
+        "66666666-6666-6666-6666-666666666666/turns",
+        json={
+            "role": "assistant",
+            "event_type": "question",
+            "content": "머신러닝과 딥러닝의 차이를 설명해보세요.",
+            "metadata": {"message_id": "msg-question-1"},
+            "occurred_at": STARTS_AT.isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["sequence"] == 1
+    assert response.json()["data"]["role"] == "assistant"
+    assert response.json()["data"]["event_type"] == "question"
+
+
+def test_complete_exam_session_returns_200_for_student(client, monkeypatch):
+    async def complete_session_stub(*_args, **_kwargs):
+        class Session:
+            id = UUID("66666666-6666-6666-6666-666666666666")
+            exam_id = EXAM_ID
+            student_id = STUDENT_ID
+            status = type("Status", (), {"value": "completed"})()
+            started_at = STARTS_AT
+            expires_at = ENDS_AT
+            ended_at = ENDS_AT
+
+        return Session()
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ExamService, "complete_exam_session", complete_session_stub
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/sessions/"
+        "66666666-6666-6666-6666-666666666666/complete",
+        json={"occurred_at": ENDS_AT.isoformat()},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "completed"
+
+
+def test_finalize_exam_result_returns_200_for_student(client, monkeypatch):
+    async def finalize_result_stub(*_args, **_kwargs):
+        class Result:
+            id = UUID("77777777-7777-7777-7777-777777777777")
+            exam_id = EXAM_ID
+            session_id = UUID("66666666-6666-6666-6666-666666666666")
+            student_id = STUDENT_ID
+            status = type("Status", (), {"value": "completed"})()
+            submitted_at = ENDS_AT
+            overall_score = 92
+            summary = "개념 이해와 문제 해결 과정이 모두 우수합니다."
+
+        return Result()
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ExamService, "finalize_exam_result", finalize_result_stub
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/sessions/"
+        "66666666-6666-6666-6666-666666666666/results/finalize",
+        json={
+            "overall_score": 92,
+            "summary": "개념 이해와 문제 해결 과정이 모두 우수합니다.",
+            "occurred_at": ENDS_AT.isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "completed"
+    assert response.json()["data"]["overall_score"] == 92

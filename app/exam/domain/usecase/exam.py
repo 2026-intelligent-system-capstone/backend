@@ -3,8 +3,19 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from app.auth.domain.entity import CurrentUser
-from app.exam.domain.command import CreateExamCommand
-from app.exam.domain.entity import Exam, ExamResult, StartedExamSession
+from app.exam.domain.command import (
+    CompleteExamSessionCommand,
+    CreateExamCommand,
+    FinalizeExamResultCommand,
+    RecordExamTurnCommand,
+)
+from app.exam.domain.entity import (
+    Exam,
+    ExamResult,
+    ExamSession,
+    ExamTurn,
+    StartedExamSession,
+)
 
 
 class ExamUseCase(ABC):
@@ -56,3 +67,39 @@ class ExamUseCase(ABC):
         current_user: CurrentUser,
     ) -> Sequence[ExamResult]:
         """List current student's exam results."""
+
+    @abstractmethod
+    async def record_exam_turn(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        session_id: UUID,
+        current_user: CurrentUser,
+        command: RecordExamTurnCommand,
+    ) -> ExamTurn:
+        """Persist one exam conversation turn."""
+
+    @abstractmethod
+    async def complete_exam_session(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        session_id: UUID,
+        current_user: CurrentUser,
+        command: CompleteExamSessionCommand,
+    ) -> ExamSession:
+        """Mark student's exam session as completed."""
+
+    @abstractmethod
+    async def finalize_exam_result(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        session_id: UUID,
+        current_user: CurrentUser,
+        command: FinalizeExamResultCommand,
+    ) -> ExamResult:
+        """Finalize one exam result after session completion."""

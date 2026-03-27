@@ -1,5 +1,7 @@
 from fastapi.middleware import Middleware
+from fastapi.middleware.cors import CORSMiddleware
 
+from core.config import config
 from core.fastapi.authentication import (
     AuthenticationMiddleware,
     CookieAuthBackend,
@@ -7,4 +9,13 @@ from core.fastapi.authentication import (
 
 
 def make_middleware() -> list[Middleware]:
-    return [Middleware(AuthenticationMiddleware, backend=CookieAuthBackend())]
+    return [
+        Middleware(
+            CORSMiddleware,
+            allow_origins=config.FRONTEND_CORS_ORIGIN,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        ),
+        Middleware(AuthenticationMiddleware, backend=CookieAuthBackend()),
+    ]

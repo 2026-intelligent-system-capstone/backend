@@ -2,7 +2,7 @@ from abc import abstractmethod
 from collections.abc import Sequence
 from uuid import UUID
 
-from app.exam.domain.entity import Exam, ExamResult, ExamSession
+from app.exam.domain.entity import Exam, ExamResult, ExamSession, ExamTurn
 from core.repository.base import BaseRepository
 
 
@@ -31,4 +31,14 @@ class ExamResultRepository(BaseRepository[ExamResult]):
         exam_id: UUID,
         student_id: UUID,
     ) -> Sequence[ExamResult]:
+        pass
+
+
+class ExamTurnRepository(BaseRepository[ExamTurn]):
+    @abstractmethod
+    async def list_by_session(
+        self,
+        *,
+        session_id: UUID,
+    ) -> Sequence[ExamTurn]:
         pass

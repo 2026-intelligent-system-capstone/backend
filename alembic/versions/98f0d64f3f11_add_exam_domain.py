@@ -105,8 +105,29 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
 
+    op.create_table(
+        "t_exam_turn",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("session_id", sa.UUID(), nullable=False),
+        sa.Column("sequence", sa.Integer(), nullable=False),
+        sa.Column("role", sa.String(length=50), nullable=False),
+        sa.Column("event_type", sa.String(length=50), nullable=False),
+        sa.Column("content", sa.String(length=10000), nullable=False),
+        sa.Column("metadata", sa.JSON(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.Column("version_id", sa.BigInteger(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["session_id"],
+            ["t_exam_session.id"],
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
+
 
 def downgrade() -> None:
+    op.drop_table("t_exam_turn")
     op.drop_table("t_exam_result")
     op.drop_table("t_exam_session")
     op.drop_table("t_exam_criterion")
