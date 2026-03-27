@@ -1,0 +1,33 @@
+from app.exam.domain.entity.exam import (
+    Exam,
+    ExamCriterion,
+    ExamResult,
+    ExamResultCriterion,
+    ExamResultStatus,
+    ExamSession,
+    ExamSessionStatus,
+    ExamStatus,
+    ExamTurn,
+    ExamTurnEventType,
+    ExamTurnRole,
+    ExamType,
+    RealtimeClientSecret,
+    StartedExamSession,
+)
+
+__all__ = [
+    "Exam",
+    "ExamCriterion",
+    "ExamResult",
+    "ExamResultCriterion",
+    "ExamResultStatus",
+    "ExamSession",
+    "ExamSessionStatus",
+    "ExamStatus",
+    "ExamTurn",
+    "ExamTurnEventType",
+    "ExamTurnRole",
+    "ExamType",
+    "RealtimeClientSecret",
+    "StartedExamSession",
+]

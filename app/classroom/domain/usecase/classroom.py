@@ -4,11 +4,15 @@ from uuid import UUID
 from app.auth.domain.entity import CurrentUser
 from app.classroom.domain.command import (
     CreateClassroomCommand,
+    CreateClassroomMaterialCommand,
     InviteClassroomStudentsCommand,
     RemoveClassroomStudentCommand,
     UpdateClassroomCommand,
+    UpdateClassroomMaterialCommand,
 )
-from app.classroom.domain.entity import Classroom
+from app.classroom.domain.entity import Classroom, ClassroomMaterialDetail
+from app.file.domain.entity.file_download import FileDownload
+from app.file.domain.service import FileUploadData
 
 
 class ClassroomUseCase(ABC):
@@ -85,3 +89,65 @@ class ClassroomUseCase(ABC):
         command: RemoveClassroomStudentCommand,
     ) -> Classroom:
         """Remove student from classroom."""
+
+    @abstractmethod
+    async def create_classroom_material(
+        self,
+        *,
+        classroom_id: UUID,
+        current_user: CurrentUser,
+        command: CreateClassroomMaterialCommand,
+        file_upload: FileUploadData,
+    ) -> ClassroomMaterialDetail:
+        """Create classroom material."""
+
+    @abstractmethod
+    async def list_classroom_materials(
+        self,
+        *,
+        classroom_id: UUID,
+        current_user: CurrentUser,
+    ) -> list[ClassroomMaterialDetail]:
+        """List classroom materials."""
+
+    @abstractmethod
+    async def get_classroom_material(
+        self,
+        *,
+        classroom_id: UUID,
+        material_id: UUID,
+        current_user: CurrentUser,
+    ) -> ClassroomMaterialDetail:
+        """Get classroom material."""
+
+    @abstractmethod
+    async def get_classroom_material_download(
+        self,
+        *,
+        classroom_id: UUID,
+        material_id: UUID,
+        current_user: CurrentUser,
+    ) -> FileDownload:
+        """Get classroom material download content."""
+
+    @abstractmethod
+    async def update_classroom_material(
+        self,
+        *,
+        classroom_id: UUID,
+        material_id: UUID,
+        current_user: CurrentUser,
+        command: UpdateClassroomMaterialCommand,
+        file_upload: FileUploadData | None = None,
+    ) -> ClassroomMaterialDetail:
+        """Update classroom material."""
+
+    @abstractmethod
+    async def delete_classroom_material(
+        self,
+        *,
+        classroom_id: UUID,
+        material_id: UUID,
+        current_user: CurrentUser,
+    ) -> ClassroomMaterialDetail:
+        """Delete classroom material."""

@@ -1,4 +1,4 @@
-from app.classroom_material.domain.entity import ClassroomMaterial
+from app.classroom.domain.entity import ClassroomMaterial
 from core.db.sqlalchemy.models.classroom_material import (
     classroom_material_table,
 )
