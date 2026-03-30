@@ -86,6 +86,11 @@ uv sync --all-groups
 ```bash
 cp .env.example .env
 ```
+`win`
+```bash
+copy .env.example .env
+copy .env.example .env.app
+```
 
 3. Start local dependencies
 
@@ -98,11 +103,19 @@ docker compose up -d
 ```bash
 ENVIRONMENT=test DATABASE_URL=postgresql+asyncpg://postgres:password@127.0.0.1:55432/test_db VALKEY_URL=redis://127.0.0.1:6379/0 uv run alembic upgrade head
 ```
+`win`
+```bash
+docker compose exec backend sh -c "ENVIRONMENT=test DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/postgres VALKEY_URL=redis://valkey:6379/0 uv run alembic upgrade head"
+```
 
 5. Run tests
 
 ```bash
 ENVIRONMENT=test DATABASE_URL=postgresql+asyncpg://postgres:password@127.0.0.1:55432/test_db VALKEY_URL=redis://127.0.0.1:6379/0 uv run pytest
+```
+`win`
+```bash
+docker compose exec -e ENVIRONMENT=test -e DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/test_db -e VALKEY_URL=redis://valkey:6379/0 backend uv run pytest
 ```
 
 6. Run the development server
@@ -151,6 +164,9 @@ Run the same checks as CI:
 uv run ruff check .
 uv run ruff format --check .
 ENVIRONMENT=test DATABASE_URL=postgresql+asyncpg://postgres:password@127.0.0.1:55432/test_db VALKEY_URL=redis://127.0.0.1:6379/0 uv run pytest
+```
+```bash
+docker compose exec -e ENVIRONMENT=test -e DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/test_db -e VALKEY_URL=redis://valkey:6379/0 backend uv run pytest
 ```
 
 ## Creating a New Domain

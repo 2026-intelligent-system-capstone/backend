@@ -16,6 +16,8 @@ from app.user.adapter.input.api.v1.user import router as user_router
 from core.config import config
 from core.fastapi import ExtendedFastAPI
 
+from app.conversational_evaluation.adapter.input.api.v1.conversational_evaluation import router as evaluation_router
+from app.learning_material.adapter.input.api.v1.learning_material_api import router as learning_material_api
 
 def register_routers(app: ExtendedFastAPI):
     api_router = APIRouter(prefix=config.API_PREFIX)
@@ -32,3 +34,5 @@ def register_routers(app: ExtendedFastAPI):
     api_router.include_router(organization_router)
     api_router.include_router(user_router)
     app.include_router(api_router)
+    app.include_router(evaluation_router)
+    app.include_router(learning_material_api)
