@@ -18,3 +18,16 @@ class QdrantAdapter:
             url=config.QDRANT_URL,
             collection_name=self.collection_name,
         )
+    async def search_relevant_docs(self, query: str, subject: str, top_k: int = 3):
+        """질문과 관련된 PDF 본문을 검색합니다."""
+        vector_store = QdrantVectorStore(
+            client=self.client,
+            collection_name=self.collection_name,
+            embeddings=self.embeddings,
+        )
+        # 과목명으로 필터링하여 검색
+        return vector_store.similarity_search(
+            query=query,
+            k=top_k,
+            filter={"subject": subject}
+        )
