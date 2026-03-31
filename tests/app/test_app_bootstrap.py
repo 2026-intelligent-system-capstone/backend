@@ -1,5 +1,14 @@
+from unittest.mock import AsyncMock
+
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
 from core.config import config, get_env
+from core.db.session import session_context
 from core.fastapi import ExtendedFastAPI
+from core.fastapi.middlewares.request_scoped_db_session import (
+    RequestScopedDBSessionMiddleware,
+)
 from main import create_app
 
 
@@ -45,3 +54,34 @@ def test_app_openapi_marks_authenticated_routes_with_security():
         "security"
         not in schema["paths"][f"{config.API_PREFIX}/users/{{user_id}}"]["get"]
     )
+
+
+def test_app_registers_request_scoped_db_session_middleware():
+    app = create_app()
+
+    middleware_classes = [
+        middleware.cls for middleware in app.user_middleware
+    ]
+
+    assert RequestScopedDBSessionMiddleware in middleware_classes
+
+
+def test_request_scoped_session_middleware_resets_context_and_removes_session(
+    monkeypatch,
+):
+    app = create_app()
+
+    remove_mock = AsyncMock()
+    monkeypatch.setattr("core.fastapi.middlewares.request_scoped_db_session.session.remove", remove_mock)
+
+    @app.get("/test/session-scope")
+    async def test_route():
+        assert session_context.get() != "global"
+        raise HTTPException(status_code=418, detail="boom")
+
+    with TestClient(app) as client:
+        response = client.get("/test/session-scope")
+
+    assert response.status_code == 418
+    remove_mock.assert_awaited_once()
+    assert session_context.get() == "global"

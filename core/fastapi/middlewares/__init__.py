@@ -6,10 +6,14 @@ from core.fastapi.authentication import (
     AuthenticationMiddleware,
     CookieAuthBackend,
 )
+from core.fastapi.middlewares.request_scoped_db_session import (
+    RequestScopedDBSessionMiddleware,
+)
 
 
 def make_middleware() -> list[Middleware]:
     return [
+        Middleware(RequestScopedDBSessionMiddleware),
         Middleware(
             CORSMiddleware,
             allow_origins=config.FRONTEND_CORS_ORIGIN,
