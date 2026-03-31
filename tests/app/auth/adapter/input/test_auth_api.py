@@ -17,12 +17,12 @@ def client() -> TestClient:
     return TestClient(create_app())
 
 
-def make_tokens() -> AuthTokensDTO:
+def make_tokens(role: str = "student") -> AuthTokensDTO:
     return AuthTokensDTO(
         user_id="11111111-1111-1111-1111-111111111111",
         organization_id="22222222-2222-2222-2222-222222222222",
         organization_code="univ_hansung",
-        role="student",
+        role=role,
         access_token="access-token-value",
         refresh_token="refresh-token-value",
     )
@@ -66,6 +66,28 @@ def test_login_invalid_credentials_returns_401(client, monkeypatch):
 
     assert response.status_code == 401
     assert response.json()["error_code"] == "AUTH__INVALID_CREDENTIALS"
+
+
+def test_login_sets_auth_cookies_for_test_bypass_ids(client, monkeypatch):
+    async def login_stub(_self, command, *_args, **_kwargs):
+        role = "professor" if command.login_id == "90000001" else "student"
+        return make_tokens(role=role)
+
+    monkeypatch.setattr(AuthService, "login", login_stub)
+
+    for login_id in ("90000001", "90000002"):
+        response = client.post(
+            "/api/auth/login",
+            json={
+                "organization_code": "univ_hansung",
+                "login_id": login_id,
+                "password": "whatever123",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.cookies.get("access_token") == "access-token-value"
+        assert response.cookies.get("refresh_token") == "refresh-token-value"
 
 
 def test_login_provider_not_configured_returns_503(client, monkeypatch):
