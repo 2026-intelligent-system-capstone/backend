@@ -7,6 +7,7 @@ from app.user.adapter.input.api.v1.request import (
     CreateUserRequest,
     UpdateUserRequest,
 )
+from app.auth.domain.entity import CurrentUser
 from app.user.adapter.input.api.v1.response import (
     UserListResponse,
     UserPayload,
@@ -19,6 +20,7 @@ from core.fastapi.dependencies import (
     IsAdmin,
     IsAuthenticated,
     PermissionDependency,
+    get_current_user,
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -73,6 +75,31 @@ async def list_users(
             )
             for user in users
         ]
+    )
+
+
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def get_me(
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: UserUseCase = Depends(Provide[UserContainer.service]),
+):
+    user = await usecase.get_user(current_user.id)
+    return UserResponse(
+        data=UserPayload(
+            id=str(user.id),
+            organization_id=str(user.organization_id),
+            login_id=user.login_id,
+            role=user.role.value,
+            email=user.email,
+            name=user.name,
+            status=user.status.value,
+            is_deleted=user.is_deleted,
+        )
     )
 
 

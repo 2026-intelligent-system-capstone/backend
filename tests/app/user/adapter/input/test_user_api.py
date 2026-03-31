@@ -142,6 +142,43 @@ def test_list_users_returns_200(client, monkeypatch):
     assert body["data"][0]["login_id"] == "20260001"
 
 
+def test_get_me_returns_200(client, monkeypatch):
+    authenticated_user = make_user(login_id="20261111", email="me@example.com")
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return authenticated_user
+
+    async def get_stub_user(*_args, **_kwargs):
+        return authenticated_user
+
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    monkeypatch.setattr(UserService, "get_user", get_stub_user)
+    set_access_token_cookie(client, authenticated_user)
+
+    response = client.get("/api/users/me")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["id"] == str(authenticated_user.id)
+    assert body["data"]["login_id"] == "20261111"
+
+
+def test_get_me_returns_401_without_access_token(client):
+    response = client.get("/api/users/me")
+
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "AUTH__UNAUTHORIZED"
+
+
+def test_get_me_returns_401_with_invalid_access_token(client):
+    client.cookies.set(config.ACCESS_TOKEN_COOKIE_NAME, "invalid-token")
+
+    response = client.get("/api/users/me")
+
+    assert response.status_code == 401
+    assert response.json()["error_code"] == "AUTH__UNAUTHORIZED"
+
+
 def test_get_user_returns_200(client, monkeypatch):
     async def get_stub_user(*_args, **_kwargs):
         return make_user()
