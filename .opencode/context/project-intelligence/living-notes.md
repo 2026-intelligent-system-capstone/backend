@@ -1,9 +1,9 @@
-<!-- Context: project-intelligence/notes | Priority: high | Version: 1.3 | Updated: 2026-03-25 -->
+<!-- Context: project-intelligence/notes | Priority: high | Version: 1.4 | Updated: 2026-03-28 -->
 
 # Living Notes
 
 **Purpose**: 현재 운영 이슈, 기술 부채, 유지보수자가 바로 알아야 할 주의사항을 남기는 작업 메모.
-**Last Updated**: 2026-03-25
+**Last Updated**: 2026-03-28
 
 ## Quick Reference
 - **Current Focus**: 헥사고날 경계 정리 + DB migration 운영 안정화
@@ -25,6 +25,22 @@
 - domain -> application DTO 의존 같은 경계 역전을 줄이는 리팩토링 진행 중
 - 테스트 보강 작업은 TDD 기준으로 재정렬하고, 가능하면 기존 테스트는 보존한다
 - 학생용 시험 API는 classroom 경로를 제거하고 `/api/exams/{exam_id}/sessions/...` 구조로 정리하는 중이다
+
+## Completed Recently
+- `classroom_material`를 별도 최상위 도메인에서 제거하고 `classroom` 도메인으로 흡수했다. 파일 저장/메타데이터는 계속 `file` 도메인에 둔다.
+- `exam` 도메인에 시험 생성/조회, rubric(`ExamCriterion`) 기반 평가 기준, 상태/시간/재응시 관련 핵심 필드를 반영했다.
+- `submission` 중심 흐름을 `exam_result` 중심 구조로 전환하고 `exam_session`, `exam_turn`, `exam_result`를 도입했다.
+- GPT Realtime 연동을 위해 세션 시작 시 ephemeral client secret을 발급하는 백엔드 흐름을 추가했다.
+- 질문/답변/후속 질문 저장을 위해 `exam_turn` 영속화와 세션 종료, 결과 finalize API를 구현했다.
+- 학생용 시험 API를 `/api/exams/{exam_id}/sessions/...`와 `/api/exams/{exam_id}/results/...` 구조로 분리했다.
+
+## Next Work
+- 학생용 `나의 평가` 목록과 시험 입장 전 정보 확인 화면에 대응하는 API를 추가한다.
+- 평가별 초대 학생/접근 제어를 classroom 접근과 분리해 exam/session 기준으로 구현한다.
+- 시험별 범위 자료 선택과 RAG 입력 연결을 추가한다.
+- 교수자용 평가 결과/리포트 조회 API를 추가한다.
+- 생성된 문제 검토/첨삭 기능과 시험 상태/시간/재응시 정책의 실제 enforcement를 구현한다.
+- GPT Realtime 후속으로 turn 기반 결과 집계 자동화와 richer report 생성을 연결한다.
 
 ## Technical Debt
 | Item | Impact | Priority | Mitigation |

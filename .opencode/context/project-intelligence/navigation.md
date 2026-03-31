@@ -1,9 +1,9 @@
-<!-- Context: project-intelligence/nav | Priority: high | Version: 1.7 | Updated: 2026-03-25 -->
+<!-- Context: project-intelligence/nav | Priority: high | Version: 1.8 | Updated: 2026-03-28 -->
 
 # Project Intelligence
 
 **Purpose**: 이 프로젝트의 비즈니스와 기술 문맥을 빠르게 찾기 위한 진입점.
-**Last Updated**: 2026-03-25
+**Last Updated**: 2026-03-28
 
 ## Quick Routes
 | What You Need | File | Description | Priority |
@@ -12,7 +12,7 @@
 | 구현 방식과 기술 패턴 이해 | `technical-domain.md` | 스택, 아키텍처, API 규칙, migration/TDD 운영 | critical |
 | 비즈니스-기술 연결 확인 | `business-tech-bridge.md` | 제품 요구와 백엔드 구조 연결, 시험 API 경계 | high |
 | 의사결정 배경 확인 | `decisions-log.md` | 주요 선택과 이유, TDD 원칙, 시험 API 정책 | high |
-| 현재 상태와 이슈 확인 | `living-notes.md` | 열린 이슈, migration 메모, 기술 부채 | medium |
+| 현재 상태와 이슈 확인 | `living-notes.md` | 최근 완료 작업, 다음 구현 우선순위, 기술 부채 | medium |
 
 ## Deep Dives
 | File | When To Load |
