@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
@@ -48,6 +49,14 @@ def _iter_content(content, chunk_size: int = 64 * 1024):
         close()
 
 
+def _build_uploaded_at(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _build_classroom_material_payload(result) -> ClassroomMaterialPayload:
     return ClassroomMaterialPayload(
         id=str(result.material.id),
@@ -56,7 +65,7 @@ def _build_classroom_material_payload(result) -> ClassroomMaterialPayload:
         week=result.material.week,
         description=result.material.description,
         uploaded_by=str(result.material.uploaded_by),
-        uploaded_at=result.material.created_at,
+        uploaded_at=_build_uploaded_at(result.material.created_at),
         file=ClassroomMaterialFilePayload(
             id=str(result.file.id),
             file_name=result.file.file_name,

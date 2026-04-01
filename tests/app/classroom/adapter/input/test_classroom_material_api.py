@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from io import BytesIO
 from uuid import UUID
 
@@ -118,6 +118,7 @@ def test_create_classroom_material_returns_200_for_professor(
     assert response.status_code == 200
     assert response.json()["data"]["title"] == "1주차 자료"
     assert response.json()["data"]["file"]["file_name"] == "week1.pdf"
+    assert response.json()["data"]["uploaded_at"] == "2026-01-01T09:00:00Z"
 
 
 def test_create_classroom_material_returns_403_for_student(
@@ -173,6 +174,7 @@ def test_list_classroom_materials_returns_200_for_student(
     assert response.status_code == 200
     assert len(response.json()["data"]) == 1
     assert response.json()["data"][0]["week"] == 1
+    assert response.json()["data"][0]["uploaded_at"] == "2026-01-01T09:00:00Z"
 
 
 def test_get_classroom_material_returns_403_when_forbidden(
