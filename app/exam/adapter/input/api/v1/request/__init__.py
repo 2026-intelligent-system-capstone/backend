@@ -1,8 +1,15 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import Field, model_validator
 
-from app.exam.domain.entity import ExamTurnEventType, ExamTurnRole, ExamType
+from app.exam.domain.entity import (
+    BloomLevel,
+    ExamDifficulty,
+    ExamTurnEventType,
+    ExamTurnRole,
+    ExamType,
+)
 from core.common.request.base import BaseRequest
 
 
@@ -34,6 +41,65 @@ class CreateExamRequest(BaseRequest):
             raise ValueError("starts_at must be before ends_at")
         if sum(criterion.weight for criterion in self.criteria) != 100:
             raise ValueError("criteria weights must sum to 100")
+        return self
+
+
+class CreateExamQuestionRequest(BaseRequest):
+    question_number: int = Field(..., ge=1, le=500)
+    bloom_level: BloomLevel
+    difficulty: ExamDifficulty
+    question_text: str = Field(..., min_length=1, max_length=5000)
+    scope_text: str = Field(..., min_length=1, max_length=1000)
+    evaluation_objective: str = Field(..., min_length=1, max_length=2000)
+    answer_key: str = Field(..., min_length=1, max_length=5000)
+    scoring_criteria: str = Field(..., min_length=1, max_length=5000)
+    source_material_ids: list[UUID] = Field(default_factory=list)
+
+
+class UpdateExamQuestionRequest(BaseRequest):
+    question_number: int | None = Field(None, ge=1, le=500)
+    bloom_level: BloomLevel | None = None
+    difficulty: ExamDifficulty | None = None
+    question_text: str | None = Field(None, min_length=1, max_length=5000)
+    scope_text: str | None = Field(None, min_length=1, max_length=1000)
+    evaluation_objective: str | None = Field(
+        None, min_length=1, max_length=2000
+    )
+    answer_key: str | None = Field(None, min_length=1, max_length=5000)
+    scoring_criteria: str | None = Field(
+        None, min_length=1, max_length=5000
+    )
+    source_material_ids: list[UUID] | None = None
+
+    @model_validator(mode="after")
+    def validate_non_empty_update(self):
+        if not self.model_fields_set:
+            raise ValueError("최소 하나 이상의 수정 필드가 필요합니다.")
+        return self
+
+
+class ExamQuestionBloomRatioRequest(BaseRequest):
+    bloom_level: BloomLevel
+    percentage: int = Field(..., ge=1, le=100)
+
+
+class GenerateExamQuestionsRequest(BaseRequest):
+    scope_text: str = Field(..., min_length=1, max_length=1000)
+    total_questions: int = Field(..., ge=1, le=100)
+    max_follow_ups: int = Field(..., ge=0, le=20)
+    difficulty: ExamDifficulty
+    source_material_ids: list[UUID] = Field(default_factory=list)
+    bloom_ratios: list[ExamQuestionBloomRatioRequest] = Field(
+        ..., min_length=1, max_length=6
+    )
+
+    @model_validator(mode="after")
+    def validate_bloom_ratios(self):
+        if sum(item.percentage for item in self.bloom_ratios) != 100:
+            raise ValueError("Bloom 비율 합계는 100이어야 합니다.")
+        bloom_levels = [item.bloom_level for item in self.bloom_ratios]
+        if len(set(bloom_levels)) != len(bloom_levels):
+            raise ValueError("Bloom 비율은 중복될 수 없습니다.")
         return self
 
 

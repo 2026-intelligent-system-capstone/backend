@@ -15,10 +15,19 @@ from app.classroom.domain.command import (
     CreateClassroomMaterialCommand,
     UpdateClassroomMaterialCommand,
 )
-from app.classroom.domain.entity import Classroom, ClassroomMaterial
+from app.classroom.domain.entity import (
+    Classroom,
+    ClassroomMaterial,
+    ClassroomMaterialIngestStatus,
+    ClassroomMaterialScopeCandidate,
+)
 from app.classroom.domain.repository import (
     ClassroomMaterialRepository,
     ClassroomRepository,
+)
+from app.classroom.domain.service import (
+    ClassroomMaterialIngestPort,
+    ClassroomMaterialIngestResult,
 )
 from app.file.domain.entity.file import File, FileStatus
 from app.file.domain.entity.file_download import FileDownload
@@ -215,6 +224,24 @@ class FakeFileUseCase(FileUseCase):
         return file
 
 
+class FakeMaterialIngestPort(ClassroomMaterialIngestPort):
+    def __init__(
+        self,
+        *,
+        result: ClassroomMaterialIngestResult | None = None,
+        error: Exception | None = None,
+    ):
+        self.result = result or ClassroomMaterialIngestResult()
+        self.error = error
+        self.requests = []
+
+    async def ingest_material(self, *, request):
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
 def make_classroom(
     *,
     allow_student_material_access: bool = False,
@@ -260,6 +287,7 @@ def build_service(
     materials: list[ClassroomMaterial] | None = None,
     allow_student_material_access: bool = False,
     file_usecase: FakeFileUseCase | None = None,
+    material_ingest_port: FakeMaterialIngestPort | None = None,
 ) -> ClassroomService:
     return ClassroomService(
         repository=InMemoryClassroomRepository([
@@ -273,6 +301,7 @@ def build_service(
         ]),
         material_repository=InMemoryClassroomMaterialRepository(materials),
         file_usecase=file_usecase or FakeFileUseCase(),
+        material_ingest_port=material_ingest_port,
     )
 
 
@@ -321,6 +350,8 @@ async def test_create_classroom_material_success():
 
     assert result.material.title == "1주차 자료"
     assert result.material.file_id == FILE_ID
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.PENDING
+    assert result.material.scope_candidates == []
     assert result.file.file_name == "week1.pdf"
     assert file_usecase.uploaded_payloads == [
         (
@@ -330,6 +361,90 @@ async def test_create_classroom_material_success():
             FileStatus.ACTIVE,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_create_classroom_material_runs_ingest_and_stores_scope_candidates():
+    file_usecase = FakeFileUseCase()
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(
+            scope_candidates=[
+                ClassroomMaterialScopeCandidate(
+                    label="기초 개념",
+                    scope_text="머신러닝 개요와 지도학습",
+                    keywords=["머신러닝", "지도학습"],
+                    week_range="1주차",
+                    confidence=0.92,
+                )
+            ]
+        )
+    )
+    service = build_service(
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.create_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=CreateClassroomMaterialCommand(
+            title="1주차 자료",
+            week=1,
+            description="소개 자료",
+        ),
+        file_upload=FileUploadData(
+            file_name="week1.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"pdf-content"),
+        ),
+    )
+
+    assert len(ingest_port.requests) == 1
+    request = ingest_port.requests[0]
+    assert request.classroom_id == CLASSROOM_ID
+    assert request.title == "1주차 자료"
+    assert request.file_name == "week1.pdf"
+    assert request.content == b"downloaded-content"
+    assert file_usecase.downloaded_file_ids == [FILE_ID]
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert result.material.get_scope_candidates()[0].label == "기초 개념"
+    assert result.material.ingest_error is None
+
+
+@pytest.mark.asyncio
+async def test_create_classroom_material_marks_ingest_failed_when_port_raises():
+    file_usecase = FakeFileUseCase()
+    ingest_port = FakeMaterialIngestPort(error=RuntimeError("qdrant unavailable"))
+    service = build_service(
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.create_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=CreateClassroomMaterialCommand(
+            title="1주차 자료",
+            week=1,
+            description="소개 자료",
+        ),
+        file_upload=FileUploadData(
+            file_name="week1.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"pdf-content"),
+        ),
+    )
+
+    assert len(ingest_port.requests) == 1
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
+    assert result.material.ingest_error == "qdrant unavailable"
+    assert result.material.scope_candidates == []
 
 
 @pytest.mark.asyncio
@@ -417,8 +532,71 @@ async def test_update_classroom_material_replaces_file_and_deletes_old():
 
     assert result.material.title == "수정 자료"
     assert result.material.file_id == REPLACEMENT_FILE_ID
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.PENDING
+    assert result.material.scope_candidates == []
     assert file_usecase.deleted_file_ids == [FILE_ID]
     assert result.file.file_name == "week1-v2.pdf"
+
+
+@pytest.mark.asyncio
+async def test_update_classroom_material_with_file_runs_ingest_again():
+    material = make_material()
+    file_usecase = FakeFileUseCase()
+    old_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    old_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = old_file
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(
+            scope_candidates=[
+                ClassroomMaterialScopeCandidate(
+                    label="심화 범위",
+                    scope_text="회귀 모델 비교",
+                    keywords=["회귀", "모델 비교"],
+                    week_range="2주차",
+                    confidence=0.88,
+                )
+            ]
+        )
+    )
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(
+            title="수정 자료",
+            week=1,
+            description="소개 자료",
+        ),
+        file_upload=FileUploadData(
+            file_name="week1-v2.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"new-pdf-content"),
+        ),
+    )
+
+    assert len(ingest_port.requests) == 1
+    request = ingest_port.requests[0]
+    assert request.file_name == "week1-v2.pdf"
+    assert request.content == b"downloaded-content"
+    assert file_usecase.downloaded_file_ids == [REPLACEMENT_FILE_ID]
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert result.material.get_scope_candidates()[0].scope_text == "회귀 모델 비교"
 
 
 @pytest.mark.asyncio

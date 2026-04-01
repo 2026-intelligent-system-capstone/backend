@@ -5,7 +5,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.exam.application.service import ExamService
-from app.exam.domain.entity import Exam, ExamCriterion, ExamStatus, ExamType
+from app.exam.domain.entity import (
+    BloomLevel,
+    Exam,
+    ExamCriterion,
+    ExamDifficulty,
+    ExamQuestionStatus,
+    ExamStatus,
+    ExamType,
+)
 from app.user.adapter.output.persistence.sqlalchemy import (
     UserSQLAlchemyRepository,
 )
@@ -55,6 +63,25 @@ def make_exam() -> Exam:
     )
     exam.id = EXAM_ID
     return exam
+
+
+def make_question():
+    question = type("Question", (), {})()
+    question.id = UUID("88888888-8888-8888-8888-888888888888")
+    question.exam_id = EXAM_ID
+    question.question_number = 1
+    question.bloom_level = BloomLevel.APPLY
+    question.difficulty = ExamDifficulty.MEDIUM
+    question.question_text = "회귀와 분류의 차이를 설명하세요."
+    question.scope_text = "1주차 머신러닝 기초"
+    question.evaluation_objective = "지도학습 구분 능력 평가"
+    question.answer_key = "출력 형태와 문제 목적 차이를 포함해야 함"
+    question.scoring_criteria = "핵심 개념과 예시 포함"
+    question.source_material_ids = [
+        UUID("99999999-9999-9999-9999-999999999999")
+    ]
+    question.status = ExamQuestionStatus.GENERATED
+    return question
 
 
 def make_user(*, role: UserRole, user_id: UUID) -> User:
@@ -167,6 +194,179 @@ def test_get_exam_returns_200(client, monkeypatch):
     assert response.json()["data"]["criteria"][0]["excellent_definition"] == (
         "핵심 개념을 정확히 설명한다."
     )
+
+
+def test_create_exam_question_returns_200_for_professor(client, monkeypatch):
+    async def create_question_stub(*_args, **_kwargs):
+        return make_question()
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "create_exam_question",
+        create_question_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
+        json={
+            "question_number": 1,
+            "bloom_level": "apply",
+            "difficulty": "medium",
+            "question_text": "회귀와 분류의 차이를 설명하세요.",
+            "scope_text": "1주차 머신러닝 기초",
+            "evaluation_objective": "지도학습 구분 능력 평가",
+            "answer_key": "출력 형태와 문제 목적 차이를 포함해야 함",
+            "scoring_criteria": "핵심 개념과 예시 포함",
+            "source_material_ids": [
+                "99999999-9999-9999-9999-999999999999"
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["bloom_level"] == "apply"
+    assert response.json()["data"]["difficulty"] == "medium"
+    assert response.json()["data"]["source_material_ids"] == [
+        "99999999-9999-9999-9999-999999999999"
+    ]
+
+
+def test_update_exam_question_returns_200_for_professor(client, monkeypatch):
+    async def update_question_stub(*_args, **_kwargs):
+        question = make_question()
+        question.question_text = "수정된 질문"
+        question.status = ExamQuestionStatus.REVIEWED
+        return question
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "update_exam_question",
+        update_question_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.patch(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/"
+        "88888888-8888-8888-8888-888888888888",
+        json={"question_text": "수정된 질문"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["question_text"] == "수정된 질문"
+    assert response.json()["data"]["status"] == "reviewed"
+
+
+def test_delete_exam_question_returns_200_for_professor(client, monkeypatch):
+    async def delete_question_stub(*_args, **_kwargs):
+        question = make_question()
+        question.status = ExamQuestionStatus.DELETED
+        return question
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "delete_exam_question",
+        delete_question_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.delete(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/"
+        "88888888-8888-8888-8888-888888888888"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "deleted"
+
+
+def test_create_exam_question_returns_403_for_student(client, monkeypatch):
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
+        json={
+            "question_number": 1,
+            "bloom_level": "apply",
+            "difficulty": "medium",
+            "question_text": "회귀와 분류의 차이를 설명하세요.",
+            "scope_text": "1주차 머신러닝 기초",
+            "evaluation_objective": "지도학습 구분 능력 평가",
+            "answer_key": "출력 형태와 문제 목적 차이를 포함해야 함",
+            "scoring_criteria": "핵심 개념과 예시 포함",
+            "source_material_ids": [],
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "AUTH__FORBIDDEN"
+
+
+def test_generate_exam_questions_returns_200_for_professor(
+    client,
+    monkeypatch,
+):
+    async def generate_questions_stub(*_args, **_kwargs):
+        return [make_question()]
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "generate_exam_questions",
+        generate_questions_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/generate",
+        json={
+            "scope_text": "1주차 머신러닝 기초",
+            "total_questions": 1,
+            "max_follow_ups": 2,
+            "difficulty": "medium",
+            "source_material_ids": [
+                "99999999-9999-9999-9999-999999999999"
+            ],
+            "bloom_ratios": [
+                {"bloom_level": "apply", "percentage": 100}
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["data"]) == 1
+    assert response.json()["data"][0]["question_text"] == (
+        "회귀와 분류의 차이를 설명하세요."
+    )
+    assert response.json()["data"][0]["status"] == "generated"
 
 
 def test_start_exam_session_returns_200_for_student(client, monkeypatch):

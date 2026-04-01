@@ -5,15 +5,23 @@ from uuid import UUID
 from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
 from app.classroom.domain.usecase import ClassroomUseCase
-from app.exam.application.exception import ExamNotFoundException
+from app.exam.application.exception import (
+    ExamNotFoundException,
+    ExamQuestionGenerationUnavailableException,
+    ExamQuestionNotFoundException,
+)
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
     CreateExamCommand,
+    CreateExamQuestionCommand,
     FinalizeExamResultCommand,
+    GenerateExamQuestionsCommand,
     RecordExamTurnCommand,
+    UpdateExamQuestionCommand,
 )
 from app.exam.domain.entity import (
     Exam,
+    ExamQuestion,
     ExamResult,
     ExamSession,
     ExamTurn,
@@ -25,7 +33,14 @@ from app.exam.domain.repository import (
     ExamSessionRepository,
     ExamTurnRepository,
 )
-from app.exam.domain.service import RealtimeSessionPort
+from app.exam.domain.service import (
+    ExamQuestionGenerationCriterion,
+    ExamQuestionGenerationPort,
+    ExamQuestionGenerationRatio,
+    ExamQuestionSourceMaterial,
+    GenerateExamQuestionsRequest,
+    RealtimeSessionPort,
+)
 from app.exam.domain.usecase import ExamUseCase
 from app.user.domain.entity import UserRole
 from core.db.transactional import transactional
@@ -41,6 +56,7 @@ class ExamService(ExamUseCase):
         result_repository: ExamResultRepository,
         turn_repository: ExamTurnRepository,
         realtime_session_port: RealtimeSessionPort,
+        question_generation_port: ExamQuestionGenerationPort | None = None,
     ):
         self.repository = repository
         self.classroom_usecase = classroom_usecase
@@ -48,6 +64,7 @@ class ExamService(ExamUseCase):
         self.result_repository = result_repository
         self.turn_repository = turn_repository
         self.realtime_session_port = realtime_session_port
+        self.question_generation_port = question_generation_port
 
     @transactional
     async def create_exam(
@@ -105,6 +122,188 @@ class ExamService(ExamUseCase):
         if exam is None or not exam.belongs_to_classroom(classroom_id):
             raise ExamNotFoundException()
         return exam
+
+    @transactional
+    async def create_exam_question(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        current_user: CurrentUser,
+        command: CreateExamQuestionCommand,
+    ) -> ExamQuestion:
+        exam = await self.get_exam(
+            classroom_id=classroom_id,
+            exam_id=exam_id,
+            current_user=current_user,
+        )
+        if current_user.role not in {UserRole.PROFESSOR, UserRole.ADMIN}:
+            raise AuthForbiddenException()
+        question = exam.add_question(
+            question_number=command.question_number,
+            bloom_level=command.bloom_level,
+            difficulty=command.difficulty,
+            question_text=command.question_text,
+            scope_text=command.scope_text,
+            evaluation_objective=command.evaluation_objective,
+            answer_key=command.answer_key,
+            scoring_criteria=command.scoring_criteria,
+            source_material_ids=command.source_material_ids,
+        )
+        await self.repository.save(exam)
+        return question
+
+    @transactional
+    async def update_exam_question(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        question_id: UUID,
+        current_user: CurrentUser,
+        command: UpdateExamQuestionCommand,
+    ) -> ExamQuestion:
+        exam = await self.get_exam(
+            classroom_id=classroom_id,
+            exam_id=exam_id,
+            current_user=current_user,
+        )
+        if current_user.role not in {UserRole.PROFESSOR, UserRole.ADMIN}:
+            raise AuthForbiddenException()
+        try:
+            question = exam.update_question(
+                question_id=question_id,
+                question_number=command.question_number,
+                bloom_level=command.bloom_level,
+                difficulty=command.difficulty,
+                question_text=command.question_text,
+                scope_text=command.scope_text,
+                evaluation_objective=command.evaluation_objective,
+                answer_key=command.answer_key,
+                scoring_criteria=command.scoring_criteria,
+                source_material_ids=command.source_material_ids,
+            )
+        except LookupError as exc:
+            raise ExamQuestionNotFoundException() from exc
+        await self.repository.save(exam)
+        return question
+
+    @transactional
+    async def delete_exam_question(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        question_id: UUID,
+        current_user: CurrentUser,
+    ) -> ExamQuestion:
+        exam = await self.get_exam(
+            classroom_id=classroom_id,
+            exam_id=exam_id,
+            current_user=current_user,
+        )
+        if current_user.role not in {UserRole.PROFESSOR, UserRole.ADMIN}:
+            raise AuthForbiddenException()
+        try:
+            question = exam.delete_question(question_id)
+        except LookupError as exc:
+            raise ExamQuestionNotFoundException() from exc
+        await self.repository.save(exam)
+        return question
+
+    @transactional
+    async def generate_exam_questions(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        current_user: CurrentUser,
+        command: GenerateExamQuestionsCommand,
+    ) -> Sequence[ExamQuestion]:
+        exam = await self.get_exam(
+            classroom_id=classroom_id,
+            exam_id=exam_id,
+            current_user=current_user,
+        )
+        if current_user.role not in {UserRole.PROFESSOR, UserRole.ADMIN}:
+            raise AuthForbiddenException()
+        if self.question_generation_port is None:
+            raise ExamQuestionGenerationUnavailableException()
+
+        classroom = await self.classroom_usecase.get_classroom(
+            classroom_id=classroom_id,
+            current_user=current_user,
+        )
+        source_materials = []
+        if command.source_material_ids:
+            materials = await self.classroom_usecase.list_classroom_materials(
+                classroom_id=classroom.id,
+                current_user=current_user,
+            )
+            selected_material_ids = set(command.source_material_ids)
+            source_materials = [
+                ExamQuestionSourceMaterial(
+                    material_id=result.material.id,
+                    file_name=result.file.file_name,
+                    title=result.material.title,
+                    week=result.material.week,
+                )
+                for result in materials
+                if result.material.id in selected_material_ids
+            ]
+
+        try:
+            drafts = await self.question_generation_port.generate_questions(
+                request=GenerateExamQuestionsRequest(
+                    exam_id=exam.id,
+                    classroom_id=classroom.id,
+                    title=exam.title,
+                    exam_type=exam.exam_type,
+                    scope_text=command.scope_text,
+                    total_questions=command.total_questions,
+                    max_follow_ups=command.max_follow_ups,
+                    difficulty=command.difficulty,
+                    criteria=[
+                        ExamQuestionGenerationCriterion(
+                            title=criterion.title,
+                            description=criterion.description,
+                            weight=criterion.weight,
+                            excellent_definition=(
+                                criterion.excellent_definition
+                            ),
+                            average_definition=criterion.average_definition,
+                            poor_definition=criterion.poor_definition,
+                        )
+                        for criterion in exam.criteria
+                    ],
+                    bloom_ratios=[
+                        ExamQuestionGenerationRatio(
+                            bloom_level=item.bloom_level,
+                            percentage=item.percentage,
+                        )
+                        for item in command.bloom_ratios
+                    ],
+                    source_materials=source_materials,
+                )
+            )
+        except Exception as exc:
+            raise ExamQuestionGenerationUnavailableException() from exc
+        questions = [
+            exam.add_question(
+                question_number=draft.question_number,
+                bloom_level=draft.bloom_level,
+                difficulty=draft.difficulty,
+                question_text=draft.question_text,
+                scope_text=draft.scope_text,
+                evaluation_objective=draft.evaluation_objective,
+                answer_key=draft.answer_key,
+                scoring_criteria=draft.scoring_criteria,
+                source_material_ids=draft.source_material_ids,
+            )
+            for draft in drafts
+        ]
+        await self.repository.save(exam)
+        return questions
 
     @transactional
     async def start_exam_session(

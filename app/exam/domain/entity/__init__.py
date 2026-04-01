@@ -1,6 +1,10 @@
 from app.exam.domain.entity.exam import (
+    BloomLevel,
     Exam,
     ExamCriterion,
+    ExamDifficulty,
+    ExamQuestion,
+    ExamQuestionStatus,
     ExamResult,
     ExamResultCriterion,
     ExamResultStatus,
@@ -16,8 +20,12 @@ from app.exam.domain.entity.exam import (
 )
 
 __all__ = [
+    "BloomLevel",
     "Exam",
     "ExamCriterion",
+    "ExamDifficulty",
+    "ExamQuestion",
+    "ExamQuestionStatus",
     "ExamResult",
     "ExamResultCriterion",
     "ExamResultStatus",

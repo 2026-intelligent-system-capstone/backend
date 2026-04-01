@@ -3,12 +3,14 @@ from sqlalchemy.orm import relationship
 from app.exam.domain.entity import (
     Exam,
     ExamCriterion,
+    ExamQuestion,
     ExamResult,
     ExamSession,
     ExamTurn,
 )
 from core.db.sqlalchemy.models.exam import (
     exam_criterion_table,
+    exam_question_table,
     exam_result_table,
     exam_session_table,
     exam_table,
@@ -20,6 +22,7 @@ from .base import mapper_registry
 
 def init_exam_mappers():
     mapper_registry.map_imperatively(ExamCriterion, exam_criterion_table)
+    mapper_registry.map_imperatively(ExamQuestion, exam_question_table)
     mapper_registry.map_imperatively(
         Exam,
         exam_table,
@@ -28,7 +31,12 @@ def init_exam_mappers():
                 ExamCriterion,
                 cascade="all, delete-orphan",
                 order_by=exam_criterion_table.c.sort_order,
-            )
+            ),
+            "questions": relationship(
+                ExamQuestion,
+                cascade="all, delete-orphan",
+                order_by=exam_question_table.c.question_number,
+            ),
         },
         version_id_col=exam_table.c.version_id,
     )

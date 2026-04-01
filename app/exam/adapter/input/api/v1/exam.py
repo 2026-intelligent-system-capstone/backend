@@ -6,14 +6,20 @@ from fastapi import APIRouter, Depends
 from app.auth.domain.entity import CurrentUser
 from app.exam.adapter.input.api.v1.request import (
     CompleteExamSessionRequest,
+    CreateExamQuestionRequest,
     CreateExamRequest,
     FinalizeExamResultRequest,
+    GenerateExamQuestionsRequest,
     RecordExamTurnRequest,
+    UpdateExamQuestionRequest,
 )
 from app.exam.adapter.input.api.v1.response import (
     ExamCriterionPayload,
     ExamListResponse,
     ExamPayload,
+    ExamQuestionListResponse,
+    ExamQuestionPayload,
+    ExamQuestionResponse,
     ExamResponse,
     ExamResultListResponse,
     ExamResultPayload,
@@ -27,8 +33,11 @@ from app.exam.container import ExamContainer
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
     CreateExamCommand,
+    CreateExamQuestionCommand,
     FinalizeExamResultCommand,
+    GenerateExamQuestionsCommand,
     RecordExamTurnCommand,
+    UpdateExamQuestionCommand,
 )
 from app.exam.domain.usecase import ExamUseCase
 from core.fastapi.dependencies.permission import (
@@ -40,6 +49,26 @@ from core.fastapi.dependencies.permission import (
 
 router = APIRouter(prefix="/classrooms/{classroom_id}/exams", tags=["exams"])
 student_router = APIRouter(prefix="/exams", tags=["exams"])
+
+
+def _build_exam_question_payload(question) -> ExamQuestionPayload:
+    return ExamQuestionPayload(
+        id=str(question.id),
+        exam_id=str(question.exam_id),
+        question_number=question.question_number,
+        bloom_level=question.bloom_level.value,
+        difficulty=question.difficulty.value,
+        question_text=question.question_text,
+        scope_text=question.scope_text,
+        evaluation_objective=question.evaluation_objective,
+        answer_key=question.answer_key,
+        scoring_criteria=question.scoring_criteria,
+        source_material_ids=[
+            str(source_material_id)
+            for source_material_id in question.source_material_ids
+        ],
+        status=question.status.value,
+    )
 
 
 def _build_exam_payload(exam) -> ExamPayload:
@@ -66,6 +95,10 @@ def _build_exam_payload(exam) -> ExamPayload:
                 poor_definition=criterion.poor_definition,
             )
             for criterion in exam.criteria
+        ],
+        questions=[
+            _build_exam_question_payload(question)
+            for question in exam.questions
         ],
     )
 
@@ -175,6 +208,100 @@ async def get_exam(
         current_user=current_user,
     )
     return ExamResponse(data=_build_exam_payload(exam))
+
+
+@router.post(
+    "/{exam_id}/questions",
+    response_model=ExamQuestionResponse,
+    dependencies=[Depends(PermissionDependency([IsProfessorOrAdmin]))],
+)
+@inject
+async def create_exam_question(
+    classroom_id: UUID,
+    exam_id: UUID,
+    request: CreateExamQuestionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    question = await usecase.create_exam_question(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        current_user=current_user,
+        command=CreateExamQuestionCommand(**request.model_dump()),
+    )
+    return ExamQuestionResponse(data=_build_exam_question_payload(question))
+
+
+@router.patch(
+    "/{exam_id}/questions/{question_id}",
+    response_model=ExamQuestionResponse,
+    dependencies=[Depends(PermissionDependency([IsProfessorOrAdmin]))],
+)
+@inject
+async def update_exam_question(
+    classroom_id: UUID,
+    exam_id: UUID,
+    question_id: UUID,
+    request: UpdateExamQuestionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    question = await usecase.update_exam_question(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        question_id=question_id,
+        current_user=current_user,
+        command=UpdateExamQuestionCommand(
+            **request.model_dump(exclude_unset=True)
+        ),
+    )
+    return ExamQuestionResponse(data=_build_exam_question_payload(question))
+
+
+@router.delete(
+    "/{exam_id}/questions/{question_id}",
+    response_model=ExamQuestionResponse,
+    dependencies=[Depends(PermissionDependency([IsProfessorOrAdmin]))],
+)
+@inject
+async def delete_exam_question(
+    classroom_id: UUID,
+    exam_id: UUID,
+    question_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    question = await usecase.delete_exam_question(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        question_id=question_id,
+        current_user=current_user,
+    )
+    return ExamQuestionResponse(data=_build_exam_question_payload(question))
+
+
+@router.post(
+    "/{exam_id}/questions/generate",
+    response_model=ExamQuestionListResponse,
+    dependencies=[Depends(PermissionDependency([IsProfessorOrAdmin]))],
+)
+@inject
+async def generate_exam_questions(
+    classroom_id: UUID,
+    exam_id: UUID,
+    request: GenerateExamQuestionsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    questions = await usecase.generate_exam_questions(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        current_user=current_user,
+        command=GenerateExamQuestionsCommand(**request.model_dump()),
+    )
+    return ExamQuestionListResponse(
+        data=[_build_exam_question_payload(question) for question in questions]
+    )
 
 
 @student_router.post(

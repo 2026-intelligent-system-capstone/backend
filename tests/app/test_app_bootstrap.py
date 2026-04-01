@@ -3,6 +3,12 @@ from unittest.mock import AsyncMock
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from app.classroom.adapter.output.integration import (
+    LLMClassroomMaterialIngestAdapter,
+)
+from app.exam.adapter.output.integration import (
+    LLMExamQuestionGenerationAdapter,
+)
 from core.config import config, get_env
 from core.db.session import session_context
 from core.fastapi import ExtendedFastAPI
@@ -64,6 +70,19 @@ def test_app_registers_request_scoped_db_session_middleware():
     ]
 
     assert RequestScopedDBSessionMiddleware in middleware_classes
+
+
+def test_create_app_registers_llm_adapters():
+    app = create_app()
+
+    assert isinstance(
+        app.container.classroom.material_ingest_port(),
+        LLMClassroomMaterialIngestAdapter,
+    )
+    assert isinstance(
+        app.container.exam.question_generation_port(),
+        LLMExamQuestionGenerationAdapter,
+    )
 
 
 def test_request_scoped_session_middleware_resets_context_and_removes_session(

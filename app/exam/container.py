@@ -1,7 +1,10 @@
 from dependency_injector import containers, providers
 
 from app.classroom.container import ClassroomContainer
-from app.exam.adapter.output.integration import OpenAIRealtimeSessionAdapter
+from app.exam.adapter.output.integration import (
+    LLMExamQuestionGenerationAdapter,
+    OpenAIRealtimeSessionAdapter,
+)
 from app.exam.adapter.output.persistence.sqlalchemy import (
     ExamResultSQLAlchemyRepository,
     ExamSessionSQLAlchemyRepository,
@@ -21,6 +24,9 @@ class ExamContainer(containers.DeclarativeContainer):
     result_repository = providers.Singleton(ExamResultSQLAlchemyRepository)
     turn_repository = providers.Singleton(ExamTurnSQLAlchemyRepository)
     realtime_session_port = providers.Singleton(OpenAIRealtimeSessionAdapter)
+    question_generation_port = providers.Singleton(
+        LLMExamQuestionGenerationAdapter
+    )
     service = providers.Factory(
         ExamService,
         repository=repository,
@@ -29,4 +35,5 @@ class ExamContainer(containers.DeclarativeContainer):
         result_repository=result_repository,
         turn_repository=turn_repository,
         realtime_session_port=realtime_session_port,
+        question_generation_port=question_generation_port,
     )

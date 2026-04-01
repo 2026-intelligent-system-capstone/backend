@@ -21,6 +21,28 @@ class ExamStatus(StrEnum):
     CLOSED = "closed"
 
 
+class ExamDifficulty(StrEnum):
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
+class BloomLevel(StrEnum):
+    NONE = "none"
+    REMEMBER = "remember"
+    UNDERSTAND = "understand"
+    APPLY = "apply"
+    ANALYZE = "analyze"
+    EVALUATE = "evaluate"
+    CREATE = "create"
+
+
+class ExamQuestionStatus(StrEnum):
+    GENERATED = "generated"
+    REVIEWED = "reviewed"
+    DELETED = "deleted"
+
+
 class ExamSessionStatus(StrEnum):
     READY = "ready"
     IN_PROGRESS = "in_progress"
@@ -63,6 +85,61 @@ class ExamCriterion(Entity):
 
 
 @dataclass
+class ExamQuestion(Entity):
+    exam_id: UUID
+    question_number: int
+    bloom_level: BloomLevel
+    difficulty: ExamDifficulty
+    question_text: str
+    scope_text: str
+    evaluation_objective: str
+    answer_key: str
+    scoring_criteria: str
+    source_material_ids: list[UUID] = field(default_factory=list)
+    status: ExamQuestionStatus = ExamQuestionStatus.GENERATED
+
+    def belongs_to_exam(self, exam_id: UUID) -> bool:
+        return self.exam_id == exam_id
+
+    def revise(
+        self,
+        *,
+        question_number: int | None = None,
+        bloom_level: BloomLevel | None = None,
+        difficulty: ExamDifficulty | None = None,
+        question_text: str | None = None,
+        scope_text: str | None = None,
+        evaluation_objective: str | None = None,
+        answer_key: str | None = None,
+        scoring_criteria: str | None = None,
+        source_material_ids: Sequence[UUID] | None = None,
+    ) -> None:
+        if question_number is not None:
+            self.question_number = question_number
+        if bloom_level is not None:
+            self.bloom_level = bloom_level
+        if difficulty is not None:
+            self.difficulty = difficulty
+        if question_text is not None:
+            self.question_text = question_text
+        if scope_text is not None:
+            self.scope_text = scope_text
+        if evaluation_objective is not None:
+            self.evaluation_objective = evaluation_objective
+        if answer_key is not None:
+            self.answer_key = answer_key
+        if scoring_criteria is not None:
+            self.scoring_criteria = scoring_criteria
+        if source_material_ids is not None:
+            self.source_material_ids = list(source_material_ids)
+        if self.status is not ExamQuestionStatus.DELETED:
+            self.status = ExamQuestionStatus.REVIEWED
+
+    def delete(self) -> None:
+        self.status = ExamQuestionStatus.DELETED
+
+
+@dataclass
 class Exam(AggregateRoot):
     classroom_id: UUID
     title: str
@@ -74,6 +151,7 @@ class Exam(AggregateRoot):
     description: str | None = None
     status: ExamStatus = ExamStatus.READY
     criteria: list[ExamCriterion] = field(default_factory=list)
+    questions: list[ExamQuestion] = field(default_factory=list)
 
     @classmethod
     def create(
@@ -117,6 +195,74 @@ class Exam(AggregateRoot):
 
     def belongs_to_classroom(self, classroom_id: UUID) -> bool:
         return self.classroom_id == classroom_id
+
+    def add_question(
+        self,
+        *,
+        question_number: int,
+        bloom_level: BloomLevel,
+        difficulty: ExamDifficulty,
+        question_text: str,
+        scope_text: str,
+        evaluation_objective: str,
+        answer_key: str,
+        scoring_criteria: str,
+        source_material_ids: Sequence[UUID],
+    ) -> ExamQuestion:
+        question = ExamQuestion(
+            exam_id=self.id,
+            question_number=question_number,
+            bloom_level=bloom_level,
+            difficulty=difficulty,
+            question_text=question_text,
+            scope_text=scope_text,
+            evaluation_objective=evaluation_objective,
+            answer_key=answer_key,
+            scoring_criteria=scoring_criteria,
+            source_material_ids=list(source_material_ids),
+            status=ExamQuestionStatus.GENERATED,
+        )
+        self.questions.append(question)
+        return question
+
+    def find_question(self, question_id: UUID) -> ExamQuestion:
+        for question in self.questions:
+            if question.id == question_id and question.belongs_to_exam(self.id):
+                return question
+        raise LookupError("exam question not found")
+
+    def update_question(
+        self,
+        *,
+        question_id: UUID,
+        question_number: int | None = None,
+        bloom_level: BloomLevel | None = None,
+        difficulty: ExamDifficulty | None = None,
+        question_text: str | None = None,
+        scope_text: str | None = None,
+        evaluation_objective: str | None = None,
+        answer_key: str | None = None,
+        scoring_criteria: str | None = None,
+        source_material_ids: Sequence[UUID] | None = None,
+    ) -> ExamQuestion:
+        question = self.find_question(question_id)
+        question.revise(
+            question_number=question_number,
+            bloom_level=bloom_level,
+            difficulty=difficulty,
+            question_text=question_text,
+            scope_text=scope_text,
+            evaluation_objective=evaluation_objective,
+            answer_key=answer_key,
+            scoring_criteria=scoring_criteria,
+            source_material_ids=source_material_ids,
+        )
+        return question
+
+    def delete_question(self, question_id: UUID) -> ExamQuestion:
+        question = self.find_question(question_id)
+        question.delete()
+        return question
 
     def start_session(
         self,

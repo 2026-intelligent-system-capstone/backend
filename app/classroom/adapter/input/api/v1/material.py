@@ -17,6 +17,7 @@ from app.classroom.adapter.input.api.v1.response import (
     ClassroomMaterialListResponse,
     ClassroomMaterialPayload,
     ClassroomMaterialResponse,
+    ClassroomMaterialScopeCandidatePayload,
 )
 from app.classroom.container import ClassroomContainer
 from app.classroom.domain.command import (
@@ -66,6 +67,18 @@ def _build_classroom_material_payload(result) -> ClassroomMaterialPayload:
         description=result.material.description,
         uploaded_by=str(result.material.uploaded_by),
         uploaded_at=_build_uploaded_at(result.material.created_at),
+        ingest_status=result.material.ingest_status.value,
+        ingest_error=result.material.ingest_error,
+        scope_candidates=[
+            ClassroomMaterialScopeCandidatePayload(
+                label=candidate.label,
+                scope_text=candidate.scope_text,
+                keywords=candidate.keywords,
+                week_range=candidate.week_range,
+                confidence=candidate.confidence,
+            )
+            for candidate in result.material.get_scope_candidates()
+        ],
         file=ClassroomMaterialFilePayload(
             id=str(result.file.id),
             file_name=result.file.file_name,

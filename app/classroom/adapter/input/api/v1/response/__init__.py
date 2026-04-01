@@ -34,6 +34,14 @@ class ClassroomMaterialFilePayload(BaseModel):
     mime_type: str
 
 
+class ClassroomMaterialScopeCandidatePayload(BaseModel):
+    label: str
+    scope_text: str
+    keywords: list[str] = Field(default_factory=list)
+    week_range: str | None = None
+    confidence: float | None = None
+
+
 class ClassroomMaterialPayload(BaseModel):
     id: str
     classroom_id: str
@@ -42,6 +50,11 @@ class ClassroomMaterialPayload(BaseModel):
     description: str | None = None
     uploaded_by: str
     uploaded_at: datetime | None = None
+    ingest_status: str
+    ingest_error: str | None = None
+    scope_candidates: list[ClassroomMaterialScopeCandidatePayload] = Field(
+        default_factory=list
+    )
     file: ClassroomMaterialFilePayload
 
 

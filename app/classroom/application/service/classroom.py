@@ -26,6 +26,7 @@ from app.classroom.domain.repository import ClassroomRepository
 from app.classroom.domain.repository.classroom_material import (
     ClassroomMaterialRepository,
 )
+from app.classroom.domain.service import ClassroomMaterialIngestPort, ClassroomMaterialIngestRequest
 from app.classroom.domain.usecase import ClassroomUseCase
 from app.file.domain.entity.file import FileStatus
 from app.file.domain.entity.file_download import FileDownload
@@ -44,11 +45,13 @@ class ClassroomService(ClassroomUseCase):
         user_repository: UserRepository,
         material_repository: ClassroomMaterialRepository,
         file_usecase: FileUseCase,
+        material_ingest_port: ClassroomMaterialIngestPort | None = None,
     ):
         self.repository = repository
         self.user_repository = user_repository
         self.material_repository = material_repository
         self.file_usecase = file_usecase
+        self.material_ingest_port = material_ingest_port
 
     @transactional
     async def create_classroom(
@@ -335,6 +338,25 @@ class ClassroomService(ClassroomUseCase):
             uploaded_by=current_user.id,
         )
         await self.material_repository.save(material)
+        if self.material_ingest_port is not None:
+            download = await self.file_usecase.get_file_download(uploaded_file.id)
+            try:
+                ingest_result = await self.material_ingest_port.ingest_material(
+                    request=ClassroomMaterialIngestRequest(
+                        material_id=material.id,
+                        classroom_id=classroom.id,
+                        title=material.title,
+                        week=material.week,
+                        description=material.description,
+                        file_name=uploaded_file.file_name,
+                        mime_type=uploaded_file.mime_type,
+                        content=download.content.read(),
+                    )
+                )
+                material.mark_ingest_completed(ingest_result.scope_candidates)
+            except Exception as exc:
+                material.mark_ingest_failed(str(exc))
+            await self.material_repository.save(material)
         return ClassroomMaterialDetail(material=material, file=uploaded_file)
 
     async def list_classroom_materials(
@@ -425,6 +447,29 @@ class ClassroomService(ClassroomUseCase):
             )
             old_file_id = material.replace_file(replacement_file.id)
             await self.material_repository.save(material)
+            if self.material_ingest_port is not None:
+                download = await self.file_usecase.get_file_download(
+                    replacement_file.id
+                )
+                try:
+                    ingest_result = await self.material_ingest_port.ingest_material(
+                        request=ClassroomMaterialIngestRequest(
+                            material_id=material.id,
+                            classroom_id=classroom.id,
+                            title=material.title,
+                            week=material.week,
+                            description=material.description,
+                            file_name=replacement_file.file_name,
+                            mime_type=replacement_file.mime_type,
+                            content=download.content.read(),
+                        )
+                    )
+                    material.mark_ingest_completed(
+                        ingest_result.scope_candidates
+                    )
+                except Exception as exc:
+                    material.mark_ingest_failed(str(exc))
+                await self.material_repository.save(material)
             await self.file_usecase.delete_file(old_file_id)
             return ClassroomMaterialDetail(
                 material=material,

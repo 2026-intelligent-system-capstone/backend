@@ -50,6 +50,28 @@ exam_criterion_table = BaseTable(
     Column("poor_definition", String(1000), nullable=True),
 )
 
+exam_question_table = BaseTable(
+    "t_exam_question",
+    metadata,
+    Column("id", PG_UUID(as_uuid=True), primary_key=True),
+    Column(
+        "exam_id",
+        PG_UUID(as_uuid=True),
+        ForeignKey("t_exam.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("question_number", Integer, nullable=False),
+    Column("bloom_level", String(50), nullable=False),
+    Column("difficulty", String(50), nullable=False),
+    Column("question_text", String(5000), nullable=False),
+    Column("scope_text", String(1000), nullable=False),
+    Column("evaluation_objective", String(2000), nullable=False),
+    Column("answer_key", String(5000), nullable=False),
+    Column("scoring_criteria", String(5000), nullable=False),
+    Column("source_material_ids", JSON, nullable=False, default=list),
+    Column("status", String(50), nullable=False),
+)
+
 exam_session_table = BaseTable(
     "t_exam_session",
     metadata,

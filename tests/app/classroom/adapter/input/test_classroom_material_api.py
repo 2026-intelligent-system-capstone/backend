@@ -64,6 +64,14 @@ def make_result():
     )
     file.id = FILE_ID
 
+    class ScopeCandidate:
+        def __init__(self, *, label, scope_text, keywords, week_range, confidence):
+            self.label = label
+            self.scope_text = scope_text
+            self.keywords = keywords
+            self.week_range = week_range
+            self.confidence = confidence
+
     material = type("Material", (), {})()
     material.id = MATERIAL_ID
     material.classroom_id = CLASSROOM_ID
@@ -72,6 +80,17 @@ def make_result():
     material.description = "소개 자료"
     material.uploaded_by = PROFESSOR_ID
     material.created_at = datetime(2026, 1, 1, 9, 0, 0)
+    material.ingest_status = type("IngestStatus", (), {"value": "completed"})()
+    material.ingest_error = None
+    material.get_scope_candidates = lambda: [
+        ScopeCandidate(
+            label="기초 개념",
+            scope_text="머신러닝 개요와 지도학습",
+            keywords=["머신러닝", "지도학습"],
+            week_range="1주차",
+            confidence=0.92,
+        )
+    ]
 
     result = type("Result", (), {})()
     result.material = material
@@ -119,6 +138,8 @@ def test_create_classroom_material_returns_200_for_professor(
     assert response.json()["data"]["title"] == "1주차 자료"
     assert response.json()["data"]["file"]["file_name"] == "week1.pdf"
     assert response.json()["data"]["uploaded_at"] == "2026-01-01T09:00:00Z"
+    assert response.json()["data"]["ingest_status"] == "completed"
+    assert response.json()["data"]["scope_candidates"][0]["label"] == "기초 개념"
 
 
 def test_create_classroom_material_returns_403_for_student(

@@ -14,6 +14,21 @@ class ExamCriterionPayload(BaseModel):
     poor_definition: str | None = None
 
 
+class ExamQuestionPayload(BaseModel):
+    id: str
+    exam_id: str
+    question_number: int
+    bloom_level: str
+    difficulty: str
+    question_text: str
+    scope_text: str
+    evaluation_objective: str
+    answer_key: str
+    scoring_criteria: str
+    source_material_ids: list[str]
+    status: str
+
+
 class ExamPayload(BaseModel):
     id: str
     classroom_id: str
@@ -26,6 +41,7 @@ class ExamPayload(BaseModel):
     ends_at: str
     allow_retake: bool
     criteria: list[ExamCriterionPayload]
+    questions: list[ExamQuestionPayload] = Field(default_factory=list)
 
 
 class ExamResponse(BaseResponse):
@@ -34,6 +50,14 @@ class ExamResponse(BaseResponse):
 
 class ExamListResponse(BaseResponse):
     data: list[ExamPayload] = Field(default=...)
+
+
+class ExamQuestionResponse(BaseResponse):
+    data: ExamQuestionPayload = Field(default=...)
+
+
+class ExamQuestionListResponse(BaseResponse):
+    data: list[ExamQuestionPayload] = Field(default=...)
 
 
 class ExamSessionPayload(BaseModel):

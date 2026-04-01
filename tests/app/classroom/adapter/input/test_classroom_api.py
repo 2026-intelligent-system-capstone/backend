@@ -13,7 +13,10 @@ from app.classroom.application.exception import (
     ClassroomStudentNotEnrolledException,
 )
 from app.classroom.application.service import ClassroomService
-from app.classroom.domain.entity import Classroom
+from app.classroom.domain.entity import (
+    Classroom,
+    ClassroomMaterialIngestStatus,
+)
 from app.user.adapter.output.persistence.sqlalchemy import (
     UserSQLAlchemyRepository,
 )
@@ -68,6 +71,9 @@ def make_classroom_material_result():
             description="소개 자료",
             uploaded_by=PROFESSOR_ID,
             created_at=None,
+            ingest_status=ClassroomMaterialIngestStatus.PENDING,
+            ingest_error=None,
+            get_scope_candidates=lambda: [],
         ),
         file=SimpleNamespace(
             id=UUID("88888888-8888-8888-8888-888888888888"),

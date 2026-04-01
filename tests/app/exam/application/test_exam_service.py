@@ -8,13 +8,26 @@ from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
 from app.classroom.domain.entity import Classroom
 from app.classroom.domain.usecase import ClassroomUseCase
-from app.exam.application.exception import ExamNotFoundException
+from app.exam.application.exception import (
+    ExamNotFoundException,
+    ExamQuestionGenerationUnavailableException,
+    ExamQuestionNotFoundException,
+)
 from app.exam.application.service import ExamService
-from app.exam.domain.command import CreateExamCommand, ExamCriterionCommand
-from app.exam.domain.entity.exam import ExamCriterion
+from app.exam.domain.command import (
+    CreateExamCommand,
+    CreateExamQuestionCommand,
+    ExamCriterionCommand,
+    ExamQuestionBloomRatioCommand,
+    GenerateExamQuestionsCommand,
+    UpdateExamQuestionCommand,
+)
 from app.exam.domain.entity import (
+    BloomLevel,
     Exam,
     ExamCriterion,
+    ExamDifficulty,
+    ExamQuestionStatus,
     ExamResult,
     ExamResultStatus,
     ExamSession,
@@ -30,7 +43,11 @@ from app.exam.domain.repository import (
     ExamSessionRepository,
     ExamTurnRepository,
 )
-from app.exam.domain.service import RealtimeSessionPort
+from app.exam.domain.service import (
+    ExamQuestionGenerationPort,
+    GeneratedExamQuestionDraft,
+    RealtimeSessionPort,
+)
 from app.user.domain.entity import UserRole
 
 ORG_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -156,9 +173,27 @@ class FakeRealtimeSessionPort(RealtimeSessionPort):
         )
 
 
+class FakeExamQuestionGenerationPort(ExamQuestionGenerationPort):
+    def __init__(
+        self,
+        drafts: Sequence[GeneratedExamQuestionDraft] | None = None,
+    ):
+        self.drafts = list(drafts or [])
+        self.requests = []
+
+    async def generate_questions(self, *, request):
+        self.requests.append(request)
+        return list(self.drafts)
+
+
 class FakeClassroomUseCase(ClassroomUseCase):
-    def __init__(self, classroom: Classroom):
+    def __init__(
+        self,
+        classroom: Classroom,
+        materials: list | None = None,
+    ):
         self.classroom = classroom
+        self.materials = list(materials or [])
 
     async def create_classroom(self, *, current_user, command) -> Classroom:
         raise NotImplementedError
@@ -238,7 +273,10 @@ class FakeClassroomUseCase(ClassroomUseCase):
         classroom_id,
         current_user,
     ):
-        raise NotImplementedError
+        _ = current_user
+        if classroom_id != self.classroom.id:
+            raise AuthForbiddenException()
+        return list(self.materials)
 
     async def get_classroom_material(
         self,
@@ -320,6 +358,37 @@ def make_exam(*, classroom_id: UUID = CLASSROOM_ID) -> Exam:
     return exam
 
 
+def make_question_command() -> CreateExamQuestionCommand:
+    return CreateExamQuestionCommand(
+        question_number=1,
+        bloom_level=BloomLevel.APPLY,
+        difficulty=ExamDifficulty.MEDIUM,
+        question_text="회귀와 분류의 차이를 설명하세요.",
+        scope_text="1주차 머신러닝 기초",
+        evaluation_objective="학습자가 지도학습의 핵심 구분을 이해하는지 평가",
+        answer_key="지도학습 목적과 출력 형태 차이를 포함해야 한다.",
+        scoring_criteria="핵심 개념과 예시를 함께 설명하면 정답",
+        source_material_ids=[
+            UUID("99999999-9999-9999-9999-999999999999")
+        ],
+    )
+
+
+def make_material_result(*, material_id: UUID):
+    file = type("File", (), {})()
+    file.file_name = "week1.pdf"
+
+    material = type("Material", (), {})()
+    material.id = material_id
+    material.title = "1주차 자료"
+    material.week = 1
+
+    result = type("MaterialResult", (), {})()
+    result.material = material
+    result.file = file
+    return result
+
+
 def make_current_user(
     *,
     role: UserRole,
@@ -333,18 +402,28 @@ def make_current_user(
     )
 
 
-def build_service(*, exams: list[Exam] | None = None):
+def build_service(
+    *,
+    exams: list[Exam] | None = None,
+    materials: list | None = None,
+    question_generation_port: FakeExamQuestionGenerationPort | None = None,
+):
     session_repository = InMemoryExamSessionRepository()
     result_repository = InMemoryExamResultRepository()
     turn_repository = InMemoryExamTurnRepository()
     realtime_port = FakeRealtimeSessionPort()
+    generation_port = question_generation_port
     service = ExamService(
         repository=InMemoryExamRepository(exams),
-        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        classroom_usecase=FakeClassroomUseCase(
+            make_classroom(),
+            materials=materials,
+        ),
         session_repository=session_repository,
         result_repository=result_repository,
         turn_repository=turn_repository,
         realtime_session_port=realtime_port,
+        question_generation_port=generation_port,
     )
     return (
         service,
@@ -352,6 +431,7 @@ def build_service(*, exams: list[Exam] | None = None):
         result_repository,
         turn_repository,
         realtime_port,
+        generation_port,
     )
 
 
@@ -389,7 +469,7 @@ def test_exam_create_builds_criteria_with_generated_exam_id():
 
 @pytest.mark.asyncio
 async def test_create_exam_success():
-    service, _, _, _, _ = build_service()
+    service, _, _, _, _, _ = build_service()
 
     exam = await service.create_exam(
         classroom_id=CLASSROOM_ID,
@@ -449,7 +529,7 @@ async def test_create_exam_success():
 
 @pytest.mark.asyncio
 async def test_create_exam_student_forbidden():
-    service, _, _, _, _ = build_service()
+    service, _, _, _, _, _ = build_service()
 
     with pytest.raises(AuthForbiddenException):
         await service.create_exam(
@@ -483,7 +563,7 @@ async def test_create_exam_student_forbidden():
 
 @pytest.mark.asyncio
 async def test_list_exams_returns_classroom_exams():
-    service, _, _, _, _ = build_service(exams=[make_exam()])
+    service, _, _, _, _, _ = build_service(exams=[make_exam()])
 
     exams = await service.list_exams(
         classroom_id=CLASSROOM_ID,
@@ -501,7 +581,7 @@ async def test_list_exams_returns_classroom_exams():
 
 @pytest.mark.asyncio
 async def test_get_exam_from_other_classroom_raises_not_found():
-    service, _, _, _, _ = build_service(
+    service, _, _, _, _, _ = build_service(
         exams=[
             make_exam(classroom_id=UUID("77777777-7777-7777-7777-777777777777"))
         ]
@@ -520,7 +600,7 @@ async def test_get_exam_from_other_classroom_raises_not_found():
 
 @pytest.mark.asyncio
 async def test_get_exam_returns_operational_fields_and_criteria():
-    service, _, _, _, _ = build_service(exams=[make_exam()])
+    service, _, _, _, _, _ = build_service(exams=[make_exam()])
 
     exam = await service.get_exam(
         classroom_id=CLASSROOM_ID,
@@ -541,8 +621,123 @@ async def test_get_exam_returns_operational_fields_and_criteria():
 
 
 @pytest.mark.asyncio
+async def test_create_exam_question_success():
+    service, _, _, _, _, _ = build_service(exams=[make_exam()])
+
+    question = await service.create_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=make_question_command(),
+    )
+
+    assert question.exam_id == EXAM_ID
+    assert question.question_number == 1
+    assert question.bloom_level is BloomLevel.APPLY
+    assert question.difficulty is ExamDifficulty.MEDIUM
+    assert question.status is ExamQuestionStatus.GENERATED
+
+
+@pytest.mark.asyncio
+async def test_update_exam_question_marks_reviewed():
+    exam = make_exam()
+    created = exam.add_question(**make_question_command().model_dump())
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    question = await service.update_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        question_id=created.id,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateExamQuestionCommand(
+            question_text="수정된 질문",
+            scope_text="수정 범위",
+        ),
+    )
+
+    assert question.question_text == "수정된 질문"
+    assert question.scope_text == "수정 범위"
+    assert question.status is ExamQuestionStatus.REVIEWED
+
+
+@pytest.mark.asyncio
+async def test_delete_exam_question_marks_deleted():
+    exam = make_exam()
+    created = exam.add_question(**make_question_command().model_dump())
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    question = await service.delete_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        question_id=created.id,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+    )
+
+    assert question.id == created.id
+    assert question.status is ExamQuestionStatus.DELETED
+
+
+@pytest.mark.asyncio
+async def test_update_exam_question_not_found_raises():
+    service, _, _, _, _, _ = build_service(exams=[make_exam()])
+
+    with pytest.raises(ExamQuestionNotFoundException):
+        await service.update_exam_question(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            question_id=UUID("77777777-7777-7777-7777-777777777777"),
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=UpdateExamQuestionCommand(question_text="수정"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_exam_question_not_found_raises():
+    service, _, _, _, _, _ = build_service(exams=[make_exam()])
+
+    with pytest.raises(ExamQuestionNotFoundException):
+        await service.delete_exam_question(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            question_id=UUID("77777777-7777-7777-7777-777777777777"),
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_exam_question_student_forbidden():
+    service, _, _, _, _, _ = build_service(exams=[make_exam()])
+
+    with pytest.raises(AuthForbiddenException):
+        await service.create_exam_question(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+            command=make_question_command(),
+        )
+
+
+@pytest.mark.asyncio
 async def test_start_exam_session_returns_client_secret_and_session():
-    service, session_repository, result_repository, _, realtime_port = (
+    service, session_repository, result_repository, _, realtime_port, _ = (
         build_service(exams=[make_exam()])
     )
 
@@ -572,7 +767,7 @@ async def test_start_exam_session_returns_client_secret_and_session():
 
 @pytest.mark.asyncio
 async def test_start_exam_session_professor_forbidden():
-    service, _, _, _, _ = build_service(exams=[make_exam()])
+    service, _, _, _, _, _ = build_service(exams=[make_exam()])
 
     with pytest.raises(AuthForbiddenException):
         await service.start_exam_session(
@@ -580,5 +775,94 @@ async def test_start_exam_session_professor_forbidden():
             current_user=make_current_user(
                 role=UserRole.PROFESSOR,
                 user_id=PROFESSOR_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_success():
+    material_id = UUID("99999999-9999-9999-9999-999999999999")
+    generation_port = FakeExamQuestionGenerationPort(
+        drafts=[
+            GeneratedExamQuestionDraft(
+                question_number=1,
+                bloom_level=BloomLevel.APPLY,
+                difficulty=ExamDifficulty.MEDIUM,
+                question_text="회귀와 분류의 차이를 설명하세요.",
+                scope_text="1주차 머신러닝 기초",
+                evaluation_objective="지도학습 핵심 구분 평가",
+                answer_key="출력 형태와 문제 목적 차이를 포함해야 한다.",
+                scoring_criteria="핵심 개념과 예시 포함",
+                source_material_ids=[material_id],
+            )
+        ]
+    )
+    service, _, _, _, _, _ = build_service(
+        exams=[make_exam()],
+        materials=[make_material_result(material_id=material_id)],
+        question_generation_port=generation_port,
+    )
+
+    questions = await service.generate_exam_questions(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=GenerateExamQuestionsCommand(
+            scope_text="1주차 머신러닝 기초",
+            total_questions=1,
+            max_follow_ups=2,
+            difficulty=ExamDifficulty.MEDIUM,
+            source_material_ids=[material_id],
+            bloom_ratios=[
+                ExamQuestionBloomRatioCommand(
+                    bloom_level=BloomLevel.APPLY,
+                    percentage=100,
+                )
+            ],
+        ),
+    )
+
+    assert len(questions) == 1
+    assert questions[0].question_number == 1
+    assert questions[0].status is ExamQuestionStatus.GENERATED
+    assert questions[0].source_material_ids == [material_id]
+    assert len(generation_port.requests) == 1
+    request = generation_port.requests[0]
+    assert request.scope_text == "1주차 머신러닝 기초"
+    assert request.total_questions == 1
+    assert request.max_follow_ups == 2
+    assert request.bloom_ratios[0].bloom_level is BloomLevel.APPLY
+    assert request.bloom_ratios[0].percentage == 100
+    assert request.source_materials[0].material_id == material_id
+    assert request.criteria[0].title == "개념 이해"
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_unavailable_raises():
+    service, _, _, _, _, _ = build_service(exams=[make_exam()])
+
+    with pytest.raises(ExamQuestionGenerationUnavailableException):
+        await service.generate_exam_questions(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=GenerateExamQuestionsCommand(
+                scope_text="1주차 머신러닝 기초",
+                total_questions=1,
+                max_follow_ups=0,
+                difficulty=ExamDifficulty.MEDIUM,
+                source_material_ids=[],
+                bloom_ratios=[
+                    ExamQuestionBloomRatioCommand(
+                        bloom_level=BloomLevel.APPLY,
+                        percentage=100,
+                    )
+                ],
             ),
         )
