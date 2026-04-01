@@ -40,6 +40,8 @@ class UpdateClassroomRequest(BaseRequest):
 
 
 class CreateClassroomMaterialRequest(BaseRequest):
+    null_fields = {"description"}
+
     title: str = Field(..., min_length=1, max_length=200)
     week: int = Field(..., ge=1, le=16)
     description: str | None = Field(None, max_length=1000)

@@ -87,7 +87,9 @@ async def create_classroom_material(
         request = CreateClassroomMaterialRequest(
             title=title,
             week=week,
-            description=description,
+            description=(
+                description.strip() if description is not None else None
+            ),
         )
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc

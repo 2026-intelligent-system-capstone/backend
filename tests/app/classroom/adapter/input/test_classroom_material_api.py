@@ -315,6 +315,51 @@ def test_create_classroom_material_invalid_payload_returns_422(
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
+def test_create_classroom_material_allows_blank_description(
+    client,
+    monkeypatch,
+):
+    captured_command = {}
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    async def create_stub(*_args, **kwargs):
+        captured_command["command"] = kwargs["command"]
+        result = make_result()
+        result.material.description = kwargs["command"].description
+        return result
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "create_classroom_material",
+        create_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/materials",
+        data={
+            "title": "1주차 자료",
+            "week": "1",
+            "description": "",
+        },
+        files={
+            "uploaded_file": (
+                "week1.pdf",
+                BytesIO(b"pdf-content"),
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_command["command"].description is None
+    assert response.json()["data"]["description"] is None
+
+
 def test_update_classroom_material_empty_patch_returns_422(
     client,
     monkeypatch,
