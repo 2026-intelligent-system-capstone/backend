@@ -1,18 +1,13 @@
-from collections.abc import Iterable
 from uuid import UUID
 
 from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
 from app.classroom.application.exception import (
     ClassroomAlreadyExistsException,
-    ClassroomInvalidProfessorRoleException,
-    ClassroomInvalidStudentRoleException,
     ClassroomMaterialNotFoundException,
     ClassroomNotFoundException,
-    ClassroomProfessorNotFoundException,
     ClassroomStudentAlreadyInvitedException,
     ClassroomStudentNotEnrolledException,
-    ClassroomStudentNotFoundException,
 )
 from app.classroom.domain.command import (
     CreateClassroomCommand,
@@ -36,7 +31,7 @@ from app.file.domain.entity.file import FileStatus
 from app.file.domain.entity.file_download import FileDownload
 from app.file.domain.service import FileUploadData
 from app.file.domain.usecase.file import FileUseCase
-from app.user.domain.entity import User, UserRole
+from app.user.domain.entity import UserRole
 from app.user.domain.repository import UserRepository
 from core.db.transactional import transactional
 
@@ -47,8 +42,8 @@ class ClassroomService(ClassroomUseCase):
         *,
         repository: ClassroomRepository,
         user_repository: UserRepository,
-        material_repository: ClassroomMaterialRepository | None = None,
-        file_usecase: FileUseCase | None = None,
+        material_repository: ClassroomMaterialRepository,
+        file_usecase: FileUseCase,
     ):
         self.repository = repository
         self.user_repository = user_repository
@@ -62,18 +57,29 @@ class ClassroomService(ClassroomUseCase):
         current_user: CurrentUser,
         command: CreateClassroomCommand,
     ) -> Classroom:
-        self._ensure_professor_or_admin(current_user)
+        if current_user.role not in (UserRole.PROFESSOR, UserRole.ADMIN):
+            raise AuthForbiddenException()
 
-        professor_ids = self._build_professor_ids(
+        classroom = Classroom.create(
+            organization_id=current_user.organization_id,
+            name=command.name,
             professor_ids=command.professor_ids,
             current_user=current_user,
+            grade=command.grade,
+            semester=command.semester,
+            section=command.section,
+            description=command.description,
+            student_ids=command.student_ids,
+            allow_student_material_access=(
+                command.allow_student_material_access
+            ),
         )
-        student_ids = _unique_ids(command.student_ids)
 
-        await self._validate_members(
-            organization_id=current_user.organization_id,
-            professor_ids=professor_ids,
-            student_ids=student_ids,
+        users = await self.user_repository.list_by_organization(
+            classroom.organization_id
+        )
+        classroom.validate_members(
+            {user.id: user for user in users if not user.is_deleted}
         )
 
         existing_classroom = (
@@ -88,19 +94,6 @@ class ClassroomService(ClassroomUseCase):
         if existing_classroom is not None:
             raise ClassroomAlreadyExistsException()
 
-        classroom = Classroom(
-            current_user.organization_id,
-            name=command.name,
-            professor_ids=professor_ids,
-            grade=command.grade,
-            semester=command.semester,
-            section=command.section,
-            description=command.description,
-            student_ids=student_ids,
-            allow_student_material_access=(
-                command.allow_student_material_access
-            ),
-        )
         await self.repository.save(classroom)
         return classroom
 
@@ -114,7 +107,7 @@ class ClassroomService(ClassroomUseCase):
         if classroom is None:
             raise ClassroomNotFoundException()
 
-        if not self._can_access_classroom(classroom, current_user):
+        if not classroom.can_be_accessed_by(current_user):
             raise AuthForbiddenException()
 
         return classroom
@@ -125,13 +118,15 @@ class ClassroomService(ClassroomUseCase):
         classroom_id: UUID,
         current_user: CurrentUser,
     ) -> Classroom:
-        self._ensure_professor_or_admin(current_user)
+        if current_user.role not in (UserRole.PROFESSOR, UserRole.ADMIN):
+            raise AuthForbiddenException()
 
         classroom = await self.get_classroom(
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        self._ensure_classroom_manager(classroom, current_user)
+        if not classroom.can_be_managed_by(current_user):
+            raise AuthForbiddenException()
         return classroom
 
     async def list_classrooms(
@@ -145,7 +140,7 @@ class ClassroomService(ClassroomUseCase):
         return [
             classroom
             for classroom in classrooms
-            if self._can_access_classroom(classroom, current_user)
+            if classroom.can_be_accessed_by(current_user)
         ]
 
     @transactional
@@ -204,8 +199,8 @@ class ClassroomService(ClassroomUseCase):
             "professor_ids" in delivered_fields
             and command.professor_ids is not None
         ):
-            professor_ids = self._build_professor_ids(
-                professor_ids=command.professor_ids,
+            professor_ids = classroom.merge_professor_ids(
+                command.professor_ids,
                 current_user=current_user,
             )
 
@@ -214,29 +209,34 @@ class ClassroomService(ClassroomUseCase):
             "student_ids" in delivered_fields
             and command.student_ids is not None
         ):
-            student_ids = _unique_ids(command.student_ids)
+            student_ids = classroom.normalized_student_ids(
+                command.student_ids
+            )
 
-        await self._validate_members(
-            organization_id=classroom.organization_id,
+        classroom.update_details(
+            name=name,
+            grade=grade,
+            semester=semester,
+            section=section,
+            description=command.description,
+            replace_description="description" in delivered_fields,
+            allow_student_material_access=(
+                command.allow_student_material_access
+            ),
+            replace_allow_student_material_access=(
+                "allow_student_material_access" in delivered_fields
+                and command.allow_student_material_access is not None
+            ),
             professor_ids=professor_ids,
             student_ids=student_ids,
         )
 
-        classroom.name = name
-        classroom.grade = grade
-        classroom.semester = semester
-        classroom.section = section
-        if "description" in delivered_fields:
-            classroom.description = command.description
-        if (
-            "allow_student_material_access" in delivered_fields
-            and command.allow_student_material_access is not None
-        ):
-            classroom.allow_student_material_access = (
-                command.allow_student_material_access
-            )
-        classroom.professor_ids = professor_ids
-        classroom.student_ids = student_ids
+        users = await self.user_repository.list_by_organization(
+            classroom.organization_id
+        )
+        classroom.validate_members(
+            {user.id: user for user in users if not user.is_deleted}
+        )
 
         await self.repository.save(classroom)
         return classroom
@@ -268,12 +268,9 @@ class ClassroomService(ClassroomUseCase):
             current_user=current_user,
         )
 
-        invited_student_ids = _unique_ids(command.student_ids)
-        duplicate_ids = [
-            user_id
-            for user_id in invited_student_ids
-            if user_id in classroom.student_ids
-        ]
+        duplicate_ids = classroom.find_duplicate_student_ids(
+            command.student_ids
+        )
         if duplicate_ids:
             raise ClassroomStudentAlreadyInvitedException(
                 detail={
@@ -281,12 +278,13 @@ class ClassroomService(ClassroomUseCase):
                 }
             )
 
-        updated_student_ids = classroom.student_ids + invited_student_ids
-        await self._validate_students_for_classroom(
-            organization_id=classroom.organization_id,
-            student_ids=updated_student_ids,
+        classroom.invite_students(command.student_ids)
+        users = await self.user_repository.list_by_organization(
+            classroom.organization_id
         )
-        classroom.student_ids = _unique_ids(updated_student_ids)
+        classroom.validate_students(
+            {user.id: user for user in users if not user.is_deleted}
+        )
         await self.repository.save(classroom)
         return classroom
 
@@ -303,16 +301,10 @@ class ClassroomService(ClassroomUseCase):
             current_user=current_user,
         )
 
-        if command.student_id not in classroom.student_ids:
+        if not classroom.remove_student(command.student_id):
             raise ClassroomStudentNotEnrolledException(
                 detail={"student_id": str(command.student_id)}
             )
-
-        classroom.student_ids = [
-            user_id
-            for user_id in classroom.student_ids
-            if user_id != command.student_id
-        ]
         await self.repository.save(classroom)
         return classroom
 
@@ -329,12 +321,12 @@ class ClassroomService(ClassroomUseCase):
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        uploaded_file = await self._get_file_usecase().upload_file(
+        uploaded_file = await self.file_usecase.upload_file(
             file_upload=file_upload,
             directory=f"classrooms/{classroom.id}/materials",
             status=FileStatus.ACTIVE,
         )
-        material = ClassroomMaterial(
+        material = ClassroomMaterial.create(
             classroom_id=classroom.id,
             file_id=uploaded_file.id,
             title=command.title,
@@ -342,7 +334,7 @@ class ClassroomService(ClassroomUseCase):
             description=command.description,
             uploaded_by=current_user.id,
         )
-        await self._get_material_repository().save(material)
+        await self.material_repository.save(material)
         return ClassroomMaterialDetail(material=material, file=uploaded_file)
 
     async def list_classroom_materials(
@@ -355,13 +347,16 @@ class ClassroomService(ClassroomUseCase):
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        self._ensure_student_material_access(classroom, current_user)
-        materials = await self._get_material_repository().list_by_classroom(
+        if not classroom.allows_material_access_to(current_user):
+            raise AuthForbiddenException()
+        materials = await self.material_repository.list_by_classroom(
             classroom.id
         )
-        return [
-            await self._to_material_detail(material) for material in materials
-        ]
+        result: list[ClassroomMaterialDetail] = []
+        for material in materials:
+            file = await self.file_usecase.get_file(material.file_id)
+            result.append(ClassroomMaterialDetail(material=material, file=file))
+        return result
 
     async def get_classroom_material(
         self,
@@ -374,11 +369,13 @@ class ClassroomService(ClassroomUseCase):
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        self._ensure_student_material_access(classroom, current_user)
-        material = await self._get_material(material_id)
-        if material.classroom_id != classroom.id:
+        if not classroom.allows_material_access_to(current_user):
+            raise AuthForbiddenException()
+        material = await self.material_repository.get_by_id(material_id)
+        if material is None or not material.belongs_to(classroom.id):
             raise ClassroomMaterialNotFoundException()
-        return await self._to_material_detail(material)
+        file = await self.file_usecase.get_file(material.file_id)
+        return ClassroomMaterialDetail(material=material, file=file)
 
     async def get_classroom_material_download(
         self,
@@ -392,7 +389,7 @@ class ClassroomService(ClassroomUseCase):
             material_id=material_id,
             current_user=current_user,
         )
-        return await self._get_file_usecase().get_file_download(result.file.id)
+        return await self.file_usecase.get_file_download(result.file.id)
 
     @transactional
     async def update_classroom_material(
@@ -408,35 +405,35 @@ class ClassroomService(ClassroomUseCase):
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        material = await self._get_material(material_id)
-        if material.classroom_id != classroom.id:
+        material = await self.material_repository.get_by_id(material_id)
+        if material is None or not material.belongs_to(classroom.id):
             raise ClassroomMaterialNotFoundException()
 
         delivered_fields = command.model_fields_set
-        if "title" in delivered_fields and command.title is not None:
-            material.title = command.title
-        if "week" in delivered_fields and command.week is not None:
-            material.week = command.week
-        if "description" in delivered_fields:
-            material.description = command.description
+        material.update(
+            title=command.title if "title" in delivered_fields else None,
+            week=command.week if "week" in delivered_fields else None,
+            description=command.description,
+            replace_description="description" in delivered_fields,
+        )
 
         if file_upload is not None:
-            replacement_file = await self._get_file_usecase().upload_file(
+            replacement_file = await self.file_usecase.upload_file(
                 file_upload=file_upload,
                 directory=f"classrooms/{classroom.id}/materials",
                 status=FileStatus.ACTIVE,
             )
-            old_file_id = material.file_id
-            material.file_id = replacement_file.id
-            await self._get_material_repository().save(material)
-            await self._get_file_usecase().delete_file(old_file_id)
+            old_file_id = material.replace_file(replacement_file.id)
+            await self.material_repository.save(material)
+            await self.file_usecase.delete_file(old_file_id)
             return ClassroomMaterialDetail(
                 material=material,
                 file=replacement_file,
             )
 
-        await self._get_material_repository().save(material)
-        return await self._to_material_detail(material)
+        await self.material_repository.save(material)
+        file = await self.file_usecase.get_file(material.file_id)
+        return ClassroomMaterialDetail(material=material, file=file)
 
     @transactional
     async def delete_classroom_material(
@@ -450,185 +447,14 @@ class ClassroomService(ClassroomUseCase):
             classroom_id=classroom_id,
             current_user=current_user,
         )
-        material = await self._get_material(material_id)
-        if material.classroom_id != classroom.id:
+        material = await self.material_repository.get_by_id(material_id)
+        if material is None or not material.belongs_to(classroom.id):
             raise ClassroomMaterialNotFoundException()
 
-        result = await self._to_material_detail(material)
-        await self._get_material_repository().delete(material)
-        await self._get_file_usecase().delete_file(material.file_id)
+        file = await self.file_usecase.get_file(material.file_id)
+        result = ClassroomMaterialDetail(material=material, file=file)
+        await self.material_repository.delete(material)
+        await self.file_usecase.delete_file(material.file_id)
         return result
 
-    async def _validate_members(
-        self,
-        *,
-        organization_id: UUID,
-        professor_ids: list[UUID],
-        student_ids: list[UUID],
-    ) -> None:
-        users_by_id = await self._get_organization_users(organization_id)
 
-        self._validate_professors(users_by_id, professor_ids)
-        self._validate_students(users_by_id, student_ids)
-
-    async def _validate_students_for_classroom(
-        self,
-        *,
-        organization_id: UUID,
-        student_ids: list[UUID],
-    ) -> None:
-        users_by_id = await self._get_organization_users(organization_id)
-        self._validate_students(users_by_id, student_ids)
-
-    async def _get_organization_users(
-        self,
-        organization_id: UUID,
-    ) -> dict[UUID, User]:
-        users = await self.user_repository.list_by_organization(organization_id)
-        return {user.id: user for user in users if not user.is_deleted}
-
-    async def _get_material(
-        self,
-        material_id: UUID,
-    ) -> ClassroomMaterial:
-        material = await self._get_material_repository().get_by_id(material_id)
-        if material is None:
-            raise ClassroomMaterialNotFoundException()
-        return material
-
-    async def _to_material_detail(
-        self,
-        material: ClassroomMaterial,
-    ) -> ClassroomMaterialDetail:
-        file = await self._get_file_usecase().get_file(material.file_id)
-        return ClassroomMaterialDetail(material=material, file=file)
-
-    def _get_material_repository(self) -> ClassroomMaterialRepository:
-        if self.material_repository is None:
-            raise RuntimeError(
-                "Classroom material repository is not configured"
-            )
-        return self.material_repository
-
-    def _get_file_usecase(self) -> FileUseCase:
-        if self.file_usecase is None:
-            raise RuntimeError("File usecase is not configured")
-        return self.file_usecase
-
-    @staticmethod
-    def _validate_professors(
-        users_by_id: dict[UUID, User],
-        professor_ids: list[UUID],
-    ) -> None:
-        missing_ids = [
-            user_id for user_id in professor_ids if user_id not in users_by_id
-        ]
-        if missing_ids:
-            raise ClassroomProfessorNotFoundException(
-                detail={
-                    "professor_ids": [str(user_id) for user_id in missing_ids]
-                }
-            )
-
-        invalid_ids = [
-            user_id
-            for user_id in professor_ids
-            if users_by_id[user_id].role != UserRole.PROFESSOR
-        ]
-        if invalid_ids:
-            raise ClassroomInvalidProfessorRoleException(
-                detail={
-                    "professor_ids": [str(user_id) for user_id in invalid_ids]
-                }
-            )
-
-    @staticmethod
-    def _validate_students(
-        users_by_id: dict[UUID, User],
-        student_ids: list[UUID],
-    ) -> None:
-        missing_ids = [
-            user_id for user_id in student_ids if user_id not in users_by_id
-        ]
-        if missing_ids:
-            raise ClassroomStudentNotFoundException(
-                detail={
-                    "student_ids": [str(user_id) for user_id in missing_ids]
-                }
-            )
-
-        invalid_ids = [
-            user_id
-            for user_id in student_ids
-            if users_by_id[user_id].role != UserRole.STUDENT
-        ]
-        if invalid_ids:
-            raise ClassroomInvalidStudentRoleException(
-                detail={
-                    "student_ids": [str(user_id) for user_id in invalid_ids]
-                }
-            )
-
-    @staticmethod
-    def _ensure_professor_or_admin(current_user: CurrentUser) -> None:
-        if current_user.role not in (UserRole.PROFESSOR, UserRole.ADMIN):
-            raise AuthForbiddenException()
-
-    @staticmethod
-    def _ensure_classroom_manager(
-        classroom: Classroom,
-        current_user: CurrentUser,
-    ) -> None:
-        if current_user.role == UserRole.ADMIN:
-            return
-
-        if current_user.id in classroom.professor_ids:
-            return
-
-        raise AuthForbiddenException()
-
-    @staticmethod
-    def _ensure_student_material_access(
-        classroom: Classroom,
-        current_user: CurrentUser,
-    ) -> None:
-        if current_user.role != UserRole.STUDENT:
-            return
-        if classroom.allow_student_material_access:
-            return
-        raise AuthForbiddenException()
-
-    @staticmethod
-    def _can_access_classroom(
-        classroom: Classroom,
-        current_user: CurrentUser,
-    ) -> bool:
-        if classroom.organization_id != current_user.organization_id:
-            return False
-
-        if current_user.role == UserRole.ADMIN:
-            return True
-
-        if current_user.role == UserRole.PROFESSOR:
-            return current_user.id in classroom.professor_ids
-
-        return current_user.id in classroom.student_ids
-
-    @staticmethod
-    def _build_professor_ids(
-        *,
-        professor_ids: Iterable[UUID],
-        current_user: CurrentUser,
-    ) -> list[UUID]:
-        normalized_professor_ids = _unique_ids(professor_ids)
-        if (
-            current_user.role == UserRole.PROFESSOR
-            and current_user.id not in normalized_professor_ids
-        ):
-            normalized_professor_ids.append(current_user.id)
-
-        return normalized_professor_ids
-
-
-def _unique_ids(user_ids: Iterable[UUID]) -> list[UUID]:
-    return list(dict.fromkeys(user_ids))

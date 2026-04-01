@@ -67,19 +67,21 @@ class UserService(UserUseCase):
             )
             if existing_user is not None and existing_user.id != user.id:
                 raise UserAccountAlreadyExistsException()
-            user.login_id = command.login_id
 
-        if "email" in delivered_fields:
-            user.email = command.email
-
-        if "role" in delivered_fields and command.role is not None:
-            user.role = command.role
-
-        if "status" in delivered_fields and command.status is not None:
-            user.status = command.status
-
-        if "name" in delivered_fields and command.name is not None:
-            user.name = command.name
+        user.update(
+            login_id=(
+                command.login_id if "login_id" in delivered_fields else None
+            ),
+            role=(command.role if "role" in delivered_fields else None),
+            email=(command.email if "email" in delivered_fields else None),
+            clear_email=(
+                "email" in delivered_fields and command.email is None
+            ),
+            name=(command.name if "name" in delivered_fields else None),
+            status=(
+                command.status if "status" in delivered_fields else None
+            ),
+        )
 
         await self.repository.save(user)
         return user

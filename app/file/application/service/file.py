@@ -80,21 +80,36 @@ class FileService(FileUseCase):
         file = await self.get_file(file_id)
         delivered_fields = command.model_fields_set
 
-        if "file_name" in delivered_fields and command.file_name is not None:
-            file.file_name = command.file_name
-        if "file_path" in delivered_fields and command.file_path is not None:
-            file.file_path = command.file_path
-        if (
-            "file_extension" in delivered_fields
-            and command.file_extension is not None
-        ):
-            file.file_extension = command.file_extension
-        if "file_size" in delivered_fields and command.file_size is not None:
-            file.file_size = command.file_size
-        if "mime_type" in delivered_fields and command.mime_type is not None:
-            file.mime_type = command.mime_type
-        if "status" in delivered_fields and command.status is not None:
-            file.status = command.status
+        file.update(
+            file_name=(
+                command.file_name
+                if "file_name" in delivered_fields
+                else None
+            ),
+            file_path=(
+                command.file_path
+                if "file_path" in delivered_fields
+                else None
+            ),
+            file_extension=(
+                command.file_extension
+                if "file_extension" in delivered_fields
+                else None
+            ),
+            file_size=(
+                command.file_size
+                if "file_size" in delivered_fields
+                else None
+            ),
+            mime_type=(
+                command.mime_type
+                if "mime_type" in delivered_fields
+                else None
+            ),
+            status=(
+                command.status if "status" in delivered_fields else None
+            ),
+        )
 
         await self.repository.save(file)
         return file
@@ -102,8 +117,8 @@ class FileService(FileUseCase):
     @transactional
     async def delete_file(self, file_id: UUID) -> File:
         file = await self.get_file(file_id)
-        if file.status != FileStatus.DELETED:
+        should_remove_from_storage = file.delete()
+        if should_remove_from_storage:
             await self.storage.delete(path=file.file_path)
-        file.delete()
         await self.repository.save(file)
         return file

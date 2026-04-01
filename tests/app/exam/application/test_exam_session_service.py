@@ -329,6 +329,156 @@ def make_current_user(*, role: UserRole, user_id: UUID) -> CurrentUser:
     )
 
 
+def test_exam_session_entity_methods_enforce_rules():
+    session = ExamSession.start(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        started_at=STARTS_AT,
+        attempt_number=1,
+        expires_at=SECRET_EXPIRES_AT,
+        provider_session_id="sess_test_123",
+    )
+
+    assert session.status is ExamSessionStatus.IN_PROGRESS
+    assert session.last_activity_at == STARTS_AT
+
+    session.record_activity(ENDS_AT)
+    assert session.last_activity_at == ENDS_AT
+
+    with pytest.raises(AuthForbiddenException):
+        session.assert_owned_by(
+            exam_id=EXAM_ID,
+            student_id=PROFESSOR_ID,
+        )
+
+    pending_result = session.create_pending_result()
+    assert pending_result.session_id == session.id
+    assert pending_result.student_id == STUDENT_ID
+    assert pending_result.status is ExamResultStatus.PENDING
+
+    session.complete(ENDS_AT)
+    session.assert_completed()
+    assert session.ended_at == ENDS_AT
+
+
+def test_exam_result_entity_methods_finalize_result():
+    result = ExamResult.pending(
+        exam_id=EXAM_ID,
+        session_id=UUID("66666666-6666-6666-6666-666666666666"),
+        student_id=STUDENT_ID,
+    )
+
+    assert result.status is ExamResultStatus.PENDING
+    assert result.belongs_to(session_id=result.session_id) is True
+
+    result.finalize(
+        overall_score=95,
+        summary="전반적으로 우수합니다.",
+        submitted_at=ENDS_AT,
+    )
+
+    assert result.status is ExamResultStatus.COMPLETED
+    assert result.overall_score == 95
+    assert result.summary == "전반적으로 우수합니다."
+    assert result.submitted_at == ENDS_AT
+
+
+def test_exam_turn_entity_create_preserves_payload():
+    turn = ExamTurn.create(
+        session_id=UUID("66666666-6666-6666-6666-666666666666"),
+        sequence=3,
+        role=ExamTurnRole.ASSISTANT,
+        event_type=ExamTurnEventType.FOLLOW_UP,
+        content="추가 질문입니다.",
+        created_at=ENDS_AT,
+        metadata={"message_id": "msg-follow-up-1"},
+    )
+
+    assert turn.sequence == 3
+    assert turn.event_type is ExamTurnEventType.FOLLOW_UP
+    assert turn.metadata == {"message_id": "msg-follow-up-1"}
+
+
+def test_exam_aggregate_session_and_result_rules():
+    exam = make_exam()
+    session = exam.start_session(
+        student_id=STUDENT_ID,
+        started_at=STARTS_AT,
+        attempt_number=1,
+        expires_at=SECRET_EXPIRES_AT,
+        provider_session_id="sess_test_123",
+    )
+    turn = exam.record_turn(
+        session=session,
+        student_id=STUDENT_ID,
+        role=ExamTurnRole.STUDENT,
+        event_type=ExamTurnEventType.ANSWER,
+        content="답변입니다.",
+        created_at=ENDS_AT,
+        metadata={"message_id": "msg-answer-1"},
+        existing_turns=[],
+    )
+    result = session.create_pending_result()
+
+    assert session.exam_id == exam.id
+    assert turn.sequence == 1
+    assert turn.session_id == session.id
+    assert session.last_activity_at == ENDS_AT
+    assert exam.find_result_for_session(
+        results=[result],
+        session_id=session.id,
+    ) is result
+
+
+def test_exam_aggregate_validates_ownership_and_finalize_rules():
+    exam = make_exam()
+    session = exam.start_session(
+        student_id=STUDENT_ID,
+        started_at=STARTS_AT,
+        attempt_number=1,
+    )
+    result = session.create_pending_result()
+
+    with pytest.raises(AuthForbiddenException):
+        exam.record_turn(
+            session=session,
+            student_id=PROFESSOR_ID,
+            role=ExamTurnRole.STUDENT,
+            event_type=ExamTurnEventType.ANSWER,
+            content="답변",
+            created_at=STARTS_AT,
+            metadata={},
+            existing_turns=[],
+        )
+
+    with pytest.raises(AuthForbiddenException):
+        exam.finalize_result(
+            session=session,
+            student_id=STUDENT_ID,
+            results=[result],
+            overall_score=90,
+            summary="요약",
+            submitted_at=ENDS_AT,
+        )
+
+    exam.complete_session(
+        session=session,
+        student_id=STUDENT_ID,
+        occurred_at=ENDS_AT,
+    )
+    finalized = exam.finalize_result(
+        session=session,
+        student_id=STUDENT_ID,
+        results=[result],
+        overall_score=90,
+        summary="요약",
+        submitted_at=ENDS_AT,
+    )
+
+    assert finalized.status is ExamResultStatus.COMPLETED
+    assert finalized.overall_score == 90
+
+
 @pytest.mark.asyncio
 async def test_start_exam_session_returns_secret_and_session():
     exam_repository = InMemoryExamRepository([make_exam()])
@@ -340,6 +490,7 @@ async def test_start_exam_session_returns_secret_and_session():
         classroom_usecase=FakeClassroomUseCase(make_classroom()),
         session_repository=session_repository,
         result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
         realtime_session_port=realtime_port,
     )
 
@@ -371,6 +522,7 @@ async def test_start_exam_session_student_only():
         classroom_usecase=FakeClassroomUseCase(make_classroom()),
         session_repository=InMemoryExamSessionRepository(),
         result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
         realtime_session_port=FakeRealtimeSessionPort(),
     )
 
@@ -392,6 +544,7 @@ async def test_start_exam_session_includes_exam_context_in_instructions():
         classroom_usecase=FakeClassroomUseCase(make_classroom()),
         session_repository=InMemoryExamSessionRepository(),
         result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
         realtime_session_port=realtime_port,
     )
 
@@ -434,6 +587,7 @@ async def test_list_my_exam_results_returns_current_student_results_only():
         classroom_usecase=FakeClassroomUseCase(make_classroom()),
         session_repository=InMemoryExamSessionRepository(),
         result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
         realtime_session_port=FakeRealtimeSessionPort(),
     )
 

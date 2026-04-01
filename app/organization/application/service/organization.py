@@ -60,26 +60,26 @@ class OrganizationService(OrganizationUseCase):
         if (
             "code" in delivered_fields
             and command.code is not None
-            and command.code != organization.code
+            and organization.needs_code_change(command.code)
         ):
             existing_organization = await self.repository.get_by_code(
                 command.code
             )
             if existing_organization is not None:
                 raise OrganizationCodeAlreadyExistsException()
-            organization.code = command.code
 
-        if "name" in delivered_fields and command.name is not None:
-            organization.name = command.name
-
-        if (
-            "auth_provider" in delivered_fields
-            and command.auth_provider is not None
-        ):
-            organization.auth_provider = command.auth_provider
-
-        if "is_active" in delivered_fields and command.is_active is not None:
-            organization.is_active = command.is_active
+        organization.update(
+            code=(command.code if "code" in delivered_fields else None),
+            name=(command.name if "name" in delivered_fields else None),
+            auth_provider=(
+                command.auth_provider
+                if "auth_provider" in delivered_fields
+                else None
+            ),
+            is_active=(
+                command.is_active if "is_active" in delivered_fields else None
+            ),
+        )
 
         await self.repository.save(organization)
         return organization

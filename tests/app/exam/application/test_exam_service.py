@@ -11,6 +11,7 @@ from app.classroom.domain.usecase import ClassroomUseCase
 from app.exam.application.exception import ExamNotFoundException
 from app.exam.application.service import ExamService
 from app.exam.domain.command import CreateExamCommand, ExamCriterionCommand
+from app.exam.domain.entity.exam import ExamCriterion
 from app.exam.domain.entity import (
     Exam,
     ExamCriterion,
@@ -19,6 +20,7 @@ from app.exam.domain.entity import (
     ExamSession,
     ExamSessionStatus,
     ExamStatus,
+    ExamTurn,
     ExamType,
     RealtimeClientSecret,
 )
@@ -26,6 +28,7 @@ from app.exam.domain.repository import (
     ExamRepository,
     ExamResultRepository,
     ExamSessionRepository,
+    ExamTurnRepository,
 )
 from app.exam.domain.service import RealtimeSessionPort
 from app.user.domain.entity import UserRole
@@ -110,6 +113,29 @@ class InMemoryExamResultRepository(ExamResultRepository):
             result
             for result in self.results.values()
             if result.exam_id == exam_id and result.student_id == student_id
+        ]
+
+
+class InMemoryExamTurnRepository(ExamTurnRepository):
+    def __init__(self):
+        self.turns: dict[UUID, ExamTurn] = {}
+
+    async def save(self, entity: ExamTurn) -> None:
+        self.turns[entity.id] = entity
+
+    async def get_by_id(self, entity_id: UUID) -> ExamTurn | None:
+        return self.turns.get(entity_id)
+
+    async def list(self) -> Sequence[ExamTurn]:
+        return list(self.turns.values())
+
+    async def list_by_session(self, *, session_id: UUID) -> Sequence[ExamTurn]:
+        return [
+            turn
+            for turn in sorted(
+                self.turns.values(), key=lambda item: item.sequence
+            )
+            if turn.session_id == session_id
         ]
 
 
@@ -310,20 +336,60 @@ def make_current_user(
 def build_service(*, exams: list[Exam] | None = None):
     session_repository = InMemoryExamSessionRepository()
     result_repository = InMemoryExamResultRepository()
+    turn_repository = InMemoryExamTurnRepository()
     realtime_port = FakeRealtimeSessionPort()
     service = ExamService(
         repository=InMemoryExamRepository(exams),
         classroom_usecase=FakeClassroomUseCase(make_classroom()),
         session_repository=session_repository,
         result_repository=result_repository,
+        turn_repository=turn_repository,
         realtime_session_port=realtime_port,
     )
-    return service, session_repository, result_repository, realtime_port
+    return (
+        service,
+        session_repository,
+        result_repository,
+        turn_repository,
+        realtime_port,
+    )
+
+
+def test_exam_create_builds_criteria_with_generated_exam_id():
+    criteria = [
+        ExamCriterion(
+            exam_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            title="개념 이해",
+            description="핵심 개념을 정확히 설명하는지 평가",
+            weight=100,
+            sort_order=1,
+            excellent_definition="정확히 설명한다.",
+            average_definition="대체로 설명한다.",
+            poor_definition="설명이 부정확하다.",
+        )
+    ]
+
+    exam = Exam.create(
+        classroom_id=CLASSROOM_ID,
+        title="중간 평가",
+        description="1주차 범위 평가",
+        exam_type=ExamType.MIDTERM,
+        duration_minutes=60,
+        starts_at=STARTS_AT,
+        ends_at=ENDS_AT,
+        allow_retake=False,
+        criteria=criteria,
+    )
+
+    assert len(exam.criteria) == 1
+    assert exam.criteria[0].exam_id == exam.id
+    assert exam.criteria[0].title == "개념 이해"
+    assert exam.belongs_to_classroom(CLASSROOM_ID) is True
 
 
 @pytest.mark.asyncio
 async def test_create_exam_success():
-    service, _, _, _ = build_service()
+    service, _, _, _, _ = build_service()
 
     exam = await service.create_exam(
         classroom_id=CLASSROOM_ID,
@@ -376,11 +442,14 @@ async def test_create_exam_success():
     assert len(exam.criteria) == 2
     assert exam.criteria[0].title == "개념 이해"
     assert exam.criteria[1].weight == 40
+    instructions = exam.build_realtime_instructions()
+    assert "시험 제목: 중간 평가" in instructions
+    assert "- 2. 문제 해결 과정 (40%)" in instructions
 
 
 @pytest.mark.asyncio
 async def test_create_exam_student_forbidden():
-    service, _, _, _ = build_service()
+    service, _, _, _, _ = build_service()
 
     with pytest.raises(AuthForbiddenException):
         await service.create_exam(
@@ -414,7 +483,7 @@ async def test_create_exam_student_forbidden():
 
 @pytest.mark.asyncio
 async def test_list_exams_returns_classroom_exams():
-    service, _, _, _ = build_service(exams=[make_exam()])
+    service, _, _, _, _ = build_service(exams=[make_exam()])
 
     exams = await service.list_exams(
         classroom_id=CLASSROOM_ID,
@@ -432,7 +501,7 @@ async def test_list_exams_returns_classroom_exams():
 
 @pytest.mark.asyncio
 async def test_get_exam_from_other_classroom_raises_not_found():
-    service, _, _, _ = build_service(
+    service, _, _, _, _ = build_service(
         exams=[
             make_exam(classroom_id=UUID("77777777-7777-7777-7777-777777777777"))
         ]
@@ -451,7 +520,7 @@ async def test_get_exam_from_other_classroom_raises_not_found():
 
 @pytest.mark.asyncio
 async def test_get_exam_returns_operational_fields_and_criteria():
-    service, _, _, _ = build_service(exams=[make_exam()])
+    service, _, _, _, _ = build_service(exams=[make_exam()])
 
     exam = await service.get_exam(
         classroom_id=CLASSROOM_ID,
@@ -473,7 +542,7 @@ async def test_get_exam_returns_operational_fields_and_criteria():
 
 @pytest.mark.asyncio
 async def test_start_exam_session_returns_client_secret_and_session():
-    service, session_repository, result_repository, realtime_port = (
+    service, session_repository, result_repository, _, realtime_port = (
         build_service(exams=[make_exam()])
     )
 
@@ -503,7 +572,7 @@ async def test_start_exam_session_returns_client_secret_and_session():
 
 @pytest.mark.asyncio
 async def test_start_exam_session_professor_forbidden():
-    service, _, _, _ = build_service(exams=[make_exam()])
+    service, _, _, _, _ = build_service(exams=[make_exam()])
 
     with pytest.raises(AuthForbiddenException):
         await service.start_exam_session(

@@ -1,7 +1,3 @@
-from uuid import UUID, uuid4
-
-from jwt import PyJWTError
-
 from app.auth.application.exception import (
     AuthIdentityProviderNotConfiguredException,
     AuthIdentityProviderUnavailableException,
@@ -18,12 +14,10 @@ from app.auth.domain.repository import AuthTokenRepository
 from app.auth.domain.usecase.auth import AuthUseCase
 from app.organization.domain.repository import OrganizationRepository
 from app.organization.domain.service import OrganizationAuthService
-from app.user.domain.entity import User, UserRole, UserStatus
+from app.user.domain.entity import User
 from app.user.domain.repository import UserRepository
 from core.config import config
 from core.db.transactional import transactional
-from core.domain.types import TokenType
-from core.helpers.token import TokenHelper
 
 TEST_LOGIN_BYPASS_IDS = {"90000001", "90000002"}
 
@@ -55,18 +49,12 @@ class AuthService(AuthUseCase):
                 organization.id,
                 command.login_id,
             )
-            if (
-                user is None
-                or user.is_deleted
-                or user.status == UserStatus.BLOCKED
-            ):
+            if user is None or not user.can_login:
                 raise AuthInvalidCredentialsException()
 
             return await self._issue_tokens(
-                user_id=user.id,
-                organization_id=organization.id,
+                user=user,
                 organization_code=organization.code,
-                role=user.role,
             )
 
         try:
@@ -89,7 +77,7 @@ class AuthService(AuthUseCase):
         )
 
         if user is None:
-            user = User(
+            user = User.register(
                 organization_id=organization.id,
                 login_id=identity.login_id,
                 role=identity.role,
@@ -97,29 +85,33 @@ class AuthService(AuthUseCase):
                 name=identity.name,
             )
         else:
-            if user.is_deleted or user.status == UserStatus.BLOCKED:
+            if not user.can_login:
                 raise AuthInvalidCredentialsException()
 
-            user.role = identity.role
-            user.email = identity.email
-            user.name = identity.name
+            user.sync_profile(
+                login_id=identity.login_id,
+                role=identity.role,
+                email=identity.email,
+                name=identity.name,
+            )
 
         await self.user_repository.save(user)
 
         return await self._issue_tokens(
-            user_id=user.id,
-            organization_id=organization.id,
+            user=user,
             organization_code=organization.code,
-            role=user.role,
         )
 
     async def refresh(self, command: RefreshTokenCommand) -> AuthTokens:
         if command.refresh_token is None:
             raise AuthInvalidRefreshTokenException()
 
-        payload = self._decode_refresh_token(command.refresh_token)
-        user_id = self._parse_user_id(payload)
-        jti = self._parse_jti(payload)
+        try:
+            user_id, jti = AuthTokens.parse_refresh_token(
+                command.refresh_token
+            )
+        except ValueError as exc:
+            raise AuthInvalidRefreshTokenException() from exc
 
         stored_token = await self.auth_token_repository.get(
             user_id=user_id,
@@ -140,10 +132,8 @@ class AuthService(AuthUseCase):
 
         await self.auth_token_repository.delete(user_id=user_id, jti=jti)
         return await self._issue_tokens(
-            user_id=user_id,
-            organization_id=organization.id,
+            user=user,
             organization_code=organization.code,
-            role=user.role,
         )
 
     async def logout(self, command: LogoutCommand) -> None:
@@ -151,10 +141,10 @@ class AuthService(AuthUseCase):
             return
 
         try:
-            payload = self._decode_refresh_token(command.refresh_token)
-            user_id = self._parse_user_id(payload)
-            jti = self._parse_jti(payload)
-        except AuthInvalidRefreshTokenException:
+            user_id, jti = AuthTokens.parse_refresh_token(
+                command.refresh_token
+            )
+        except ValueError:
             return
 
         await self.auth_token_repository.delete(user_id=user_id, jti=jti)
@@ -162,62 +152,18 @@ class AuthService(AuthUseCase):
     async def _issue_tokens(
         self,
         *,
-        user_id: UUID,
-        organization_id: UUID,
+        user: User,
         organization_code: str,
-        role: UserRole,
     ) -> AuthTokens:
-        access_token = TokenHelper.create_token(
-            payload={"sub": str(user_id)},
-            token_type=TokenType.ACCESS,
-        )
-        refresh_jti = str(uuid4())
-        refresh_token = TokenHelper.create_token(
-            payload={"sub": str(user_id), "jti": refresh_jti},
-            token_type=TokenType.REFRESH,
+        tokens, refresh_jti = AuthTokens.issue_for_user(
+            user=user,
+            organization_code=organization_code,
         )
         await self.auth_token_repository.save(
-            user_id=user_id,
+            user_id=user.id,
             jti=refresh_jti,
-            refresh_token=refresh_token,
+            refresh_token=tokens.refresh_token,
             expires_in=config.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
         )
-        return AuthTokens(
-            user_id=str(user_id),
-            organization_id=str(organization_id),
-            organization_code=organization_code,
-            role=role.value,
-            access_token=access_token,
-            refresh_token=refresh_token,
-        )
+        return tokens
 
-    @staticmethod
-    def _parse_user_id(payload: dict[str, object]) -> UUID:
-        try:
-            user_id = payload["sub"]
-            if not isinstance(user_id, str):
-                raise ValueError
-            return UUID(user_id)
-        except (KeyError, ValueError) as exc:
-            raise AuthInvalidRefreshTokenException() from exc
-
-    @staticmethod
-    def _parse_jti(payload: dict[str, object]) -> str:
-        try:
-            jti = payload["jti"]
-            if not isinstance(jti, str):
-                raise ValueError
-            return jti
-        except (KeyError, ValueError) as exc:
-            raise AuthInvalidRefreshTokenException() from exc
-
-    @staticmethod
-    def _decode_refresh_token(token: str) -> dict[str, object]:
-        try:
-            payload = TokenHelper.decode_token(token)
-        except (PyJWTError, KeyError, ValueError) as exc:
-            raise AuthInvalidRefreshTokenException() from exc
-
-        if payload.get("type") != TokenType.REFRESH.value:
-            raise AuthInvalidRefreshTokenException()
-        return payload
