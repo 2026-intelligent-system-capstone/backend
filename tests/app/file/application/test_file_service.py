@@ -4,6 +4,8 @@ from uuid import UUID
 import pytest
 
 from app.file.application.exception import (
+    FileDeleteFailedException,
+    FileDownloadFailedException,
     FileNotFoundException,
     FileUploadFailedException,
 )
@@ -262,3 +264,43 @@ async def test_get_file_download_returns_stream_and_metadata():
     assert download.mime_type == "application/pdf"
     assert download.content.read() == b"pdf-content"
     assert storage.open_calls == ["classrooms/materials/week1.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_get_file_download_failure_raises():
+    class FailingOpenStorage(FakeFileStorage):
+        async def open(self, *, path: str):
+            self.open_calls.append(path)
+            raise RuntimeError("open failed")
+
+    repo = InMemoryFileRepository()
+    storage = FailingOpenStorage()
+    service = FileService(repository=repo, storage=storage)
+    created_file = await service.upload_file(
+        file_upload=FileUploadData(
+            file_name="week1.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"pdf-content"),
+        ),
+        directory="classrooms/materials",
+        status=FileStatus.ACTIVE,
+    )
+
+    with pytest.raises(FileDownloadFailedException):
+        await service.get_file_download(created_file.id)
+
+
+@pytest.mark.asyncio
+async def test_delete_file_storage_failure_raises():
+    class FailingDeleteStorage(FakeFileStorage):
+        async def delete(self, *, path: str) -> None:
+            self.delete_calls.append(path)
+            raise RuntimeError("delete failed")
+
+    repo = InMemoryFileRepository()
+    storage = FailingDeleteStorage()
+    service = FileService(repository=repo, storage=storage)
+    created_file = await service.create_file(make_create_command())
+
+    with pytest.raises(FileDeleteFailedException):
+        await service.delete_file(created_file.id)

@@ -15,6 +15,10 @@ from qdrant_client.models import (
 )
 
 from app.classroom.domain.entity import ClassroomMaterialScopeCandidate
+from app.classroom.domain.exception import (
+    ClassroomMaterialIngestDomainException,
+    ClassroomMaterialIngestEmptyScopeDomainException,
+)
 from app.classroom.domain.service import (
     ClassroomMaterialIngestPort,
     ClassroomMaterialIngestRequest,
@@ -29,10 +33,14 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
         *,
         request: ClassroomMaterialIngestRequest,
     ) -> ClassroomMaterialIngestResult:
-        if not config.LLM_INTEGRATION_ENABLED:
-            return ClassroomMaterialIngestResult()
         if request.mime_type != "application/pdf":
-            return ClassroomMaterialIngestResult()
+            raise ClassroomMaterialIngestDomainException(
+                message="PDF 형식의 강의 자료만 적재할 수 있습니다."
+            )
+        if not config.OPENAI_API_KEY:
+            raise ClassroomMaterialIngestDomainException(
+                message="문항 생성 환경이 올바르게 설정되지 않았습니다."
+            )
 
         pages = PdfReader(BytesIO(request.content)).pages
         page_texts = []
@@ -41,7 +49,9 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
             if text and text.strip():
                 page_texts.append(text.strip())
         if not page_texts:
-            return ClassroomMaterialIngestResult()
+            raise ClassroomMaterialIngestDomainException(
+                message="강의 자료에서 추출된 텍스트가 없습니다."
+            )
 
         chunks = []
         for page_number, text in enumerate(page_texts, start=1):
@@ -62,7 +72,9 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
                 start += 800
                 chunk_index += 1
         if not chunks:
-            return ClassroomMaterialIngestResult()
+            raise ClassroomMaterialIngestDomainException(
+                message="강의 자료를 검색 가능한 청크로 분할하지 못했습니다."
+            )
 
         client = QdrantClient(url=config.QDRANT_URL)
         if not client.collection_exists(config.QDRANT_COLLECTION_NAME):
@@ -125,12 +137,13 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
                 {
                     "role": "system",
                     "content": (
-                        "당신은 강의 자료에서 교수자가 시험 범위로 선택할 수 있는 "
-                        "후보 범위를 추출하는 도우미입니다. 반드시 JSON만 "
-                        "응답하세요. 형식은 {\"candidates\": [...]} 입니다. "
-                        "각 후보는 label, scope_text, keywords, week_range, "
-                        "confidence를 포함해야 합니다. 후보는 1~5개만 생성하고, "
-                        "scope_text는 400자 이내로 요약하세요."
+                        "당신은 강의 자료에서 교수자가 시험 범위로 선택할 "
+                        "수 있는 후보 범위를 추출하는 도우미입니다. 반드시 "
+                        "JSON만 응답"
+                        "하세요. 형식은 {\"candidates\": [...]} 입니다. 각 후"
+                        "보는 label, scope_text, keywords, week_range, "
+                        "confidence를 포함해야 합니다. 후보는 1~5개만 생성하고,"
+                        " scope_text는 400자 이내로 요약하세요."
                     ),
                 },
                 {
@@ -180,5 +193,5 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
             )
 
         if not candidates:
-            raise RuntimeError("scope candidate extraction failed")
+            raise ClassroomMaterialIngestEmptyScopeDomainException()
         return ClassroomMaterialIngestResult(scope_candidates=candidates[:5])

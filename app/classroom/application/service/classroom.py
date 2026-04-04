@@ -22,11 +22,18 @@ from app.classroom.domain.entity import (
     ClassroomMaterial,
     ClassroomMaterialDetail,
 )
+from app.classroom.domain.exception import (
+    ClassroomMaterialIngestDomainException,
+    ClassroomMaterialIngestEmptyScopeDomainException,
+)
 from app.classroom.domain.repository import ClassroomRepository
 from app.classroom.domain.repository.classroom_material import (
     ClassroomMaterialRepository,
 )
-from app.classroom.domain.service import ClassroomMaterialIngestPort, ClassroomMaterialIngestRequest
+from app.classroom.domain.service import (
+    ClassroomMaterialIngestPort,
+    ClassroomMaterialIngestRequest,
+)
 from app.classroom.domain.usecase import ClassroomUseCase
 from app.file.domain.entity.file import FileStatus
 from app.file.domain.entity.file_download import FileDownload
@@ -311,6 +318,45 @@ class ClassroomService(ClassroomUseCase):
         await self.repository.save(classroom)
         return classroom
 
+    async def _ingest_material(
+        self,
+        *,
+        classroom: Classroom,
+        material: ClassroomMaterial,
+        file,
+    ) -> None:
+        if self.material_ingest_port is None:
+            return
+
+        material.mark_ingest_pending()
+        await self.material_repository.save(material)
+        download = await self.file_usecase.get_file_download(file.id)
+        try:
+            ingest_result = await self.material_ingest_port.ingest_material(
+                request=ClassroomMaterialIngestRequest(
+                    material_id=material.id,
+                    classroom_id=classroom.id,
+                    title=material.title,
+                    week=material.week,
+                    description=material.description,
+                    file_name=file.file_name,
+                    mime_type=file.mime_type,
+                    content=download.content.read(),
+                )
+            )
+            if not ingest_result.scope_candidates:
+                raise ClassroomMaterialIngestEmptyScopeDomainException()
+            material.mark_ingest_completed(ingest_result.scope_candidates)
+        except ClassroomMaterialIngestEmptyScopeDomainException as exc:
+            material.mark_ingest_failed(exc.message)
+        except ClassroomMaterialIngestDomainException as exc:
+            material.mark_ingest_failed(exc.message)
+        except Exception:
+            material.mark_ingest_failed(
+                "강의 자료 적재 중 오류가 발생했습니다."
+            )
+        await self.material_repository.save(material)
+
     @transactional
     async def create_classroom_material(
         self,
@@ -338,25 +384,11 @@ class ClassroomService(ClassroomUseCase):
             uploaded_by=current_user.id,
         )
         await self.material_repository.save(material)
-        if self.material_ingest_port is not None:
-            download = await self.file_usecase.get_file_download(uploaded_file.id)
-            try:
-                ingest_result = await self.material_ingest_port.ingest_material(
-                    request=ClassroomMaterialIngestRequest(
-                        material_id=material.id,
-                        classroom_id=classroom.id,
-                        title=material.title,
-                        week=material.week,
-                        description=material.description,
-                        file_name=uploaded_file.file_name,
-                        mime_type=uploaded_file.mime_type,
-                        content=download.content.read(),
-                    )
-                )
-                material.mark_ingest_completed(ingest_result.scope_candidates)
-            except Exception as exc:
-                material.mark_ingest_failed(str(exc))
-            await self.material_repository.save(material)
+        await self._ingest_material(
+            classroom=classroom,
+            material=material,
+            file=uploaded_file,
+        )
         return ClassroomMaterialDetail(material=material, file=uploaded_file)
 
     async def list_classroom_materials(
@@ -432,6 +464,26 @@ class ClassroomService(ClassroomUseCase):
             raise ClassroomMaterialNotFoundException()
 
         delivered_fields = command.model_fields_set
+        original_title = material.title
+        original_week = material.week
+        original_description = material.description
+        next_title = (
+            command.title if "title" in delivered_fields else original_title
+        )
+        next_week = (
+            command.week if "week" in delivered_fields else original_week
+        )
+        next_description = (
+            command.description
+            if "description" in delivered_fields
+            else original_description
+        )
+        metadata_changed = (
+            next_title != original_title
+            or next_week != original_week
+            or next_description != original_description
+        )
+
         material.update(
             title=command.title if "title" in delivered_fields else None,
             week=command.week if "week" in delivered_fields else None,
@@ -447,37 +499,51 @@ class ClassroomService(ClassroomUseCase):
             )
             old_file_id = material.replace_file(replacement_file.id)
             await self.material_repository.save(material)
-            if self.material_ingest_port is not None:
-                download = await self.file_usecase.get_file_download(
-                    replacement_file.id
-                )
-                try:
-                    ingest_result = await self.material_ingest_port.ingest_material(
-                        request=ClassroomMaterialIngestRequest(
-                            material_id=material.id,
-                            classroom_id=classroom.id,
-                            title=material.title,
-                            week=material.week,
-                            description=material.description,
-                            file_name=replacement_file.file_name,
-                            mime_type=replacement_file.mime_type,
-                            content=download.content.read(),
-                        )
-                    )
-                    material.mark_ingest_completed(
-                        ingest_result.scope_candidates
-                    )
-                except Exception as exc:
-                    material.mark_ingest_failed(str(exc))
-                await self.material_repository.save(material)
+            await self._ingest_material(
+                classroom=classroom,
+                material=material,
+                file=replacement_file,
+            )
             await self.file_usecase.delete_file(old_file_id)
             return ClassroomMaterialDetail(
                 material=material,
                 file=replacement_file,
             )
 
-        await self.material_repository.save(material)
         file = await self.file_usecase.get_file(material.file_id)
+        if metadata_changed and self.material_ingest_port is not None:
+            await self._ingest_material(
+                classroom=classroom,
+                material=material,
+                file=file,
+            )
+            return ClassroomMaterialDetail(material=material, file=file)
+
+        await self.material_repository.save(material)
+        return ClassroomMaterialDetail(material=material, file=file)
+
+    @transactional
+    async def reingest_classroom_material(
+        self,
+        *,
+        classroom_id: UUID,
+        material_id: UUID,
+        current_user: CurrentUser,
+    ) -> ClassroomMaterialDetail:
+        classroom = await self.get_manageable_classroom(
+            classroom_id=classroom_id,
+            current_user=current_user,
+        )
+        material = await self.material_repository.get_by_id(material_id)
+        if material is None or not material.belongs_to(classroom.id):
+            raise ClassroomMaterialNotFoundException()
+
+        file = await self.file_usecase.get_file(material.file_id)
+        await self._ingest_material(
+            classroom=classroom,
+            material=material,
+            file=file,
+        )
         return ClassroomMaterialDetail(material=material, file=file)
 
     @transactional
@@ -501,5 +567,3 @@ class ClassroomService(ClassroomUseCase):
         await self.material_repository.delete(material)
         await self.file_usecase.delete_file(material.file_id)
         return result
-
-

@@ -7,8 +7,6 @@ from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
 from app.classroom.application.exception import (
     ClassroomAlreadyExistsException,
-    ClassroomInvalidProfessorRoleException,
-    ClassroomInvalidStudentRoleException,
     ClassroomNotFoundException,
     ClassroomStudentAlreadyInvitedException,
     ClassroomStudentNotEnrolledException,
@@ -21,6 +19,10 @@ from app.classroom.domain.command import (
     UpdateClassroomCommand,
 )
 from app.classroom.domain.entity import Classroom
+from app.classroom.domain.exception import (
+    ClassroomInvalidProfessorRoleDomainException,
+    ClassroomInvalidStudentRoleDomainException,
+)
 from app.classroom.domain.repository import (
     ClassroomMaterialRepository,
     ClassroomRepository,
@@ -301,7 +303,7 @@ async def test_create_classroom_invalid_professor_role_raises():
         ]
     )
 
-    with pytest.raises(ClassroomInvalidProfessorRoleException):
+    with pytest.raises(ClassroomInvalidProfessorRoleDomainException):
         await service.create_classroom(
             current_user=make_current_user(
                 role=UserRole.PROFESSOR,
@@ -327,7 +329,7 @@ async def test_create_classroom_invalid_student_role_raises():
         ]
     )
 
-    with pytest.raises(ClassroomInvalidStudentRoleException):
+    with pytest.raises(ClassroomInvalidStudentRoleDomainException):
         await service.create_classroom(
             current_user=make_current_user(
                 role=UserRole.PROFESSOR,

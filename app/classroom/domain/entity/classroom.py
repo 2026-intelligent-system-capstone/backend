@@ -3,11 +3,11 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from app.auth.domain.entity import CurrentUser
-from app.classroom.application.exception import (
-    ClassroomInvalidProfessorRoleException,
-    ClassroomInvalidStudentRoleException,
-    ClassroomProfessorNotFoundException,
-    ClassroomStudentNotFoundException,
+from app.classroom.domain.exception import (
+    ClassroomInvalidProfessorRoleDomainException,
+    ClassroomInvalidStudentRoleDomainException,
+    ClassroomProfessorNotFoundDomainException,
+    ClassroomStudentNotFoundDomainException,
 )
 from app.user.domain.entity import User, UserRole
 from core.common.entity import Entity
@@ -160,7 +160,7 @@ class Classroom(Entity):
             user_id for user_id in self.professor_ids if user_id not in users_by_id
         ]
         if missing_ids:
-            raise ClassroomProfessorNotFoundException(
+            raise ClassroomProfessorNotFoundDomainException(
                 detail={
                     "professor_ids": [str(user_id) for user_id in missing_ids]
                 }
@@ -172,7 +172,7 @@ class Classroom(Entity):
             if users_by_id[user_id].role != UserRole.PROFESSOR
         ]
         if invalid_ids:
-            raise ClassroomInvalidProfessorRoleException(
+            raise ClassroomInvalidProfessorRoleDomainException(
                 detail={
                     "professor_ids": [str(user_id) for user_id in invalid_ids]
                 }
@@ -183,7 +183,7 @@ class Classroom(Entity):
             user_id for user_id in self.student_ids if user_id not in users_by_id
         ]
         if missing_ids:
-            raise ClassroomStudentNotFoundException(
+            raise ClassroomStudentNotFoundDomainException(
                 detail={
                     "student_ids": [str(user_id) for user_id in missing_ids]
                 }
@@ -195,7 +195,7 @@ class Classroom(Entity):
             if users_by_id[user_id].role != UserRole.STUDENT
         ]
         if invalid_ids:
-            raise ClassroomInvalidStudentRoleException(
+            raise ClassroomInvalidStudentRoleDomainException(
                 detail={
                     "student_ids": [str(user_id) for user_id in invalid_ids]
                 }

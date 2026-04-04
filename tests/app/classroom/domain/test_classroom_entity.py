@@ -3,11 +3,15 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.auth.domain.entity import CurrentUser
-from app.classroom.application.exception import (
-    ClassroomInvalidProfessorRoleException,
-    ClassroomProfessorNotFoundException,
+from app.classroom.domain.entity import (
+    Classroom,
+    ClassroomMaterial,
+    ClassroomMaterialIngestStatus,
 )
-from app.classroom.domain.entity import Classroom, ClassroomMaterial
+from app.classroom.domain.exception import (
+    ClassroomInvalidProfessorRoleDomainException,
+    ClassroomProfessorNotFoundDomainException,
+)
 from app.user.domain.entity import User, UserRole
 
 ORG_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -186,6 +190,7 @@ def test_classroom_material_factory_and_update_rules():
     assert material.title == "수정 자료"
     assert material.week == 2
     assert material.description is None
+    assert material.ingest_status is ClassroomMaterialIngestStatus.PENDING
     assert old_file_id != replacement_file_id
     assert material.file_id == replacement_file_id
 
@@ -193,7 +198,7 @@ def test_classroom_material_factory_and_update_rules():
 def test_validate_members_raises_when_professor_is_missing():
     classroom = make_classroom()
 
-    with pytest.raises(ClassroomProfessorNotFoundException):
+    with pytest.raises(ClassroomProfessorNotFoundDomainException):
         classroom.validate_members({
             STUDENT_ID: make_user(STUDENT_ID, UserRole.STUDENT)
         })
@@ -202,7 +207,7 @@ def test_validate_members_raises_when_professor_is_missing():
 def test_validate_members_raises_when_professor_role_is_invalid():
     classroom = make_classroom()
 
-    with pytest.raises(ClassroomInvalidProfessorRoleException):
+    with pytest.raises(ClassroomInvalidProfessorRoleDomainException):
         classroom.validate_members({
             PROFESSOR_ID: make_user(PROFESSOR_ID, UserRole.STUDENT),
             STUDENT_ID: make_user(STUDENT_ID, UserRole.STUDENT),

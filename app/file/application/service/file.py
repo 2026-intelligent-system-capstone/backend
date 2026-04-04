@@ -2,6 +2,8 @@ from pathlib import Path
 from uuid import UUID
 
 from app.file.application.exception import (
+    FileDeleteFailedException,
+    FileDownloadFailedException,
     FileNotFoundException,
     FileUploadFailedException,
 )
@@ -70,7 +72,10 @@ class FileService(FileUseCase):
 
     async def get_file_download(self, file_id: UUID) -> FileDownload:
         file = await self.get_file(file_id)
-        stored_file = await self.storage.open(path=file.file_path)
+        try:
+            stored_file = await self.storage.open(path=file.file_path)
+        except Exception as exc:
+            raise FileDownloadFailedException() from exc
         return FileDownload(file=file, content=stored_file.content)
 
     @transactional
@@ -119,6 +124,9 @@ class FileService(FileUseCase):
         file = await self.get_file(file_id)
         should_remove_from_storage = file.delete()
         if should_remove_from_storage:
-            await self.storage.delete(path=file.file_path)
+            try:
+                await self.storage.delete(path=file.file_path)
+            except Exception as exc:
+                raise FileDeleteFailedException() from exc
         await self.repository.save(file)
         return file

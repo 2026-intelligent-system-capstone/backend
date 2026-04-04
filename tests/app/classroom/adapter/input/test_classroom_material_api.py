@@ -198,6 +198,7 @@ def test_list_classroom_materials_returns_200_for_student(
     assert response.json()["data"][0]["uploaded_at"] == "2026-01-01T09:00:00Z"
 
 
+
 def test_get_classroom_material_returns_403_when_forbidden(
     client,
     monkeypatch,
@@ -255,6 +256,57 @@ def test_update_classroom_material_returns_200_for_professor(
 
     assert response.status_code == 200
     assert response.json()["data"]["title"] == "수정 자료"
+
+
+def test_reingest_classroom_material_returns_200_for_professor(
+    client,
+    monkeypatch,
+):
+    async def reingest_stub(*_args, **_kwargs):
+        result = make_result()
+        result.material.ingest_status = type("IngestStatus", (), {"value": "completed"})()
+        return result
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "reingest_classroom_material",
+        reingest_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/materials/{MATERIAL_ID}/reingest"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["id"] == str(MATERIAL_ID)
+    assert response.json()["data"]["ingest_status"] == "completed"
+
+
+def test_reingest_classroom_material_returns_403_for_student(
+    client,
+    monkeypatch,
+):
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/materials/{MATERIAL_ID}/reingest"
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "AUTH__FORBIDDEN"
 
 
 def test_delete_classroom_material_returns_200_for_professor(

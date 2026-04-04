@@ -268,6 +268,28 @@ async def update_classroom_material(
     )
 
 
+@router.post(
+    "/{material_id}/reingest",
+    response_model=ClassroomMaterialResponse,
+    dependencies=[Depends(PermissionDependency([IsProfessorOrAdmin]))],
+)
+@inject
+async def reingest_classroom_material(
+    classroom_id: UUID,
+    material_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ClassroomUseCase = Depends(Provide[ClassroomContainer.service]),
+):
+    result = await usecase.reingest_classroom_material(
+        classroom_id=classroom_id,
+        material_id=material_id,
+        current_user=current_user,
+    )
+    return ClassroomMaterialResponse(
+        data=_build_classroom_material_payload(result)
+    )
+
+
 @router.delete(
     "/{material_id}",
     response_model=ClassroomMaterialResponse,

@@ -21,6 +21,7 @@ from app.classroom.domain.entity import (
     ClassroomMaterialIngestStatus,
     ClassroomMaterialScopeCandidate,
 )
+from app.classroom.domain.exception import ClassroomMaterialIngestDomainException
 from app.classroom.domain.repository import (
     ClassroomMaterialRepository,
     ClassroomRepository,
@@ -417,7 +418,11 @@ async def test_create_classroom_material_runs_ingest_and_stores_scope_candidates
 @pytest.mark.asyncio
 async def test_create_classroom_material_marks_ingest_failed_when_port_raises():
     file_usecase = FakeFileUseCase()
-    ingest_port = FakeMaterialIngestPort(error=RuntimeError("qdrant unavailable"))
+    ingest_port = FakeMaterialIngestPort(
+        error=ClassroomMaterialIngestDomainException(
+            message="qdrant unavailable"
+        )
+    )
     service = build_service(
         file_usecase=file_usecase,
         material_ingest_port=ingest_port,
@@ -444,6 +449,41 @@ async def test_create_classroom_material_marks_ingest_failed_when_port_raises():
     assert len(ingest_port.requests) == 1
     assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
     assert result.material.ingest_error == "qdrant unavailable"
+    assert result.material.scope_candidates == []
+
+
+@pytest.mark.asyncio
+async def test_create_classroom_material_marks_ingest_failed_when_port_returns_empty_result():
+    file_usecase = FakeFileUseCase()
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(scope_candidates=[])
+    )
+    service = build_service(
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.create_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=CreateClassroomMaterialCommand(
+            title="1주차 자료",
+            week=1,
+            description="소개 자료",
+        ),
+        file_upload=FileUploadData(
+            file_name="week1.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"pdf-content"),
+        ),
+    )
+
+    assert len(ingest_port.requests) == 1
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
+    assert result.material.ingest_error == "자료에서 시험 범위 후보를 추출하지 못했습니다."
     assert result.material.scope_candidates == []
 
 
@@ -600,8 +640,67 @@ async def test_update_classroom_material_with_file_runs_ingest_again():
 
 
 @pytest.mark.asyncio
-async def test_update_classroom_material_metadata_only_keeps_existing_file():
+async def test_update_classroom_material_with_file_marks_ingest_failed_when_result_empty():
     material = make_material()
+    file_usecase = FakeFileUseCase()
+    old_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    old_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = old_file
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(scope_candidates=[])
+    )
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(
+            title="수정 자료",
+            week=1,
+            description="소개 자료",
+        ),
+        file_upload=FileUploadData(
+            file_name="week1-v2.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"new-pdf-content"),
+        ),
+    )
+
+    assert len(ingest_port.requests) == 1
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
+    assert result.material.ingest_error == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    assert result.material.scope_candidates == []
+
+
+@pytest.mark.asyncio
+async def test_update_classroom_material_metadata_only_keeps_existing_file_and_reingests():
+    material = make_material()
+    material.mark_ingest_completed(
+        [
+            ClassroomMaterialScopeCandidate(
+                label="기존 범위",
+                scope_text="기존 추출 결과",
+                keywords=["기존"],
+                week_range="1주차",
+                confidence=0.5,
+            )
+        ]
+    )
     file_usecase = FakeFileUseCase()
     current_file = File(
         file_name="week1.pdf",
@@ -613,9 +712,23 @@ async def test_update_classroom_material_metadata_only_keeps_existing_file():
     )
     current_file.id = FILE_ID
     file_usecase.files[FILE_ID] = current_file
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(
+            scope_candidates=[
+                ClassroomMaterialScopeCandidate(
+                    label="새 범위",
+                    scope_text="업데이트된 메타데이터 기준 추출 결과",
+                    keywords=["업데이트"],
+                    week_range="2주차",
+                    confidence=0.91,
+                )
+            ]
+        )
+    )
     service = build_service(
         materials=[material],
         file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
     )
 
     result = await service.update_classroom_material(
@@ -632,12 +745,288 @@ async def test_update_classroom_material_metadata_only_keeps_existing_file():
         ),
     )
 
+    assert len(ingest_port.requests) == 1
+    request = ingest_port.requests[0]
+    assert request.title == "메타데이터만 수정"
+    assert request.week == 2
+    assert request.description is None
+    assert request.file_name == "week1.pdf"
+    assert request.content == b"downloaded-content"
     assert result.material.title == "메타데이터만 수정"
     assert result.material.week == 2
     assert result.material.file_id == FILE_ID
     assert result.file.id == FILE_ID
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert result.material.get_scope_candidates()[0].label == "새 범위"
+    assert file_usecase.downloaded_file_ids == [FILE_ID]
     assert file_usecase.uploaded_payloads == []
     assert file_usecase.deleted_file_ids == []
+
+
+@pytest.mark.asyncio
+async def test_update_classroom_material_description_only_reuses_existing_file_and_reingests():
+    material = make_material()
+    material.mark_ingest_completed(
+        [
+            ClassroomMaterialScopeCandidate(
+                label="기존 범위",
+                scope_text="기존 추출 결과",
+                keywords=["기존"],
+                week_range="1주차",
+                confidence=0.5,
+            )
+        ]
+    )
+    file_usecase = FakeFileUseCase()
+    current_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    current_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = current_file
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(
+            scope_candidates=[
+                ClassroomMaterialScopeCandidate(
+                    label="설명 변경 범위",
+                    scope_text="설명 변경 기준 추출 결과",
+                    keywords=["설명"],
+                    week_range="1주차",
+                    confidence=0.77,
+                )
+            ]
+        )
+    )
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(description="설명 수정"),
+    )
+
+    assert len(ingest_port.requests) == 1
+    request = ingest_port.requests[0]
+    assert request.title == "1주차 자료"
+    assert request.week == 1
+    assert request.description == "설명 수정"
+    assert request.file_name == "week1.pdf"
+    assert result.material.description == "설명 수정"
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert result.material.get_scope_candidates()[0].label == "설명 변경 범위"
+    assert file_usecase.downloaded_file_ids == [FILE_ID]
+
+
+@pytest.mark.asyncio
+async def test_update_classroom_material_metadata_only_marks_ingest_failed_when_result_empty():
+    material = make_material()
+    material.mark_ingest_completed(
+        [
+            ClassroomMaterialScopeCandidate(
+                label="기존 범위",
+                scope_text="기존 추출 결과",
+                keywords=["기존"],
+                week_range="1주차",
+                confidence=0.5,
+            )
+        ]
+    )
+    file_usecase = FakeFileUseCase()
+    current_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    current_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = current_file
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(scope_candidates=[])
+    )
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(
+            title="메타데이터만 수정",
+            week=2,
+            description="설명 수정",
+        ),
+    )
+
+    assert len(ingest_port.requests) == 1
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
+    assert result.material.ingest_error == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    assert result.material.scope_candidates == []
+    assert file_usecase.downloaded_file_ids == [FILE_ID]
+
+
+@pytest.mark.asyncio
+async def test_update_classroom_material_metadata_noop_does_not_reingest():
+    material = make_material()
+    material.mark_ingest_completed(
+        [
+            ClassroomMaterialScopeCandidate(
+                label="기존 범위",
+                scope_text="기존 추출 결과",
+                keywords=["기존"],
+                week_range="1주차",
+                confidence=0.5,
+            )
+        ]
+    )
+    file_usecase = FakeFileUseCase()
+    current_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    current_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = current_file
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(scope_candidates=[])
+    )
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(
+            title="1주차 자료",
+            week=1,
+            description="소개 자료",
+        ),
+    )
+
+    assert len(ingest_port.requests) == 0
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert result.material.get_scope_candidates()[0].label == "기존 범위"
+    assert file_usecase.downloaded_file_ids == []
+    assert file_usecase.uploaded_payloads == []
+    assert file_usecase.deleted_file_ids == []
+
+
+@pytest.mark.asyncio
+async def test_reingest_classroom_material_runs_ingest_again_for_existing_file():
+    material = make_material()
+    file_usecase = FakeFileUseCase()
+    current_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    current_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = current_file
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(
+            scope_candidates=[
+                ClassroomMaterialScopeCandidate(
+                    label="재적재 범위",
+                    scope_text="의사결정나무와 앙상블",
+                    keywords=["의사결정나무", "앙상블"],
+                    week_range="3주차",
+                    confidence=0.81,
+                )
+            ]
+        )
+    )
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.reingest_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+    )
+
+    assert len(ingest_port.requests) == 1
+    request = ingest_port.requests[0]
+    assert request.material_id == MATERIAL_ID
+    assert request.file_name == "week1.pdf"
+    assert request.content == b"downloaded-content"
+    assert file_usecase.downloaded_file_ids == [FILE_ID]
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert result.material.get_scope_candidates()[0].label == "재적재 범위"
+
+
+@pytest.mark.asyncio
+async def test_reingest_classroom_material_marks_failed_when_result_empty():
+    material = make_material()
+    file_usecase = FakeFileUseCase()
+    current_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    current_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = current_file
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(scope_candidates=[])
+    )
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+    )
+
+    result = await service.reingest_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+    )
+
+    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
+    assert result.material.ingest_error == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    assert result.material.scope_candidates == []
 
 
 @pytest.mark.asyncio
