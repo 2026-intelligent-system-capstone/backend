@@ -6,10 +6,18 @@ import pytest
 
 from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
-from app.classroom.domain.entity import Classroom
+from app.classroom.domain.entity import (
+    Classroom,
+    ClassroomMaterialIngestStatus,
+)
 from app.classroom.domain.usecase import ClassroomUseCase
 from app.exam.application.exception import (
     ExamNotFoundException,
+    ExamQuestionGenerationContextUnavailableException,
+    ExamQuestionGenerationFailedException,
+    ExamQuestionGenerationMaterialIngestFailedException,
+    ExamQuestionGenerationMaterialNotFoundException,
+    ExamQuestionGenerationMaterialNotReadyException,
     ExamQuestionGenerationUnavailableException,
     ExamQuestionNotFoundException,
 )
@@ -58,6 +66,7 @@ STUDENT_ID = UUID("55555555-5555-5555-5555-555555555555")
 SESSION_ID = UUID("66666666-6666-6666-6666-666666666666")
 STARTS_AT = datetime(2026, 4, 1, 9, 0, tzinfo=UTC)
 ENDS_AT = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+WEEK = 1
 
 
 class InMemoryExamRepository(ExamRepository):
@@ -307,6 +316,15 @@ class FakeClassroomUseCase(ClassroomUseCase):
     ):
         raise NotImplementedError
 
+    async def reingest_classroom_material(
+        self,
+        *,
+        classroom_id,
+        material_id,
+        current_user,
+    ):
+        raise NotImplementedError
+
     async def delete_classroom_material(
         self,
         *,
@@ -328,7 +346,7 @@ def make_classroom() -> Classroom:
     return classroom
 
 
-def make_exam(*, classroom_id: UUID = CLASSROOM_ID) -> Exam:
+def make_exam(*, classroom_id: UUID = CLASSROOM_ID, week: int = WEEK) -> Exam:
     exam = Exam(
         classroom_id=classroom_id,
         title="중간 평가",
@@ -339,6 +357,7 @@ def make_exam(*, classroom_id: UUID = CLASSROOM_ID) -> Exam:
         starts_at=STARTS_AT,
         ends_at=ENDS_AT,
         allow_retake=False,
+        week=week,
         criteria=[
             ExamCriterion(
                 exam_id=EXAM_ID,
@@ -374,7 +393,13 @@ def make_question_command() -> CreateExamQuestionCommand:
     )
 
 
-def make_material_result(*, material_id: UUID):
+def make_material_result(
+    *,
+    material_id: UUID,
+    ingest_status: ClassroomMaterialIngestStatus = (
+        ClassroomMaterialIngestStatus.COMPLETED
+    ),
+):
     file = type("File", (), {})()
     file.file_name = "week1.pdf"
 
@@ -382,6 +407,7 @@ def make_material_result(*, material_id: UUID):
     material.id = material_id
     material.title = "1주차 자료"
     material.week = 1
+    material.ingest_status = ingest_status
 
     result = type("MaterialResult", (), {})()
     result.material = material
@@ -458,12 +484,17 @@ def test_exam_create_builds_criteria_with_generated_exam_id():
         starts_at=STARTS_AT,
         ends_at=ENDS_AT,
         allow_retake=False,
+        week=WEEK,
         criteria=criteria,
     )
 
     assert len(exam.criteria) == 1
+    assert type(exam.id) is UUID
+    assert type(exam.criteria[0].id) is UUID
+    assert type(exam.criteria[0].exam_id) is UUID
     assert exam.criteria[0].exam_id == exam.id
     assert exam.criteria[0].title == "개념 이해"
+    assert exam.week == WEEK
     assert exam.belongs_to_classroom(CLASSROOM_ID) is True
 
 
@@ -485,6 +516,7 @@ async def test_create_exam_success():
             starts_at=STARTS_AT,
             ends_at=ENDS_AT,
             allow_retake=False,
+        week=WEEK,
             criteria=[
                 ExamCriterionCommand(
                     title="개념 이해",
@@ -519,12 +551,39 @@ async def test_create_exam_success():
     assert exam.starts_at == STARTS_AT
     assert exam.ends_at == ENDS_AT
     assert exam.allow_retake is False
+    assert exam.week == WEEK
     assert len(exam.criteria) == 2
     assert exam.criteria[0].title == "개념 이해"
     assert exam.criteria[1].weight == 40
+    assert exam.week == WEEK
     instructions = exam.build_realtime_instructions()
     assert "시험 제목: 중간 평가" in instructions
     assert "- 2. 문제 해결 과정 (40%)" in instructions
+
+
+def test_create_exam_command_requires_positive_week():
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        CreateExamCommand(
+            title="중간 평가",
+            description="1주차 범위 평가",
+            exam_type=ExamType.MIDTERM,
+            duration_minutes=60,
+            starts_at=STARTS_AT,
+            ends_at=ENDS_AT,
+            allow_retake=False,
+            week=0,
+            criteria=[
+                ExamCriterionCommand(
+                    title="개념 이해",
+                    description="핵심 개념을 정확히 설명하는지 평가",
+                    weight=100,
+                    sort_order=1,
+                    excellent_definition=None,
+                    average_definition=None,
+                    poor_definition=None,
+                )
+            ],
+        )
 
 
 @pytest.mark.asyncio
@@ -546,6 +605,7 @@ async def test_create_exam_student_forbidden():
                 starts_at=STARTS_AT,
                 ends_at=ENDS_AT,
                 allow_retake=False,
+        week=WEEK,
                 criteria=[
                     ExamCriterionCommand(
                         title="개념 이해",
@@ -575,6 +635,7 @@ async def test_list_exams_returns_classroom_exams():
 
     assert len(exams) == 1
     assert exams[0].title == "중간 평가"
+    assert exams[0].week == WEEK
     assert exams[0].criteria[0].title == "개념 이해"
     assert exams[0].status is ExamStatus.READY
 
@@ -614,6 +675,7 @@ async def test_get_exam_returns_operational_fields_and_criteria():
     assert exam.exam_type is ExamType.MIDTERM
     assert exam.status is ExamStatus.READY
     assert exam.duration_minutes == 60
+    assert exam.week == WEEK
     assert exam.allow_retake is False
     assert exam.criteria[0].excellent_definition == (
         "핵심 개념과 관계를 정확히 설명한다."
@@ -838,6 +900,282 @@ async def test_generate_exam_questions_success():
     assert request.bloom_ratios[0].percentage == 100
     assert request.source_materials[0].material_id == material_id
     assert request.criteria[0].title == "개념 이해"
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_appends_after_existing_questions():
+    material_id = UUID("99999999-9999-9999-9999-999999999999")
+    exam = make_exam()
+    exam.add_question(**make_question_command().model_dump())
+    generation_port = FakeExamQuestionGenerationPort(
+        drafts=[
+            GeneratedExamQuestionDraft(
+                question_number=1,
+                bloom_level=BloomLevel.ANALYZE,
+                difficulty=ExamDifficulty.MEDIUM,
+                question_text="지도학습과 비지도학습의 차이를 비교해주세요.",
+                scope_text="1주차 머신러닝 기초",
+                evaluation_objective="학습 방식 차이 분석 능력 평가",
+                answer_key="정답 데이터 유무와 활용 사례 차이를 설명해야 한다.",
+                scoring_criteria="핵심 비교 기준을 2개 이상 제시하면 정답",
+                source_material_ids=[material_id],
+            )
+        ]
+    )
+    service, _, _, _, _, _ = build_service(
+        exams=[exam],
+        materials=[make_material_result(material_id=material_id)],
+        question_generation_port=generation_port,
+    )
+
+    questions = await service.generate_exam_questions(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=GenerateExamQuestionsCommand(
+            scope_text="1주차 머신러닝 기초",
+            total_questions=1,
+            max_follow_ups=0,
+            difficulty=ExamDifficulty.MEDIUM,
+            source_material_ids=[material_id],
+            bloom_ratios=[
+                ExamQuestionBloomRatioCommand(
+                    bloom_level=BloomLevel.ANALYZE,
+                    percentage=100,
+                )
+            ],
+        ),
+    )
+
+    assert questions[0].question_number == 2
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_invalid_material_raises():
+    service, _, _, _, _, _ = build_service(
+        exams=[make_exam()],
+        materials=[],
+        question_generation_port=FakeExamQuestionGenerationPort(drafts=[]),
+    )
+
+    with pytest.raises(ExamQuestionGenerationMaterialNotFoundException):
+        await service.generate_exam_questions(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=GenerateExamQuestionsCommand(
+                scope_text="1주차 머신러닝 기초",
+                total_questions=1,
+                max_follow_ups=0,
+                difficulty=ExamDifficulty.MEDIUM,
+                source_material_ids=[
+                    UUID("99999999-9999-9999-9999-999999999999")
+                ],
+                bloom_ratios=[
+                    ExamQuestionBloomRatioCommand(
+                        bloom_level=BloomLevel.APPLY,
+                        percentage=100,
+                    )
+                ],
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_pending_material_raises():
+    material_id = UUID("99999999-9999-9999-9999-999999999999")
+    generation_port = FakeExamQuestionGenerationPort(drafts=[])
+    service, _, _, _, _, _ = build_service(
+        exams=[make_exam()],
+        materials=[
+            make_material_result(
+                material_id=material_id,
+                ingest_status=ClassroomMaterialIngestStatus.PENDING,
+            )
+        ],
+        question_generation_port=generation_port,
+    )
+
+    with pytest.raises(ExamQuestionGenerationMaterialNotReadyException):
+        await service.generate_exam_questions(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=GenerateExamQuestionsCommand(
+                scope_text="1주차 머신러닝 기초",
+                total_questions=1,
+                max_follow_ups=0,
+                difficulty=ExamDifficulty.MEDIUM,
+                source_material_ids=[material_id],
+                bloom_ratios=[
+                    ExamQuestionBloomRatioCommand(
+                        bloom_level=BloomLevel.APPLY,
+                        percentage=100,
+                    )
+                ],
+            ),
+        )
+
+    assert generation_port.requests == []
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_failed_material_raises_before_generation(
+):
+    material_id = UUID("99999999-9999-9999-9999-999999999999")
+    generation_port = FakeExamQuestionGenerationPort(drafts=[])
+    service, _, _, _, _, _ = build_service(
+        exams=[make_exam()],
+        materials=[
+            make_material_result(
+                material_id=material_id,
+                ingest_status=ClassroomMaterialIngestStatus.FAILED,
+            )
+        ],
+        question_generation_port=generation_port,
+    )
+
+    with pytest.raises(ExamQuestionGenerationMaterialIngestFailedException):
+        await service.generate_exam_questions(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=GenerateExamQuestionsCommand(
+                scope_text="1주차 머신러닝 기초",
+                total_questions=1,
+                max_follow_ups=0,
+                difficulty=ExamDifficulty.MEDIUM,
+                source_material_ids=[material_id],
+                bloom_ratios=[
+                    ExamQuestionBloomRatioCommand(
+                        bloom_level=BloomLevel.APPLY,
+                        percentage=100,
+                    )
+                ],
+            ),
+        )
+
+    assert generation_port.requests == []
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_failed_exception_propagates():
+    class FailingExamQuestionGenerationPort(ExamQuestionGenerationPort):
+        async def generate_questions(self, *, request):
+            _ = request
+            raise ExamQuestionGenerationFailedException()
+
+    service, _, _, _, _, _ = build_service(
+        exams=[make_exam()],
+        question_generation_port=FailingExamQuestionGenerationPort(),
+    )
+
+    with pytest.raises(ExamQuestionGenerationFailedException):
+        await service.generate_exam_questions(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=GenerateExamQuestionsCommand(
+                scope_text="1주차 머신러닝 기초",
+                total_questions=1,
+                max_follow_ups=0,
+                difficulty=ExamDifficulty.MEDIUM,
+                source_material_ids=[],
+                bloom_ratios=[
+                    ExamQuestionBloomRatioCommand(
+                        bloom_level=BloomLevel.APPLY,
+                        percentage=100,
+                    )
+                ],
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_context_unavailable_propagates():
+    class FailingExamQuestionGenerationPort(ExamQuestionGenerationPort):
+        async def generate_questions(self, *, request):
+            _ = request
+            raise ExamQuestionGenerationContextUnavailableException()
+
+    service, _, _, _, _, _ = build_service(
+        exams=[make_exam()],
+        question_generation_port=FailingExamQuestionGenerationPort(),
+    )
+
+    with pytest.raises(ExamQuestionGenerationContextUnavailableException):
+        await service.generate_exam_questions(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=GenerateExamQuestionsCommand(
+                scope_text="1주차 머신러닝 기초",
+                total_questions=1,
+                max_follow_ups=0,
+                difficulty=ExamDifficulty.MEDIUM,
+                source_material_ids=[],
+                bloom_ratios=[
+                    ExamQuestionBloomRatioCommand(
+                        bloom_level=BloomLevel.APPLY,
+                        percentage=100,
+                    )
+                ],
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_unexpected_error_propagates():
+    class FailingExamQuestionGenerationPort(ExamQuestionGenerationPort):
+        async def generate_questions(self, *, request):
+            _ = request
+            raise RuntimeError("unexpected generation error")
+
+    service, _, _, _, _, _ = build_service(
+        exams=[make_exam()],
+        question_generation_port=FailingExamQuestionGenerationPort(),
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected generation error"):
+        await service.generate_exam_questions(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=GenerateExamQuestionsCommand(
+                scope_text="1주차 머신러닝 기초",
+                total_questions=1,
+                max_follow_ups=0,
+                difficulty=ExamDifficulty.MEDIUM,
+                source_material_ids=[],
+                bloom_ratios=[
+                    ExamQuestionBloomRatioCommand(
+                        bloom_level=BloomLevel.APPLY,
+                        percentage=100,
+                    )
+                ],
+            ),
+        )
 
 
 @pytest.mark.asyncio

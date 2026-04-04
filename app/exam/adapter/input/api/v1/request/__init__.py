@@ -31,6 +31,7 @@ class CreateExamRequest(BaseRequest):
     starts_at: datetime
     ends_at: datetime
     allow_retake: bool = False
+    week: int = Field(..., ge=1)
     criteria: list[ExamCriterionRequest] = Field(
         ..., min_length=1, max_length=20
     )

@@ -30,6 +30,7 @@ class CreateExamCommand(BaseModel):
     starts_at: datetime
     ends_at: datetime
     allow_retake: bool = False
+    week: int = Field(..., ge=1)
     criteria: list[ExamCriterionCommand] = Field(
         ..., min_length=1, max_length=20
     )

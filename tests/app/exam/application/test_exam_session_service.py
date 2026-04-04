@@ -28,6 +28,10 @@ from app.exam.domain.entity import (
     ExamType,
     RealtimeClientSecret,
 )
+from app.exam.domain.exception import (
+    ExamSessionNotCompletedDomainException,
+    ExamSessionOwnershipForbiddenDomainException,
+)
 from app.exam.domain.repository import (
     ExamRepository,
     ExamResultRepository,
@@ -45,6 +49,7 @@ STUDENT_ID = UUID("55555555-5555-5555-5555-555555555555")
 STARTS_AT = datetime(2026, 4, 1, 9, 0, tzinfo=UTC)
 ENDS_AT = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
 SECRET_EXPIRES_AT = datetime(2026, 4, 1, 9, 1, tzinfo=UTC)
+WEEK = 1
 
 
 class InMemoryExamRepository(ExamRepository):
@@ -261,6 +266,15 @@ class FakeClassroomUseCase(ClassroomUseCase):
     ):
         raise NotImplementedError
 
+    async def reingest_classroom_material(
+        self,
+        *,
+        classroom_id,
+        material_id,
+        current_user,
+    ):
+        raise NotImplementedError
+
     async def delete_classroom_material(
         self,
         *,
@@ -293,6 +307,7 @@ def make_exam() -> Exam:
         starts_at=STARTS_AT,
         ends_at=ENDS_AT,
         allow_retake=False,
+        week=WEEK,
         criteria=[
             ExamCriterion(
                 exam_id=EXAM_ID,
@@ -345,7 +360,7 @@ def test_exam_session_entity_methods_enforce_rules():
     session.record_activity(ENDS_AT)
     assert session.last_activity_at == ENDS_AT
 
-    with pytest.raises(AuthForbiddenException):
+    with pytest.raises(ExamSessionOwnershipForbiddenDomainException):
         session.assert_owned_by(
             exam_id=EXAM_ID,
             student_id=PROFESSOR_ID,
@@ -439,7 +454,7 @@ def test_exam_aggregate_validates_ownership_and_finalize_rules():
     )
     result = session.create_pending_result()
 
-    with pytest.raises(AuthForbiddenException):
+    with pytest.raises(ExamSessionOwnershipForbiddenDomainException):
         exam.record_turn(
             session=session,
             student_id=PROFESSOR_ID,
@@ -451,7 +466,7 @@ def test_exam_aggregate_validates_ownership_and_finalize_rules():
             existing_turns=[],
         )
 
-    with pytest.raises(AuthForbiddenException):
+    with pytest.raises(ExamSessionNotCompletedDomainException):
         exam.finalize_result(
             session=session,
             student_id=STUDENT_ID,
@@ -690,7 +705,7 @@ async def test_record_exam_turn_rejects_other_students_session():
         realtime_session_port=FakeRealtimeSessionPort(),
     )
 
-    with pytest.raises(AuthForbiddenException):
+    with pytest.raises(ExamSessionOwnershipForbiddenDomainException):
         await service.record_exam_turn(
             exam_id=EXAM_ID,
             session_id=session.id,

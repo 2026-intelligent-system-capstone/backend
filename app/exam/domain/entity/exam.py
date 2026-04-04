@@ -4,7 +4,13 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from app.auth.application.exception import AuthForbiddenException
+from app.exam.domain.exception import (
+    ExamInvalidWeekDomainException,
+    ExamQuestionNotFoundDomainException,
+    ExamResultNotFoundDomainException,
+    ExamSessionNotCompletedDomainException,
+    ExamSessionOwnershipForbiddenDomainException,
+)
 from core.common.entity import AggregateRoot, Entity
 
 
@@ -148,6 +154,7 @@ class Exam(AggregateRoot):
     starts_at: datetime
     ends_at: datetime
     allow_retake: bool
+    week: int
     description: str | None = None
     status: ExamStatus = ExamStatus.READY
     criteria: list[ExamCriterion] = field(default_factory=list)
@@ -165,8 +172,13 @@ class Exam(AggregateRoot):
         starts_at: datetime,
         ends_at: datetime,
         allow_retake: bool,
+        week: int,
         criteria: Sequence[ExamCriterion],
     ) -> "Exam":
+        if week < 1:
+            raise ExamInvalidWeekDomainException(
+                message="week must be greater than or equal to 1"
+            )
         exam = cls(
             classroom_id=classroom_id,
             title=title,
@@ -177,6 +189,7 @@ class Exam(AggregateRoot):
             starts_at=starts_at,
             ends_at=ends_at,
             allow_retake=allow_retake,
+            week=week,
         )
         exam.criteria = [
             ExamCriterion(
@@ -229,7 +242,9 @@ class Exam(AggregateRoot):
         for question in self.questions:
             if question.id == question_id and question.belongs_to_exam(self.id):
                 return question
-        raise LookupError("exam question not found")
+        raise ExamQuestionNotFoundDomainException(
+            message="exam question not found"
+        )
 
     def update_question(
         self,
@@ -346,7 +361,7 @@ class Exam(AggregateRoot):
         for result in results:
             if result.belongs_to(session_id=session_id):
                 return result
-        raise AuthForbiddenException()
+        raise ExamResultNotFoundDomainException()
 
     def build_realtime_instructions(self) -> str:
         criteria_lines = "\n".join(
@@ -414,7 +429,7 @@ class ExamSession(Entity):
         student_id: UUID,
     ) -> None:
         if self.exam_id != exam_id or self.student_id != student_id:
-            raise AuthForbiddenException()
+            raise ExamSessionOwnershipForbiddenDomainException()
 
     def record_activity(self, occurred_at: datetime) -> None:
         self.last_activity_at = occurred_at
@@ -454,7 +469,7 @@ class ExamSession(Entity):
 
     def assert_completed(self) -> None:
         if self.status is not ExamSessionStatus.COMPLETED:
-            raise AuthForbiddenException()
+            raise ExamSessionNotCompletedDomainException()
 
 
 @dataclass

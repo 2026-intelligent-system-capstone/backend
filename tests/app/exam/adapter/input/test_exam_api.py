@@ -4,6 +4,11 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
+from app.exam.application.exception import (
+    ExamQuestionGenerationMaterialIngestFailedException,
+    ExamQuestionGenerationMaterialNotFoundException,
+    ExamQuestionGenerationMaterialNotReadyException,
+)
 from app.exam.application.service import ExamService
 from app.exam.domain.entity import (
     BloomLevel,
@@ -30,6 +35,7 @@ PROFESSOR_ID = UUID("44444444-4444-4444-4444-444444444444")
 STUDENT_ID = UUID("55555555-5555-5555-5555-555555555555")
 STARTS_AT = datetime(2026, 4, 1, 9, 0, tzinfo=UTC)
 ENDS_AT = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+WEEK = 1
 
 
 @pytest.fixture
@@ -48,6 +54,7 @@ def make_exam() -> Exam:
         starts_at=STARTS_AT,
         ends_at=ENDS_AT,
         allow_retake=False,
+        week=WEEK,
         criteria=[
             ExamCriterion(
                 exam_id=EXAM_ID,
@@ -105,7 +112,10 @@ def set_access_token_cookie(client: TestClient, user: User) -> None:
 
 
 def test_create_exam_returns_200_for_professor(client, monkeypatch):
-    async def create_stub_exam(*_args, **_kwargs):
+    captured = {}
+
+    async def create_stub_exam(*_args, **kwargs):
+        captured["command"] = kwargs["command"]
         return make_exam()
 
     professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
@@ -127,6 +137,7 @@ def test_create_exam_returns_200_for_professor(client, monkeypatch):
             "starts_at": STARTS_AT.isoformat(),
             "ends_at": ENDS_AT.isoformat(),
             "allow_retake": False,
+            "week": WEEK,
             "criteria": [
                 {
                     "title": "개념 이해",
@@ -144,9 +155,11 @@ def test_create_exam_returns_200_for_professor(client, monkeypatch):
     )
 
     assert response.status_code == 200
+    assert captured["command"].week == WEEK
     assert response.json()["data"]["title"] == "중간 평가"
     assert response.json()["data"]["exam_type"] == "midterm"
     assert response.json()["data"]["status"] == "ready"
+    assert response.json()["data"]["week"] == WEEK
     assert response.json()["data"]["criteria"][0]["title"] == "개념 이해"
 
 
@@ -168,6 +181,7 @@ def test_list_exams_returns_200_for_student(client, monkeypatch):
     assert response.status_code == 200
     assert len(response.json()["data"]) == 1
     assert response.json()["data"][0]["id"] == str(EXAM_ID)
+    assert response.json()["data"][0]["week"] == WEEK
     assert response.json()["data"][0]["duration_minutes"] == 60
     assert response.json()["data"][0]["criteria"][0]["weight"] == 100
 
@@ -190,10 +204,51 @@ def test_get_exam_returns_200(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["data"]["id"] == str(EXAM_ID)
     assert response.json()["data"]["description"] == "1주차 범위 평가"
+    assert response.json()["data"]["week"] == WEEK
     assert response.json()["data"]["allow_retake"] is False
     assert response.json()["data"]["criteria"][0]["excellent_definition"] == (
         "핵심 개념을 정확히 설명한다."
     )
+
+
+def test_create_exam_returns_422_for_invalid_week(client, monkeypatch):
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams",
+        json={
+            "title": "중간 평가",
+            "description": "1주차 범위 평가",
+            "exam_type": "midterm",
+            "duration_minutes": 60,
+            "starts_at": STARTS_AT.isoformat(),
+            "ends_at": ENDS_AT.isoformat(),
+            "allow_retake": False,
+            "week": 0,
+            "criteria": [
+                {
+                    "title": "개념 이해",
+                    "description": "핵심 개념을 설명하는지 평가",
+                    "weight": 100,
+                    "sort_order": 1,
+                    "excellent_definition": "핵심 개념을 정확히 설명한다.",
+                    "average_definition": (
+                        "핵심 개념 설명은 가능하나 연결이 약하다."
+                    ),
+                    "poor_definition": "핵심 개념 이해가 부족하다.",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
 def test_create_exam_question_returns_200_for_professor(client, monkeypatch):
@@ -367,6 +422,132 @@ def test_generate_exam_questions_returns_200_for_professor(
         "회귀와 분류의 차이를 설명하세요."
     )
     assert response.json()["data"][0]["status"] == "generated"
+
+
+def test_generate_exam_questions_returns_400_for_invalid_materials(
+    client,
+    monkeypatch,
+):
+    async def generate_questions_stub(*_args, **_kwargs):
+        raise ExamQuestionGenerationMaterialNotFoundException()
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "generate_exam_questions",
+        generate_questions_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/generate",
+        json={
+            "scope_text": "1주차 머신러닝 기초",
+            "total_questions": 1,
+            "max_follow_ups": 2,
+            "difficulty": "medium",
+            "source_material_ids": [
+                "99999999-9999-9999-9999-999999999999"
+            ],
+            "bloom_ratios": [
+                {"bloom_level": "apply", "percentage": 100}
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == (
+        "EXAM_QUESTION_GENERATION__INVALID_SOURCE_MATERIALS"
+    )
+
+
+def test_generate_exam_questions_returns_400_for_pending_material(
+    client,
+    monkeypatch,
+):
+    async def generate_questions_stub(*_args, **_kwargs):
+        raise ExamQuestionGenerationMaterialNotReadyException()
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "generate_exam_questions",
+        generate_questions_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/generate",
+        json={
+            "scope_text": "1주차 머신러닝 기초",
+            "total_questions": 1,
+            "max_follow_ups": 2,
+            "difficulty": "medium",
+            "source_material_ids": [
+                "99999999-9999-9999-9999-999999999999"
+            ],
+            "bloom_ratios": [
+                {"bloom_level": "apply", "percentage": 100}
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == (
+        "EXAM_QUESTION_GENERATION__SOURCE_MATERIALS_NOT_READY"
+    )
+
+
+def test_generate_exam_questions_returns_400_for_failed_material(
+    client,
+    monkeypatch,
+):
+    async def generate_questions_stub(*_args, **_kwargs):
+        raise ExamQuestionGenerationMaterialIngestFailedException()
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "generate_exam_questions",
+        generate_questions_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/generate",
+        json={
+            "scope_text": "1주차 머신러닝 기초",
+            "total_questions": 1,
+            "max_follow_ups": 2,
+            "difficulty": "medium",
+            "source_material_ids": [
+                "99999999-9999-9999-9999-999999999999"
+            ],
+            "bloom_ratios": [
+                {"bloom_level": "apply", "percentage": 100}
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == (
+        "EXAM_QUESTION_GENERATION__SOURCE_MATERIALS_INGEST_FAILED"
+    )
 
 
 def test_start_exam_session_returns_200_for_student(client, monkeypatch):

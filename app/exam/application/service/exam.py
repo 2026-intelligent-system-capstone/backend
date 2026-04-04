@@ -4,9 +4,15 @@ from uuid import UUID
 
 from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
+from app.classroom.domain.entity import ClassroomMaterialIngestStatus
 from app.classroom.domain.usecase import ClassroomUseCase
 from app.exam.application.exception import (
     ExamNotFoundException,
+    ExamQuestionGenerationContextUnavailableException,
+    ExamQuestionGenerationFailedException,
+    ExamQuestionGenerationMaterialIngestFailedException,
+    ExamQuestionGenerationMaterialNotFoundException,
+    ExamQuestionGenerationMaterialNotReadyException,
     ExamQuestionGenerationUnavailableException,
     ExamQuestionNotFoundException,
 )
@@ -22,11 +28,13 @@ from app.exam.domain.command import (
 from app.exam.domain.entity import (
     Exam,
     ExamQuestion,
+    ExamQuestionStatus,
     ExamResult,
     ExamSession,
     ExamTurn,
     StartedExamSession,
 )
+from app.exam.domain.exception import ExamQuestionNotFoundDomainException
 from app.exam.domain.repository import (
     ExamRepository,
     ExamResultRepository,
@@ -90,6 +98,7 @@ class ExamService(ExamUseCase):
             starts_at=command.starts_at,
             ends_at=command.ends_at,
             allow_retake=command.allow_retake,
+            week=command.week,
             criteria=command.criteria,
         )
         await self.repository.save(exam)
@@ -183,7 +192,7 @@ class ExamService(ExamUseCase):
                 scoring_criteria=command.scoring_criteria,
                 source_material_ids=command.source_material_ids,
             )
-        except LookupError as exc:
+        except ExamQuestionNotFoundDomainException as exc:
             raise ExamQuestionNotFoundException() from exc
         await self.repository.save(exam)
         return question
@@ -206,7 +215,7 @@ class ExamService(ExamUseCase):
             raise AuthForbiddenException()
         try:
             question = exam.delete_question(question_id)
-        except LookupError as exc:
+        except ExamQuestionNotFoundDomainException as exc:
             raise ExamQuestionNotFoundException() from exc
         await self.repository.save(exam)
         return question
@@ -241,15 +250,38 @@ class ExamService(ExamUseCase):
                 current_user=current_user,
             )
             selected_material_ids = set(command.source_material_ids)
-            source_materials = [
-                ExamQuestionSourceMaterial(
-                    material_id=result.material.id,
-                    file_name=result.file.file_name,
-                    title=result.material.title,
-                    week=result.material.week,
-                )
+            material_map = {
+                result.material.id: result
                 for result in materials
                 if result.material.id in selected_material_ids
+            }
+            missing_material_ids = selected_material_ids - set(material_map)
+            if missing_material_ids:
+                raise ExamQuestionGenerationMaterialNotFoundException()
+            selected_materials = [
+                material_map[material_id]
+                for material_id in command.source_material_ids
+            ]
+            if any(
+                material.material.ingest_status
+                is ClassroomMaterialIngestStatus.FAILED
+                for material in selected_materials
+            ):
+                raise ExamQuestionGenerationMaterialIngestFailedException()
+            if any(
+                material.material.ingest_status
+                is not ClassroomMaterialIngestStatus.COMPLETED
+                for material in selected_materials
+            ):
+                raise ExamQuestionGenerationMaterialNotReadyException()
+            source_materials = [
+                ExamQuestionSourceMaterial(
+                    material_id=material_id,
+                    file_name=material_map[material_id].file.file_name,
+                    title=material_map[material_id].material.title,
+                    week=material_map[material_id].material.week,
+                )
+                for material_id in command.source_material_ids
             ]
 
         try:
@@ -286,22 +318,38 @@ class ExamService(ExamUseCase):
                     source_materials=source_materials,
                 )
             )
-        except Exception as exc:
-            raise ExamQuestionGenerationUnavailableException() from exc
-        questions = [
-            exam.add_question(
-                question_number=draft.question_number,
-                bloom_level=draft.bloom_level,
-                difficulty=draft.difficulty,
-                question_text=draft.question_text,
-                scope_text=draft.scope_text,
-                evaluation_objective=draft.evaluation_objective,
-                answer_key=draft.answer_key,
-                scoring_criteria=draft.scoring_criteria,
-                source_material_ids=draft.source_material_ids,
+        except (
+            ExamQuestionGenerationContextUnavailableException,
+            ExamQuestionGenerationFailedException,
+            ExamQuestionGenerationUnavailableException,
+        ):
+            raise
+        next_question_number = (
+            max(
+                (
+                    question.question_number
+                    for question in exam.questions
+                    if question.status is not ExamQuestionStatus.DELETED
+                ),
+                default=0,
             )
-            for draft in drafts
-        ]
+            + 1
+        )
+        questions = []
+        for offset, draft in enumerate(drafts):
+            questions.append(
+                exam.add_question(
+                    question_number=next_question_number + offset,
+                    bloom_level=draft.bloom_level,
+                    difficulty=draft.difficulty,
+                    question_text=draft.question_text,
+                    scope_text=draft.scope_text,
+                    evaluation_objective=draft.evaluation_objective,
+                    answer_key=draft.answer_key,
+                    scoring_criteria=draft.scoring_criteria,
+                    source_material_ids=draft.source_material_ids,
+                )
+            )
         await self.repository.save(exam)
         return questions
 
@@ -461,4 +509,3 @@ class ExamService(ExamUseCase):
         )
         await self.result_repository.save(result)
         return result
-
