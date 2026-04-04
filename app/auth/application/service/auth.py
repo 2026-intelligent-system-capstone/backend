@@ -10,6 +10,7 @@ from app.auth.domain.command import (
     RefreshTokenCommand,
 )
 from app.auth.domain.entity import AuthTokens
+from app.auth.domain.exception import AuthInvalidRefreshTokenDomainException
 from app.auth.domain.repository import AuthTokenRepository
 from app.auth.domain.usecase.auth import AuthUseCase
 from app.organization.domain.repository import OrganizationRepository
@@ -66,6 +67,7 @@ class AuthService(AuthUseCase):
         except (
             AuthIdentityProviderNotConfiguredException,
             AuthIdentityProviderUnavailableException,
+            AuthInvalidCredentialsException,
         ):
             raise
         except Exception as exc:
@@ -110,7 +112,7 @@ class AuthService(AuthUseCase):
             user_id, jti = AuthTokens.parse_refresh_token(
                 command.refresh_token
             )
-        except ValueError as exc:
+        except AuthInvalidRefreshTokenDomainException as exc:
             raise AuthInvalidRefreshTokenException() from exc
 
         stored_token = await self.auth_token_repository.get(
@@ -144,7 +146,7 @@ class AuthService(AuthUseCase):
             user_id, jti = AuthTokens.parse_refresh_token(
                 command.refresh_token
             )
-        except ValueError:
+        except AuthInvalidRefreshTokenDomainException:
             return
 
         await self.auth_token_repository.delete(user_id=user_id, jti=jti)
@@ -166,4 +168,3 @@ class AuthService(AuthUseCase):
             expires_in=config.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
         )
         return tokens
-

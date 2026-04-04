@@ -3,9 +3,9 @@ from uuid import UUID
 import pytest
 
 from app.auth.domain.entity import AuthTokens
+from app.auth.domain.exception import AuthInvalidRefreshTokenDomainException
 from core.domain.types import TokenType
 from core.helpers.token import TokenHelper
-
 
 USER_ID = UUID("11111111-1111-1111-1111-111111111111")
 ORGANIZATION_ID = UUID("22222222-2222-2222-2222-222222222222")
@@ -39,5 +39,5 @@ def test_auth_tokens_decode_refresh_token_rejects_access_token():
         token_type=TokenType.ACCESS,
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(AuthInvalidRefreshTokenDomainException):
         AuthTokens.decode_refresh_token(access_token)

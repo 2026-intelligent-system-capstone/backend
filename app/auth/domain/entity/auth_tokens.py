@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from jwt import PyJWTError
 
+from app.auth.domain.exception import AuthInvalidRefreshTokenDomainException
 from app.user.domain.entity import User
 from core.domain.types import TokenType
 from core.helpers.token import TokenHelper
@@ -66,10 +67,10 @@ class AuthTokens:
         try:
             payload = TokenHelper.decode_token(token)
         except (PyJWTError, KeyError, ValueError) as exc:
-            raise ValueError("invalid refresh token") from exc
+            raise AuthInvalidRefreshTokenDomainException() from exc
 
         if payload.get("type") != TokenType.REFRESH.value:
-            raise ValueError("invalid refresh token")
+            raise AuthInvalidRefreshTokenDomainException()
         return payload
 
     @classmethod
@@ -82,4 +83,4 @@ class AuthTokens:
                 raise ValueError
             return UUID(user_id), jti
         except (KeyError, ValueError) as exc:
-            raise ValueError("invalid refresh token payload") from exc
+            raise AuthInvalidRefreshTokenDomainException() from exc

@@ -335,7 +335,7 @@ async def test_login_invalid_credentials_does_not_create_user():
 
 
 @pytest.mark.asyncio
-async def test_login_converts_provider_error_to_invalid_credentials():
+async def test_login_unexpected_provider_error_raises_invalid_credentials():
     class FailingService(OrganizationAuthService):
         async def authenticate(self, **kwargs):
             del kwargs
