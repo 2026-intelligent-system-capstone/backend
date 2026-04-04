@@ -4,7 +4,8 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, text
+from sqlalchemy.sql.sqltypes import Enum as SQLAlchemyEnum
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_scoped_session,
@@ -20,7 +21,6 @@ from app.file.adapter.output.persistence.sqlalchemy.file import (
 from app.file.domain.entity.file import File, FileStatus
 from core.config import config
 from core.db.sqlalchemy import init_orm_mappers
-from core.db.sqlalchemy.models.base import metadata
 from core.db.sqlalchemy.models.file import file_table
 
 try:
@@ -32,11 +32,22 @@ FILE_ID = UUID("11111111-1111-1111-1111-111111111111")
 DELETED_FILE_ID = UUID("22222222-2222-2222-2222-222222222222")
 
 
+def assert_enum_column(column, enum_class):
+    assert isinstance(column.type, SQLAlchemyEnum)
+    assert column.type.enum_class is enum_class
+    assert column.type.native_enum is False
+    assert column.type.validate_strings is True
+    assert column.type.enums == [
+        member.value for member in enum_class
+    ]
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
     engine = create_async_engine(config.DATABASE_URL, poolclass=NullPool)
     async with engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
+        await conn.execute(text("DROP TABLE IF EXISTS t_file CASCADE"))
+        await conn.run_sync(file_table.create)
     yield
     async with engine.begin() as conn:
         await conn.execute(delete(file_table))
@@ -115,3 +126,7 @@ async def test_list_excludes_deleted_files(db_session):
     files = await adapter.list()
 
     assert [file.id for file in files] == [FILE_ID]
+
+
+def test_file_table_uses_non_native_enum_values():
+    assert_enum_column(file_table.c.status, FileStatus)

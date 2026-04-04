@@ -4,7 +4,8 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, text
+from sqlalchemy.sql.sqltypes import Enum as SQLAlchemyEnum
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_scoped_session,
@@ -30,7 +31,6 @@ from app.user.adapter.output.persistence.sqlalchemy import (
 from app.user.domain.entity import User, UserRole, UserStatus
 from core.config import config
 from core.db.sqlalchemy import init_orm_mappers
-from core.db.sqlalchemy.models.base import metadata
 from core.db.sqlalchemy.models.organization import organization_table
 from core.db.sqlalchemy.models.user import user_table
 
@@ -42,11 +42,24 @@ except Exception:
 ORGANIZATION_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
+def assert_enum_column(column, enum_class):
+    assert isinstance(column.type, SQLAlchemyEnum)
+    assert column.type.enum_class is enum_class
+    assert column.type.native_enum is False
+    assert column.type.validate_strings is True
+    assert column.type.enums == [
+        member.value for member in enum_class
+    ]
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
     engine = create_async_engine(config.DATABASE_URL, poolclass=NullPool)
     async with engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
+        await conn.execute(text("DROP TABLE IF EXISTS t_user CASCADE"))
+        await conn.execute(text("DROP TABLE IF EXISTS t_organization CASCADE"))
+        await conn.run_sync(organization_table.create)
+        await conn.run_sync(user_table.create)
     yield
     async with engine.begin() as conn:
         await conn.execute(delete(user_table))
@@ -231,3 +244,8 @@ async def test_list_by_organization_filters_other_organizations(db_session):
     users = await adapter.list_by_organization(ORGANIZATION_ID)
 
     assert [user.login_id for user in users] == ["20260005"]
+
+
+def test_user_table_uses_non_native_enum_values():
+    assert_enum_column(user_table.c.role, UserRole)
+    assert_enum_column(user_table.c.status, UserStatus)

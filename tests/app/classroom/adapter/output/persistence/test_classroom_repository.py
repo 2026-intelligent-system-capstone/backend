@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_scoped_session,
@@ -32,7 +32,6 @@ from app.organization.domain.entity import (
 )
 from core.config import config
 from core.db.sqlalchemy import init_orm_mappers
-from core.db.sqlalchemy.models.base import metadata
 from core.db.sqlalchemy.models.classroom import classroom_table
 from core.db.sqlalchemy.models.organization import organization_table
 
@@ -50,7 +49,10 @@ CLASSROOM_ID = UUID("33333333-3333-3333-3333-333333333333")
 async def setup_db():
     engine = create_async_engine(config.DATABASE_URL, poolclass=NullPool)
     async with engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
+        await conn.execute(text("DROP TABLE IF EXISTS t_classroom CASCADE"))
+        await conn.execute(text("DROP TABLE IF EXISTS t_organization CASCADE"))
+        await conn.run_sync(organization_table.create)
+        await conn.run_sync(classroom_table.create)
     yield
     async with engine.begin() as conn:
         await conn.execute(delete(classroom_table))

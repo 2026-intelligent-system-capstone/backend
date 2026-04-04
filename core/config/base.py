@@ -63,7 +63,6 @@ class CommonSettings(BaseSettings):
     OPENAI_EXAM_GENERATION_MODEL: str = "gpt-4.1-mini"
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_COLLECTION_NAME: str = "lecture_materials"
-    LLM_INTEGRATION_ENABLED: bool = False
 
     LOG_LEVEL: LogLevel = "INFO"
     LOG_FORMAT: LogFormat = "plain"

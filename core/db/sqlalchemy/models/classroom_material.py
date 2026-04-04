@@ -1,6 +1,9 @@
-from sqlalchemy import Column, ForeignKey, Integer, JSON, String
+from sqlalchemy import Column, Enum, ForeignKey, Integer, JSON, String
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
+from app.classroom.domain.entity.classroom_material import (
+    ClassroomMaterialIngestStatus,
+)
 from core.db.sqlalchemy.models.base import BaseTable, metadata
 
 classroom_material_table = BaseTable(
@@ -22,7 +25,20 @@ classroom_material_table = BaseTable(
     Column("title", String(200), nullable=False),
     Column("week", Integer, nullable=False),
     Column("description", String(1000), nullable=True),
-    Column("ingest_status", String(50), nullable=False),
+    Column(
+        "ingest_status",
+        Enum(
+            ClassroomMaterialIngestStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+        default=ClassroomMaterialIngestStatus.PENDING,
+    ),
     Column("scope_candidates", JSON, nullable=False, default=list),
     Column("ingest_error", String(1000), nullable=True),
     Column(

@@ -12,7 +12,15 @@ organization_table = BaseTable(
     Column("name", String(100), nullable=False),
     Column(
         "auth_provider",
-        Enum(OrganizationAuthProvider),
+        Enum(
+            OrganizationAuthProvider,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
         nullable=False,
     ),
     Column("is_active", Boolean, nullable=False, default=True),

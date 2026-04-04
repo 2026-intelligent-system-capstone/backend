@@ -4,7 +4,8 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, text
+from sqlalchemy.sql.sqltypes import Enum as SQLAlchemyEnum
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_scoped_session,
@@ -25,7 +26,6 @@ from app.organization.domain.entity import (
 )
 from core.config import config
 from core.db.sqlalchemy import init_orm_mappers
-from core.db.sqlalchemy.models.base import metadata
 from core.db.sqlalchemy.models.organization import organization_table
 
 try:
@@ -36,11 +36,22 @@ except Exception:
 ORGANIZATION_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
+def assert_enum_column(column, enum_class):
+    assert isinstance(column.type, SQLAlchemyEnum)
+    assert column.type.enum_class is enum_class
+    assert column.type.native_enum is False
+    assert column.type.validate_strings is True
+    assert column.type.enums == [
+        member.value for member in enum_class
+    ]
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
     engine = create_async_engine(config.DATABASE_URL, poolclass=NullPool)
     async with engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
+        await conn.execute(text("DROP TABLE IF EXISTS t_organization CASCADE"))
+        await conn.run_sync(organization_table.create)
     yield
     async with engine.begin() as conn:
         await conn.execute(delete(organization_table))
@@ -139,3 +150,10 @@ async def test_list_returns_organizations_sorted_by_name(db_session):
         "알파대학교",
         "제타대학교",
     ]
+
+
+def test_organization_table_uses_non_native_enum_values():
+    assert_enum_column(
+        organization_table.c.auth_provider,
+        OrganizationAuthProvider,
+    )
