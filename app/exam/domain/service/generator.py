@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from app.exam.domain.constants import MAX_BLOOM_LEVEL_QUESTION_COUNT
 from app.exam.domain.entity import BloomLevel, ExamDifficulty, ExamType
 
 
@@ -17,9 +18,13 @@ class ExamQuestionGenerationCriterion:
 
 
 @dataclass(frozen=True)
-class ExamQuestionGenerationRatio:
+class ExamQuestionGenerationLevelCount:
     bloom_level: BloomLevel
-    percentage: int
+    count: int
+
+    def __post_init__(self) -> None:
+        if self.count < 1 or self.count > MAX_BLOOM_LEVEL_QUESTION_COUNT:
+            raise ValueError("count must be between 1 and 5")
 
 
 @dataclass(frozen=True)
@@ -50,18 +55,21 @@ class GenerateExamQuestionsRequest:
     title: str
     exam_type: ExamType
     scope_text: str
-    total_questions: int
     max_follow_ups: int
     difficulty: ExamDifficulty
     criteria: list[ExamQuestionGenerationCriterion] = field(
         default_factory=list
     )
-    bloom_ratios: list[ExamQuestionGenerationRatio] = field(
+    bloom_counts: list[ExamQuestionGenerationLevelCount] = field(
         default_factory=list
     )
     source_materials: list[ExamQuestionSourceMaterial] = field(
         default_factory=list
     )
+
+    @property
+    def total_questions(self) -> int:
+        return sum(item.count for item in self.bloom_counts)
 
 
 class ExamQuestionGenerationPort(ABC):

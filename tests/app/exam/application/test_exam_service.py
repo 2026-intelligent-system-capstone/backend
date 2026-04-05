@@ -26,7 +26,7 @@ from app.exam.domain.command import (
     CreateExamCommand,
     CreateExamQuestionCommand,
     ExamCriterionCommand,
-    ExamQuestionBloomRatioCommand,
+    ExamQuestionBloomCountCommand,
     GenerateExamQuestionsCommand,
     UpdateExamQuestionCommand,
 )
@@ -874,14 +874,13 @@ async def test_generate_exam_questions_success():
         ),
         command=GenerateExamQuestionsCommand(
             scope_text="1주차 머신러닝 기초",
-            total_questions=1,
             max_follow_ups=2,
             difficulty=ExamDifficulty.MEDIUM,
             source_material_ids=[material_id],
-            bloom_ratios=[
-                ExamQuestionBloomRatioCommand(
+            bloom_counts=[
+                ExamQuestionBloomCountCommand(
                     bloom_level=BloomLevel.APPLY,
-                    percentage=100,
+                    count=1,
                 )
             ],
         ),
@@ -896,8 +895,8 @@ async def test_generate_exam_questions_success():
     assert request.scope_text == "1주차 머신러닝 기초"
     assert request.total_questions == 1
     assert request.max_follow_ups == 2
-    assert request.bloom_ratios[0].bloom_level is BloomLevel.APPLY
-    assert request.bloom_ratios[0].percentage == 100
+    assert request.bloom_counts[0].bloom_level is BloomLevel.APPLY
+    assert request.bloom_counts[0].count == 1
     assert request.source_materials[0].material_id == material_id
     assert request.criteria[0].title == "개념 이해"
 
@@ -937,14 +936,13 @@ async def test_generate_exam_questions_appends_after_existing_questions():
         ),
         command=GenerateExamQuestionsCommand(
             scope_text="1주차 머신러닝 기초",
-            total_questions=1,
             max_follow_ups=0,
             difficulty=ExamDifficulty.MEDIUM,
             source_material_ids=[material_id],
-            bloom_ratios=[
-                ExamQuestionBloomRatioCommand(
+            bloom_counts=[
+                ExamQuestionBloomCountCommand(
                     bloom_level=BloomLevel.ANALYZE,
-                    percentage=100,
+                    count=1,
                 )
             ],
         ),
@@ -971,16 +969,15 @@ async def test_generate_exam_questions_invalid_material_raises():
             ),
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
-                total_questions=1,
                 max_follow_ups=0,
                 difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[
                     UUID("99999999-9999-9999-9999-999999999999")
                 ],
-                bloom_ratios=[
-                    ExamQuestionBloomRatioCommand(
+                bloom_counts=[
+                    ExamQuestionBloomCountCommand(
                         bloom_level=BloomLevel.APPLY,
-                        percentage=100,
+                        count=1,
                     )
                 ],
             ),
@@ -1012,14 +1009,13 @@ async def test_generate_exam_questions_pending_material_raises():
             ),
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
-                total_questions=1,
                 max_follow_ups=0,
                 difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[material_id],
-                bloom_ratios=[
-                    ExamQuestionBloomRatioCommand(
+                bloom_counts=[
+                    ExamQuestionBloomCountCommand(
                         bloom_level=BloomLevel.APPLY,
-                        percentage=100,
+                        count=1,
                     )
                 ],
             ),
@@ -1054,14 +1050,13 @@ async def test_generate_exam_questions_failed_material_raises_before_generation(
             ),
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
-                total_questions=1,
                 max_follow_ups=0,
                 difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[material_id],
-                bloom_ratios=[
-                    ExamQuestionBloomRatioCommand(
+                bloom_counts=[
+                    ExamQuestionBloomCountCommand(
                         bloom_level=BloomLevel.APPLY,
-                        percentage=100,
+                        count=1,
                     )
                 ],
             ),
@@ -1092,14 +1087,13 @@ async def test_generate_exam_questions_failed_exception_propagates():
             ),
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
-                total_questions=1,
                 max_follow_ups=0,
                 difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[],
-                bloom_ratios=[
-                    ExamQuestionBloomRatioCommand(
+                bloom_counts=[
+                    ExamQuestionBloomCountCommand(
                         bloom_level=BloomLevel.APPLY,
-                        percentage=100,
+                        count=1,
                     )
                 ],
             ),
@@ -1128,14 +1122,13 @@ async def test_generate_exam_questions_context_unavailable_propagates():
             ),
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
-                total_questions=1,
                 max_follow_ups=0,
                 difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[],
-                bloom_ratios=[
-                    ExamQuestionBloomRatioCommand(
+                bloom_counts=[
+                    ExamQuestionBloomCountCommand(
                         bloom_level=BloomLevel.APPLY,
-                        percentage=100,
+                        count=1,
                     )
                 ],
             ),
@@ -1164,14 +1157,13 @@ async def test_generate_exam_questions_unexpected_error_propagates():
             ),
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
-                total_questions=1,
                 max_follow_ups=0,
                 difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[],
-                bloom_ratios=[
-                    ExamQuestionBloomRatioCommand(
+                bloom_counts=[
+                    ExamQuestionBloomCountCommand(
                         bloom_level=BloomLevel.APPLY,
-                        percentage=100,
+                        count=1,
                     )
                 ],
             ),
@@ -1192,14 +1184,13 @@ async def test_generate_exam_questions_unavailable_raises():
             ),
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
-                total_questions=1,
                 max_follow_ups=0,
                 difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[],
-                bloom_ratios=[
-                    ExamQuestionBloomRatioCommand(
+                bloom_counts=[
+                    ExamQuestionBloomCountCommand(
                         bloom_level=BloomLevel.APPLY,
-                        percentage=100,
+                        count=1,
                     )
                 ],
             ),

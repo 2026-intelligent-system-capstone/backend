@@ -8,6 +8,10 @@ from openai import AsyncOpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
+from app.exam.adapter.output.integration.prompts import (
+    EXAM_QUESTION_GENERATION_SYSTEM_PROMPT,
+    build_exam_question_generation_user_prompt,
+)
 from app.exam.application.exception import (
     ExamQuestionGenerationContextUnavailableException,
     ExamQuestionGenerationFailedException,
@@ -30,7 +34,9 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
     ) -> list[GeneratedExamQuestionDraft]:
         if not config.OPENAI_API_KEY:
             raise ExamQuestionGenerationUnavailableException(
-                message="OPENAI_API_KEY가 설정되지 않아 문항을 생성할 수 없습니다."
+                message=(
+                    "OPENAI_API_KEY가 설정되지 않아 문항을 생성할 수 없습니다."
+                )
             )
 
         client = QdrantClient(url=config.QDRANT_URL)
@@ -50,6 +56,7 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
         )
 
         distribution = self._build_distribution(request)
+        total_questions = sum(distribution.values())
         allowed_material_ids = {
             str(material.material_id): material.material_id
             for material in request.source_materials
@@ -84,6 +91,14 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
             for material in request.source_materials
         )
 
+        user_prompt = build_exam_question_generation_user_prompt(
+            request=request,
+            criteria_text=criteria,
+            bloom_plan_text=bloom_plan,
+            source_materials_text=source_materials,
+            context=context[:12000],
+        )
+
         last_error: Exception | None = None
         for _ in range(3):
             try:
@@ -93,44 +108,21 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
                     messages=[
                         {
                             "role": "system",
-                            "content": (
-                                "당신은 대학 구술시험 문항을 생성하는 출제자입니다. "
-                                "반드시 JSON만 응답하세요. 형식은 {\"questions\": [...]} 입니다. "
-                                "각 문항은 question_number, bloom_level, difficulty, "
-                                "question_text, scope_text, evaluation_objective, answer_key, "
-                                "scoring_criteria, source_material_ids를 포함해야 합니다. "
-                                "질문은 대학교 구술 시험에 적합한 존댓말로 2~3문장 이내로 작성하고, "
-                                "강의 자료 문장을 그대로 복붙하지 마세요. 특정 예시 암기를 요구하지 말고, "
-                                "문항 간 내용이 중복되지 않게 작성하세요. "
-                                "bloom_level은 none, remember, understand, apply, analyze, "
-                                "evaluate, create 중 하나여야 하고, difficulty는 easy, medium, "
-                                "hard 중 하나여야 합니다."
-                            ),
+                            "content": EXAM_QUESTION_GENERATION_SYSTEM_PROMPT,
                         },
                         {
                             "role": "user",
-                            "content": (
-                                f"시험 제목: {request.title}\n"
-                                f"시험 유형: {request.exam_type.value}\n"
-                                f"시험 범위: {request.scope_text}\n"
-                                f"난이도: {request.difficulty.value}\n"
-                                f"최대 꼬리질문 수: {request.max_follow_ups}\n\n"
-                                "평가 기준:\n"
-                                f"{criteria}\n\n"
-                                "Bloom 단계별 문항 수:\n"
-                                f"{bloom_plan}\n\n"
-                                "선택 자료:\n"
-                                f"{source_materials or '지정 자료 없음'}\n\n"
-                                "검색된 강의 자료 문맥:\n"
-                                f"{context[:12000]}"
-                            ),
+                            "content": user_prompt,
                         },
                     ],
                 )
-                content = completion.choices[0].message.content or '{"questions": []}'
+                content = (
+                    completion.choices[0].message.content or '{"questions": []}'
+                )
                 drafts = self._parse_and_validate_questions(
                     content=content,
                     request=request,
+                    total_questions=total_questions,
                     distribution=distribution,
                     allowed_material_ids=allowed_material_ids,
                 )
@@ -224,11 +216,14 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
         current_length = 0
         for hit in selected_hits:
             block = (
-                f"[자료: {hit.payload.get('title')}, 파일: {hit.payload.get('file_name')}, "
-                f"주차: {hit.payload.get('week')}, 페이지: {hit.payload.get('page')}]\n"
+                f"[자료: {hit.payload.get('title')}, "
+                f"파일: {hit.payload.get('file_name')}, "
+                f"주차: {hit.payload.get('week')}, "
+                f"페이지: {hit.payload.get('page')}]\n"
                 f"{str(hit.payload.get('text', '')).strip()}"
             )
-            additional_length = len(block) if not context_blocks else len("\n\n---\n\n") + len(block)
+            separator_length = 0 if not context_blocks else len("\n\n---\n\n")
+            additional_length = separator_length + len(block)
             if current_length + additional_length > 12000:
                 break
             context_blocks.append(block)
@@ -240,28 +235,16 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
         self,
         request: GenerateExamQuestionsRequest,
     ) -> dict[BloomLevel, int]:
-        distribution: dict[BloomLevel, int] = {}
-        assigned = 0
-        for item in request.bloom_ratios:
-            count = round(request.total_questions * item.percentage / 100)
-            distribution[item.bloom_level] = count
-            assigned += count
-        diff = request.total_questions - assigned
-        if diff != 0:
-            largest = max(
-                request.bloom_ratios,
-                key=lambda item: item.percentage,
-            )
-            distribution[largest.bloom_level] = (
-                distribution.get(largest.bloom_level, 0) + diff
-            )
-        return distribution
+        return {
+            item.bloom_level: item.count for item in request.bloom_counts
+        }
 
     def _parse_and_validate_questions(
         self,
         *,
         content: str,
         request: GenerateExamQuestionsRequest,
+        total_questions: int,
         distribution: dict[BloomLevel, int],
         allowed_material_ids: dict[str, UUID],
     ) -> list[GeneratedExamQuestionDraft]:
@@ -273,7 +256,7 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
         questions = parsed.get("questions")
         if not isinstance(questions, list):
             raise ExamQuestionGenerationFailedException()
-        if len(questions) != request.total_questions:
+        if len(questions) != total_questions:
             raise ExamQuestionGenerationFailedException()
 
         drafts = [
@@ -310,15 +293,13 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
 
         if difficulty is not request.difficulty:
             raise ExamQuestionGenerationFailedException()
-        if not all(
-            [
-                question_text,
-                scope_text,
-                evaluation_objective,
-                answer_key,
-                scoring_criteria,
-            ]
-        ):
+        if not all([
+            question_text,
+            scope_text,
+            evaluation_objective,
+            answer_key,
+            scoring_criteria,
+        ]):
             raise ExamQuestionGenerationFailedException()
 
         filtered_source_material_ids = []

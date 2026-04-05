@@ -3,11 +3,11 @@ from uuid import UUID
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends
 
+from app.auth.domain.entity import CurrentUser
 from app.user.adapter.input.api.v1.request import (
     CreateUserRequest,
     UpdateUserRequest,
 )
-from app.auth.domain.entity import CurrentUser
 from app.user.adapter.input.api.v1.response import (
     UserListResponse,
     UserPayload,

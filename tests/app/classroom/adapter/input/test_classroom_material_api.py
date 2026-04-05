@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from io import BytesIO
 from uuid import UUID
 
@@ -65,7 +65,15 @@ def make_result():
     file.id = FILE_ID
 
     class ScopeCandidate:
-        def __init__(self, *, label, scope_text, keywords, week_range, confidence):
+        def __init__(
+            self,
+            *,
+            label,
+            scope_text,
+            keywords,
+            week_range,
+            confidence,
+        ):
             self.label = label
             self.scope_text = scope_text
             self.keywords = keywords
@@ -139,7 +147,10 @@ def test_create_classroom_material_returns_200_for_professor(
     assert response.json()["data"]["file"]["file_name"] == "week1.pdf"
     assert response.json()["data"]["uploaded_at"] == "2026-01-01T09:00:00Z"
     assert response.json()["data"]["ingest_status"] == "completed"
-    assert response.json()["data"]["scope_candidates"][0]["label"] == "기초 개념"
+    assert (
+        response.json()["data"]["scope_candidates"][0]["label"]
+        == "기초 개념"
+    )
 
 
 def test_create_classroom_material_returns_403_for_student(
@@ -196,7 +207,6 @@ def test_list_classroom_materials_returns_200_for_student(
     assert len(response.json()["data"]) == 1
     assert response.json()["data"][0]["week"] == 1
     assert response.json()["data"][0]["uploaded_at"] == "2026-01-01T09:00:00Z"
-
 
 
 def test_get_classroom_material_returns_403_when_forbidden(
@@ -264,7 +274,11 @@ def test_reingest_classroom_material_returns_200_for_professor(
 ):
     async def reingest_stub(*_args, **_kwargs):
         result = make_result()
-        result.material.ingest_status = type("IngestStatus", (), {"value": "completed"})()
+        result.material.ingest_status = type(
+            "IngestStatus",
+            (),
+            {"value": "completed"},
+        )()
         return result
 
     professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)

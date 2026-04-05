@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
@@ -37,7 +39,7 @@ class User(Entity):
         role: UserRole,
         email: str | None,
         name: str,
-    ) -> "User":
+    ) -> User:
         return cls(
             organization_id=organization_id,
             login_id=login_id,

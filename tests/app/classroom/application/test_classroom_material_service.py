@@ -21,7 +21,9 @@ from app.classroom.domain.entity import (
     ClassroomMaterialIngestStatus,
     ClassroomMaterialScopeCandidate,
 )
-from app.classroom.domain.exception import ClassroomMaterialIngestDomainException
+from app.classroom.domain.exception import (
+    ClassroomMaterialIngestDomainException,
+)
 from app.classroom.domain.repository import (
     ClassroomMaterialRepository,
     ClassroomRepository,
@@ -351,7 +353,10 @@ async def test_create_classroom_material_success():
 
     assert result.material.title == "1주차 자료"
     assert result.material.file_id == FILE_ID
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.PENDING
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.PENDING
+    )
     assert result.material.scope_candidates == []
     assert result.file.file_name == "week1.pdf"
     assert file_usecase.uploaded_payloads == [
@@ -365,7 +370,8 @@ async def test_create_classroom_material_success():
 
 
 @pytest.mark.asyncio
-async def test_create_classroom_material_runs_ingest_and_stores_scope_candidates():
+async def test_create_classroom_material_runs_ingest_and_stores_scopes(
+):
     file_usecase = FakeFileUseCase()
     ingest_port = FakeMaterialIngestPort(
         result=ClassroomMaterialIngestResult(
@@ -410,7 +416,10 @@ async def test_create_classroom_material_runs_ingest_and_stores_scope_candidates
     assert request.file_name == "week1.pdf"
     assert request.content == b"downloaded-content"
     assert file_usecase.downloaded_file_ids == [FILE_ID]
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.COMPLETED
+    )
     assert result.material.get_scope_candidates()[0].label == "기초 개념"
     assert result.material.ingest_error is None
 
@@ -447,13 +456,17 @@ async def test_create_classroom_material_marks_ingest_failed_when_port_raises():
     )
 
     assert len(ingest_port.requests) == 1
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.FAILED
+    )
     assert result.material.ingest_error == "qdrant unavailable"
     assert result.material.scope_candidates == []
 
 
 @pytest.mark.asyncio
-async def test_create_classroom_material_marks_ingest_failed_when_port_returns_empty_result():
+async def test_create_classroom_material_marks_ingest_failed_on_empty_result(
+):
     file_usecase = FakeFileUseCase()
     ingest_port = FakeMaterialIngestPort(
         result=ClassroomMaterialIngestResult(scope_candidates=[])
@@ -482,8 +495,14 @@ async def test_create_classroom_material_marks_ingest_failed_when_port_returns_e
     )
 
     assert len(ingest_port.requests) == 1
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
-    assert result.material.ingest_error == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.FAILED
+    )
+    assert (
+        result.material.ingest_error
+        == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    )
     assert result.material.scope_candidates == []
 
 
@@ -572,7 +591,10 @@ async def test_update_classroom_material_replaces_file_and_deletes_old():
 
     assert result.material.title == "수정 자료"
     assert result.material.file_id == REPLACEMENT_FILE_ID
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.PENDING
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.PENDING
+    )
     assert result.material.scope_candidates == []
     assert file_usecase.deleted_file_ids == [FILE_ID]
     assert result.file.file_name == "week1-v2.pdf"
@@ -635,12 +657,19 @@ async def test_update_classroom_material_with_file_runs_ingest_again():
     assert request.file_name == "week1-v2.pdf"
     assert request.content == b"downloaded-content"
     assert file_usecase.downloaded_file_ids == [REPLACEMENT_FILE_ID]
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
-    assert result.material.get_scope_candidates()[0].scope_text == "회귀 모델 비교"
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.COMPLETED
+    )
+    assert (
+        result.material.get_scope_candidates()[0].scope_text
+        == "회귀 모델 비교"
+    )
 
 
 @pytest.mark.asyncio
-async def test_update_classroom_material_with_file_marks_ingest_failed_when_result_empty():
+async def test_update_classroom_material_with_file_marks_ingest_failed(
+):
     material = make_material()
     file_usecase = FakeFileUseCase()
     old_file = File(
@@ -682,13 +711,20 @@ async def test_update_classroom_material_with_file_marks_ingest_failed_when_resu
     )
 
     assert len(ingest_port.requests) == 1
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
-    assert result.material.ingest_error == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.FAILED
+    )
+    assert (
+        result.material.ingest_error
+        == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    )
     assert result.material.scope_candidates == []
 
 
 @pytest.mark.asyncio
-async def test_update_classroom_material_metadata_only_keeps_existing_file_and_reingests():
+async def test_update_material_metadata_reuses_existing_file_and_reingests(
+):
     material = make_material()
     material.mark_ingest_completed(
         [
@@ -756,7 +792,10 @@ async def test_update_classroom_material_metadata_only_keeps_existing_file_and_r
     assert result.material.week == 2
     assert result.material.file_id == FILE_ID
     assert result.file.id == FILE_ID
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.COMPLETED
+    )
     assert result.material.get_scope_candidates()[0].label == "새 범위"
     assert file_usecase.downloaded_file_ids == [FILE_ID]
     assert file_usecase.uploaded_payloads == []
@@ -764,7 +803,8 @@ async def test_update_classroom_material_metadata_only_keeps_existing_file_and_r
 
 
 @pytest.mark.asyncio
-async def test_update_classroom_material_description_only_reuses_existing_file_and_reingests():
+async def test_update_material_description_reuses_existing_file_and_reingests(
+):
     material = make_material()
     material.mark_ingest_completed(
         [
@@ -824,13 +864,17 @@ async def test_update_classroom_material_description_only_reuses_existing_file_a
     assert request.description == "설명 수정"
     assert request.file_name == "week1.pdf"
     assert result.material.description == "설명 수정"
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.COMPLETED
+    )
     assert result.material.get_scope_candidates()[0].label == "설명 변경 범위"
     assert file_usecase.downloaded_file_ids == [FILE_ID]
 
 
 @pytest.mark.asyncio
-async def test_update_classroom_material_metadata_only_marks_ingest_failed_when_result_empty():
+async def test_update_material_metadata_marks_ingest_failed_on_empty_result(
+):
     material = make_material()
     material.mark_ingest_completed(
         [
@@ -878,8 +922,14 @@ async def test_update_classroom_material_metadata_only_marks_ingest_failed_when_
     )
 
     assert len(ingest_port.requests) == 1
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
-    assert result.material.ingest_error == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.FAILED
+    )
+    assert (
+        result.material.ingest_error
+        == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    )
     assert result.material.scope_candidates == []
     assert file_usecase.downloaded_file_ids == [FILE_ID]
 
@@ -933,7 +983,10 @@ async def test_update_classroom_material_metadata_noop_does_not_reingest():
     )
 
     assert len(ingest_port.requests) == 0
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.COMPLETED
+    )
     assert result.material.get_scope_candidates()[0].label == "기존 범위"
     assert file_usecase.downloaded_file_ids == []
     assert file_usecase.uploaded_payloads == []
@@ -941,7 +994,8 @@ async def test_update_classroom_material_metadata_noop_does_not_reingest():
 
 
 @pytest.mark.asyncio
-async def test_reingest_classroom_material_runs_ingest_again_for_existing_file():
+async def test_reingest_classroom_material_runs_ingest_again_for_existing_file(
+):
     material = make_material()
     file_usecase = FakeFileUseCase()
     current_file = File(
@@ -988,7 +1042,10 @@ async def test_reingest_classroom_material_runs_ingest_again_for_existing_file()
     assert request.file_name == "week1.pdf"
     assert request.content == b"downloaded-content"
     assert file_usecase.downloaded_file_ids == [FILE_ID]
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.COMPLETED
+    )
     assert result.material.get_scope_candidates()[0].label == "재적재 범위"
 
 
@@ -1024,8 +1081,14 @@ async def test_reingest_classroom_material_marks_failed_when_result_empty():
         ),
     )
 
-    assert result.material.ingest_status is ClassroomMaterialIngestStatus.FAILED
-    assert result.material.ingest_error == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    assert (
+        result.material.ingest_status
+        is ClassroomMaterialIngestStatus.FAILED
+    )
+    assert (
+        result.material.ingest_error
+        == "자료에서 시험 범위 후보를 추출하지 못했습니다."
+    )
     assert result.material.scope_candidates == []
 
 

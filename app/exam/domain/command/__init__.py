@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.exam.domain.constants import MAX_BLOOM_LEVEL_QUESTION_COUNT
 from app.exam.domain.entity import (
     BloomLevel,
     ExamDifficulty,
@@ -78,28 +79,25 @@ class UpdateExamQuestionCommand(BaseModel):
         return self
 
 
-class ExamQuestionBloomRatioCommand(BaseModel):
+class ExamQuestionBloomCountCommand(BaseModel):
     bloom_level: BloomLevel
-    percentage: int = Field(..., ge=1, le=100)
+    count: int = Field(..., ge=1, le=MAX_BLOOM_LEVEL_QUESTION_COUNT)
 
 
 class GenerateExamQuestionsCommand(BaseModel):
     scope_text: str = Field(..., min_length=1, max_length=1000)
-    total_questions: int = Field(..., ge=1, le=100)
     max_follow_ups: int = Field(..., ge=0, le=20)
     difficulty: ExamDifficulty
     source_material_ids: list[UUID] = Field(default_factory=list)
-    bloom_ratios: list[ExamQuestionBloomRatioCommand] = Field(
+    bloom_counts: list[ExamQuestionBloomCountCommand] = Field(
         ..., min_length=1, max_length=6
     )
 
     @model_validator(mode="after")
-    def validate_bloom_ratios(self):
-        if sum(item.percentage for item in self.bloom_ratios) != 100:
-            raise ValueError("bloom ratios must sum to 100")
-        bloom_levels = [item.bloom_level for item in self.bloom_ratios]
+    def validate_bloom_counts(self):
+        bloom_levels = [item.bloom_level for item in self.bloom_counts]
         if len(set(bloom_levels)) != len(bloom_levels):
-            raise ValueError("bloom ratios must not contain duplicates")
+            raise ValueError("bloom levels must not contain duplicates")
         return self
 
 

@@ -14,6 +14,10 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from app.classroom.adapter.output.integration.prompts import (
+    MATERIAL_SCOPE_CANDIDATES_SYSTEM_PROMPT,
+    build_material_scope_candidates_user_prompt,
+)
 from app.classroom.domain.entity import ClassroomMaterialScopeCandidate
 from app.classroom.domain.exception import (
     ClassroomMaterialIngestDomainException,
@@ -39,34 +43,42 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
             )
         if not config.OPENAI_API_KEY:
             raise ClassroomMaterialIngestDomainException(
-                message="문항 생성 환경이 올바르게 설정되지 않았습니다."
+                message="강의 자료 적재 환경이 올바르게 설정되지 않았습니다."
             )
 
-        pages = PdfReader(BytesIO(request.content)).pages
-        page_texts = []
-        for page in pages:
+        try:
+            pages = PdfReader(BytesIO(request.content)).pages
+        except Exception as exc:
+            raise ClassroomMaterialIngestDomainException(
+                message="PDF 강의 자료를 해석하지 못했습니다."
+            ) from exc
+        extracted_pages = []
+        for page_number, page in enumerate(pages, start=1):
             text = page.extract_text()
             if text and text.strip():
-                page_texts.append(text.strip())
-        if not page_texts:
+                extracted_pages.append({
+                    "page": page_number,
+                    "text": text.strip(),
+                })
+        if not extracted_pages:
             raise ClassroomMaterialIngestDomainException(
                 message="강의 자료에서 추출된 텍스트가 없습니다."
             )
 
         chunks = []
-        for page_number, text in enumerate(page_texts, start=1):
+        for page in extracted_pages:
+            page_number = page["page"]
+            text = page["text"]
             start = 0
             chunk_index = 0
             while start < len(text):
                 chunk_text = text[start : start + 1000].strip()
                 if chunk_text:
-                    chunks.append(
-                        {
-                            "page": page_number,
-                            "chunk_index": chunk_index,
-                            "text": chunk_text,
-                        }
-                    )
+                    chunks.append({
+                        "page": page_number,
+                        "chunk_index": chunk_index,
+                        "text": chunk_text,
+                    })
                 if start + 1000 >= len(text):
                     break
                 start += 800
@@ -76,101 +88,118 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
                 message="강의 자료를 검색 가능한 청크로 분할하지 못했습니다."
             )
 
-        client = QdrantClient(url=config.QDRANT_URL)
-        if not client.collection_exists(config.QDRANT_COLLECTION_NAME):
-            client.create_collection(
+        try:
+            client = QdrantClient(url=config.QDRANT_URL)
+            if not client.collection_exists(config.QDRANT_COLLECTION_NAME):
+                client.create_collection(
+                    collection_name=config.QDRANT_COLLECTION_NAME,
+                    vectors_config=VectorParams(
+                        size=1536,
+                        distance=Distance.COSINE,
+                    ),
+                )
+
+            client.delete(
                 collection_name=config.QDRANT_COLLECTION_NAME,
-                vectors_config=VectorParams(
-                    size=1536,
-                    distance=Distance.COSINE,
+                points_selector=Filter(
+                    must=[
+                        FieldCondition(
+                            key="material_id",
+                            match=MatchValue(value=str(request.material_id)),
+                        )
+                    ]
                 ),
             )
 
-        client.delete(
-            collection_name=config.QDRANT_COLLECTION_NAME,
-            points_selector=Filter(
-                must=[
-                    FieldCondition(
-                        key="material_id",
-                        match=MatchValue(value=str(request.material_id)),
+            openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+            embeddings = await openai_client.embeddings.create(
+                model=config.OPENAI_EMBEDDING_MODEL,
+                input=[chunk["text"] for chunk in chunks],
+            )
+            client.upsert(
+                collection_name=config.QDRANT_COLLECTION_NAME,
+                wait=True,
+                points=[
+                    PointStruct(
+                        id=str(uuid4()),
+                        vector=embedding.embedding,
+                        payload={
+                            "classroom_id": str(request.classroom_id),
+                            "material_id": str(request.material_id),
+                            "title": request.title,
+                            "description": request.description,
+                            "file_name": request.file_name,
+                            "week": request.week,
+                            "page": chunk["page"],
+                            "chunk_index": chunk["chunk_index"],
+                            "text": chunk["text"],
+                        },
                     )
-                ]
-            ),
-        )
+                    for chunk, embedding in zip(
+                        chunks,
+                        embeddings.data,
+                        strict=True,
+                    )
+                ],
+            )
 
-        openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
-        embeddings = await openai_client.embeddings.create(
-            model=config.OPENAI_EMBEDDING_MODEL,
-            input=[chunk["text"] for chunk in chunks],
-        )
-        client.upsert(
-            collection_name=config.QDRANT_COLLECTION_NAME,
-            wait=True,
-            points=[
-                PointStruct(
-                    id=str(uuid4()),
-                    vector=embedding.embedding,
-                    payload={
-                        "classroom_id": str(request.classroom_id),
-                        "material_id": str(request.material_id),
-                        "title": request.title,
-                        "description": request.description,
-                        "file_name": request.file_name,
-                        "week": request.week,
-                        "page": chunk["page"],
-                        "chunk_index": chunk["chunk_index"],
-                        "text": chunk["text"],
+            source_text = "\n".join(
+                page["text"] for page in extracted_pages[:5]
+            )[:6000]
+            completion = await openai_client.chat.completions.create(
+                model=config.OPENAI_EXAM_GENERATION_MODEL,
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": MATERIAL_SCOPE_CANDIDATES_SYSTEM_PROMPT,
                     },
-                )
-                for chunk, embedding in zip(
-                    chunks,
-                    embeddings.data,
-                    strict=True,
-                )
-            ],
-        )
+                    {
+                        "role": "user",
+                        "content": build_material_scope_candidates_user_prompt(
+                            request=request,
+                            source_text=source_text,
+                        ),
+                    },
+                ],
+            )
+            content = (
+                completion.choices[0].message.content
+                or '{"candidates": []}'
+            )
+            parsed = json.loads(content)
+        except ClassroomMaterialIngestDomainException:
+            raise
+        except Exception as exc:
+            raise ClassroomMaterialIngestDomainException(
+                message="강의 자료 적재 중 외부 연동 오류가 발생했습니다."
+            ) from exc
 
-        completion = await openai_client.chat.completions.create(
-            model=config.OPENAI_EXAM_GENERATION_MODEL,
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "당신은 강의 자료에서 교수자가 시험 범위로 선택할 "
-                        "수 있는 후보 범위를 추출하는 도우미입니다. 반드시 "
-                        "JSON만 응답"
-                        "하세요. 형식은 {\"candidates\": [...]} 입니다. 각 후"
-                        "보는 label, scope_text, keywords, week_range, "
-                        "confidence를 포함해야 합니다. 후보는 1~5개만 생성하고,"
-                        " scope_text는 400자 이내로 요약하세요."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"자료 제목: {request.title}\n"
-                        f"자료 설명: {request.description or '없음'}\n"
-                        f"주차: {request.week}\n"
-                        f"파일명: {request.file_name}\n\n"
-                        "강의 자료 본문:\n"
-                        f"{chr(10).join(page_texts[:5])[:6000]}"
-                    ),
-                },
-            ],
-        )
-        content = completion.choices[0].message.content or '{"candidates": []}'
-        parsed = json.loads(content)
+        if not isinstance(parsed, dict):
+            raise ClassroomMaterialIngestDomainException(
+                message="강의 자료 범위 후보 응답 형식이 올바르지 않습니다."
+            )
 
         candidates = []
-        for item in parsed.get("candidates", []):
+        raw_candidates = parsed.get("candidates", [])
+        if not isinstance(raw_candidates, list):
+            raise ClassroomMaterialIngestDomainException(
+                message="강의 자료 범위 후보 응답 형식이 올바르지 않습니다."
+            )
+
+        for item in raw_candidates:
+            if not isinstance(item, dict):
+                continue
             label = str(item.get("label") or "").strip()
             scope_text = str(item.get("scope_text") or "").strip()
             if not label or not scope_text:
                 continue
+            raw_keywords = item.get("keywords", [])
+            if not isinstance(raw_keywords, list):
+                raw_keywords = []
             keywords = [
                 str(keyword).strip()
-                for keyword in item.get("keywords", [])
+                for keyword in raw_keywords
                 if str(keyword).strip()
             ]
             confidence = item.get("confidence")
@@ -185,9 +214,7 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
                         else f"{request.week}주차"
                     ),
                     confidence=(
-                        float(confidence)
-                        if confidence is not None
-                        else None
+                        float(confidence) if confidence is not None else None
                     ),
                 )
             )

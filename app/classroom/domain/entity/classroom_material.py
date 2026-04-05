@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -33,7 +35,7 @@ class ClassroomMaterialScopeCandidate:
     @classmethod
     def from_dict(
         cls, candidate: dict[str, object]
-    ) -> "ClassroomMaterialScopeCandidate":
+    ) -> ClassroomMaterialScopeCandidate:
         return cls(
             label=str(candidate.get("label") or ""),
             scope_text=str(candidate.get("scope_text") or ""),
@@ -80,7 +82,7 @@ class ClassroomMaterial(Entity):
         week: int,
         description: str | None,
         uploaded_by: UUID,
-    ) -> "ClassroomMaterial":
+    ) -> ClassroomMaterial:
         return cls(
             classroom_id=classroom_id,
             file_id=file_id,

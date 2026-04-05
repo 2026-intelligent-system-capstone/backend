@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
+from app.exam.domain.constants import MAX_BLOOM_LEVEL_QUESTION_COUNT
 from app.exam.domain.entity import (
     BloomLevel,
     ExamDifficulty,
@@ -79,28 +80,25 @@ class UpdateExamQuestionRequest(BaseRequest):
         return self
 
 
-class ExamQuestionBloomRatioRequest(BaseRequest):
+class ExamQuestionBloomCountRequest(BaseRequest):
     bloom_level: BloomLevel
-    percentage: int = Field(..., ge=1, le=100)
+    count: int = Field(..., ge=1, le=MAX_BLOOM_LEVEL_QUESTION_COUNT)
 
 
 class GenerateExamQuestionsRequest(BaseRequest):
     scope_text: str = Field(..., min_length=1, max_length=1000)
-    total_questions: int = Field(..., ge=1, le=100)
     max_follow_ups: int = Field(..., ge=0, le=20)
     difficulty: ExamDifficulty
     source_material_ids: list[UUID] = Field(default_factory=list)
-    bloom_ratios: list[ExamQuestionBloomRatioRequest] = Field(
+    bloom_counts: list[ExamQuestionBloomCountRequest] = Field(
         ..., min_length=1, max_length=6
     )
 
     @model_validator(mode="after")
-    def validate_bloom_ratios(self):
-        if sum(item.percentage for item in self.bloom_ratios) != 100:
-            raise ValueError("Bloom 비율 합계는 100이어야 합니다.")
-        bloom_levels = [item.bloom_level for item in self.bloom_ratios]
+    def validate_bloom_counts(self):
+        bloom_levels = [item.bloom_level for item in self.bloom_counts]
         if len(set(bloom_levels)) != len(bloom_levels):
-            raise ValueError("Bloom 비율은 중복될 수 없습니다.")
+            raise ValueError("Bloom 단계는 중복될 수 없습니다.")
         return self
 
 

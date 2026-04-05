@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -26,7 +28,7 @@ class AuthTokens:
         organization_id: UUID,
         organization_code: str,
         role: str,
-    ) -> tuple["AuthTokens", str]:
+    ) -> tuple[AuthTokens, str]:
         access_token = TokenHelper.create_token(
             payload={"sub": str(user_id)},
             token_type=TokenType.ACCESS,
@@ -54,7 +56,7 @@ class AuthTokens:
         *,
         user: User,
         organization_code: str,
-    ) -> tuple["AuthTokens", str]:
+    ) -> tuple[AuthTokens, str]:
         return cls.issue(
             user_id=user.id,
             organization_id=user.organization_id,

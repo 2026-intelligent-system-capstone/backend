@@ -404,14 +404,13 @@ def test_generate_exam_questions_returns_200_for_professor(
         f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/generate",
         json={
             "scope_text": "1주차 머신러닝 기초",
-            "total_questions": 1,
             "max_follow_ups": 2,
             "difficulty": "medium",
             "source_material_ids": [
                 "99999999-9999-9999-9999-999999999999"
             ],
-            "bloom_ratios": [
-                {"bloom_level": "apply", "percentage": 100}
+            "bloom_counts": [
+                {"bloom_level": "apply", "count": 1}
             ],
         },
     )
@@ -448,14 +447,13 @@ def test_generate_exam_questions_returns_400_for_invalid_materials(
         f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/generate",
         json={
             "scope_text": "1주차 머신러닝 기초",
-            "total_questions": 1,
             "max_follow_ups": 2,
             "difficulty": "medium",
             "source_material_ids": [
                 "99999999-9999-9999-9999-999999999999"
             ],
-            "bloom_ratios": [
-                {"bloom_level": "apply", "percentage": 100}
+            "bloom_counts": [
+                {"bloom_level": "apply", "count": 1}
             ],
         },
     )
@@ -490,14 +488,13 @@ def test_generate_exam_questions_returns_400_for_pending_material(
         f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/generate",
         json={
             "scope_text": "1주차 머신러닝 기초",
-            "total_questions": 1,
             "max_follow_ups": 2,
             "difficulty": "medium",
             "source_material_ids": [
                 "99999999-9999-9999-9999-999999999999"
             ],
-            "bloom_ratios": [
-                {"bloom_level": "apply", "percentage": 100}
+            "bloom_counts": [
+                {"bloom_level": "apply", "count": 1}
             ],
         },
     )
@@ -532,14 +529,13 @@ def test_generate_exam_questions_returns_400_for_failed_material(
         f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/generate",
         json={
             "scope_text": "1주차 머신러닝 기초",
-            "total_questions": 1,
             "max_follow_ups": 2,
             "difficulty": "medium",
             "source_material_ids": [
                 "99999999-9999-9999-9999-999999999999"
             ],
-            "bloom_ratios": [
-                {"bloom_level": "apply", "percentage": 100}
+            "bloom_counts": [
+                {"bloom_level": "apply", "count": 1}
             ],
         },
     )

@@ -43,8 +43,8 @@ from app.exam.domain.repository import (
 )
 from app.exam.domain.service import (
     ExamQuestionGenerationCriterion,
+    ExamQuestionGenerationLevelCount,
     ExamQuestionGenerationPort,
-    ExamQuestionGenerationRatio,
     ExamQuestionSourceMaterial,
     GenerateExamQuestionsRequest,
     RealtimeSessionPort,
@@ -292,7 +292,6 @@ class ExamService(ExamUseCase):
                     title=exam.title,
                     exam_type=exam.exam_type,
                     scope_text=command.scope_text,
-                    total_questions=command.total_questions,
                     max_follow_ups=command.max_follow_ups,
                     difficulty=command.difficulty,
                     criteria=[
@@ -308,12 +307,12 @@ class ExamService(ExamUseCase):
                         )
                         for criterion in exam.criteria
                     ],
-                    bloom_ratios=[
-                        ExamQuestionGenerationRatio(
+                    bloom_counts=[
+                        ExamQuestionGenerationLevelCount(
                             bloom_level=item.bloom_level,
-                            percentage=item.percentage,
+                            count=item.count,
                         )
-                        for item in command.bloom_ratios
+                        for item in command.bloom_counts
                     ],
                     source_materials=source_materials,
                 )

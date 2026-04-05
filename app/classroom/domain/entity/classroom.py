@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -39,7 +41,7 @@ class Classroom(Entity):
         description: str | None,
         student_ids: Iterable[UUID],
         allow_student_material_access: bool,
-    ) -> "Classroom":
+    ) -> Classroom:
         classroom = cls(
             organization_id=organization_id,
             name=name,
@@ -157,7 +159,9 @@ class Classroom(Entity):
 
     def _validate_professors(self, users_by_id: dict[UUID, User]) -> None:
         missing_ids = [
-            user_id for user_id in self.professor_ids if user_id not in users_by_id
+            user_id
+            for user_id in self.professor_ids
+            if user_id not in users_by_id
         ]
         if missing_ids:
             raise ClassroomProfessorNotFoundDomainException(
@@ -180,7 +184,9 @@ class Classroom(Entity):
 
     def _validate_students(self, users_by_id: dict[UUID, User]) -> None:
         missing_ids = [
-            user_id for user_id in self.student_ids if user_id not in users_by_id
+            user_id
+            for user_id in self.student_ids
+            if user_id not in users_by_id
         ]
         if missing_ids:
             raise ClassroomStudentNotFoundDomainException(

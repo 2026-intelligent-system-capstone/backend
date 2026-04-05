@@ -5,7 +5,6 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 from sqlalchemy import delete, text
-from sqlalchemy.sql.sqltypes import Enum as SQLAlchemyEnum
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_scoped_session,
@@ -13,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
+from sqlalchemy.sql.sqltypes import Enum as SQLAlchemyEnum
 
 from app.file.adapter.output.persistence.sqlalchemy import file as file_repo
 from app.file.adapter.output.persistence.sqlalchemy.file import (

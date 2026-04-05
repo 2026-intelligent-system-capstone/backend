@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -174,7 +176,7 @@ class Exam(AggregateRoot):
         allow_retake: bool,
         week: int,
         criteria: Sequence[ExamCriterion],
-    ) -> "Exam":
+    ) -> Exam:
         if week < 1:
             raise ExamInvalidWeekDomainException(
                 message="week must be greater than or equal to 1"
@@ -287,7 +289,7 @@ class Exam(AggregateRoot):
         attempt_number: int,
         expires_at: datetime | None = None,
         provider_session_id: str | None = None,
-    ) -> "ExamSession":
+    ) -> ExamSession:
         return ExamSession.start(
             exam_id=self.id,
             student_id=student_id,
@@ -300,15 +302,15 @@ class Exam(AggregateRoot):
     def record_turn(
         self,
         *,
-        session: "ExamSession",
+        session: ExamSession,
         student_id: UUID,
         role: ExamTurnRole,
         event_type: ExamTurnEventType,
         content: str,
         created_at: datetime,
         metadata: dict[str, str],
-        existing_turns: Sequence["ExamTurn"],
-    ) -> "ExamTurn":
+        existing_turns: Sequence[ExamTurn],
+    ) -> ExamTurn:
         session.assert_owned_by(exam_id=self.id, student_id=student_id)
         return session.next_turn(
             role=role,
@@ -322,7 +324,7 @@ class Exam(AggregateRoot):
     def complete_session(
         self,
         *,
-        session: "ExamSession",
+        session: ExamSession,
         student_id: UUID,
         occurred_at: datetime,
     ) -> None:
@@ -332,13 +334,13 @@ class Exam(AggregateRoot):
     def finalize_result(
         self,
         *,
-        session: "ExamSession",
+        session: ExamSession,
         student_id: UUID,
-        results: Sequence["ExamResult"],
+        results: Sequence[ExamResult],
         overall_score: float,
         summary: str,
         submitted_at: datetime,
-    ) -> "ExamResult":
+    ) -> ExamResult:
         session.assert_owned_by(exam_id=self.id, student_id=student_id)
         session.assert_completed()
         result = self.find_result_for_session(
@@ -355,9 +357,9 @@ class Exam(AggregateRoot):
     def find_result_for_session(
         self,
         *,
-        results: Sequence["ExamResult"],
+        results: Sequence[ExamResult],
         session_id: UUID,
-    ) -> "ExamResult":
+    ) -> ExamResult:
         for result in results:
             if result.belongs_to(session_id=session_id):
                 return result
@@ -410,7 +412,7 @@ class ExamSession(Entity):
         attempt_number: int,
         expires_at: datetime | None = None,
         provider_session_id: str | None = None,
-    ) -> "ExamSession":
+    ) -> ExamSession:
         return cls(
             exam_id=exam_id,
             student_id=student_id,
@@ -442,8 +444,8 @@ class ExamSession(Entity):
         content: str,
         created_at: datetime,
         metadata: dict[str, str],
-        existing_turns: Sequence["ExamTurn"],
-    ) -> "ExamTurn":
+        existing_turns: Sequence[ExamTurn],
+    ) -> ExamTurn:
         self.record_activity(created_at)
         return ExamTurn.create(
             session_id=self.id,
@@ -460,7 +462,7 @@ class ExamSession(Entity):
         self.ended_at = occurred_at
         self.last_activity_at = occurred_at
 
-    def create_pending_result(self) -> "ExamResult":
+    def create_pending_result(self) -> ExamResult:
         return ExamResult.pending(
             exam_id=self.exam_id,
             session_id=self.id,
@@ -493,7 +495,7 @@ class ExamTurn(Entity):
         content: str,
         created_at: datetime,
         metadata: dict[str, str],
-    ) -> "ExamTurn":
+    ) -> ExamTurn:
         return cls(
             session_id=session_id,
             sequence=sequence,
@@ -533,7 +535,7 @@ class ExamResult(Entity):
         exam_id: UUID,
         session_id: UUID,
         student_id: UUID,
-    ) -> "ExamResult":
+    ) -> ExamResult:
         return cls(
             exam_id=exam_id,
             session_id=session_id,

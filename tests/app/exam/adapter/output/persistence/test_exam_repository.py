@@ -1,5 +1,6 @@
 from uuid import UUID
 
+import pytest
 from sqlalchemy.sql.sqltypes import Enum as SQLAlchemyEnum
 
 from app.exam.domain.entity import (
@@ -48,7 +49,9 @@ def test_exam_question_table_uses_sqlalchemy_enum_columns():
 
 
 def test_exam_question_table_serializes_source_material_ids_as_json_strings():
-    bind_value = exam_question_table.c.source_material_ids.type.process_bind_param(
+    source_material_ids = exam_question_table.c.source_material_ids
+    bind_param = source_material_ids.type.process_bind_param
+    bind_value = bind_param(
         [
             UUID("99999999-9999-9999-9999-999999999999"),
             UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
@@ -63,7 +66,9 @@ def test_exam_question_table_serializes_source_material_ids_as_json_strings():
 
 
 def test_exam_question_table_restores_source_material_ids_as_uuid_list():
-    result_value = exam_question_table.c.source_material_ids.type.process_result_value(
+    source_material_ids = exam_question_table.c.source_material_ids
+    process_result = source_material_ids.type.process_result_value
+    result_value = process_result(
         [
             "99999999-9999-9999-9999-999999999999",
             "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -78,39 +83,35 @@ def test_exam_question_table_restores_source_material_ids_as_uuid_list():
 
 
 def test_exam_question_table_rejects_null_source_material_ids_on_bind():
-    try:
-        exam_question_table.c.source_material_ids.type.process_bind_param(
-            None,
-            None,
-        )
-    except TypeError as exc:
-        assert str(exc) == "source_material_ids cannot be null"
-    else:
-        raise AssertionError("TypeError was not raised")
+    source_material_ids = exam_question_table.c.source_material_ids
+    bind_param = source_material_ids.type.process_bind_param
+
+    with pytest.raises(TypeError, match="source_material_ids cannot be null"):
+        bind_param(None, None)
 
 
-def test_exam_question_table_rejects_invalid_source_material_id_member_on_bind():
-    try:
-        exam_question_table.c.source_material_ids.type.process_bind_param(
-            [123],
-            None,
-        )
-    except TypeError as exc:
-        assert str(exc) == "source_material_ids must contain UUID values"
-    else:
-        raise AssertionError("TypeError was not raised")
+def test_exam_question_table_rejects_invalid_source_material_id_member(
+):
+    source_material_ids = exam_question_table.c.source_material_ids
+    bind_param = source_material_ids.type.process_bind_param
+
+    with pytest.raises(
+        TypeError,
+        match="source_material_ids must contain UUID values",
+    ):
+        bind_param([123], None)
 
 
-def test_exam_question_table_rejects_invalid_source_material_id_string_on_load():
-    try:
-        exam_question_table.c.source_material_ids.type.process_result_value(
-            ["not-a-uuid"],
-            None,
-        )
-    except ValueError as exc:
-        assert "badly formed hexadecimal UUID string" in str(exc)
-    else:
-        raise AssertionError("ValueError was not raised")
+def test_exam_question_table_rejects_invalid_source_material_id_string(
+):
+    source_material_ids = exam_question_table.c.source_material_ids
+    process_result = source_material_ids.type.process_result_value
+
+    with pytest.raises(
+        ValueError,
+        match="badly formed hexadecimal UUID string",
+    ):
+        process_result(["not-a-uuid"], None)
 
 
 def test_exam_session_and_result_tables_use_sqlalchemy_enum_columns():

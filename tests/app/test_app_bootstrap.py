@@ -85,13 +85,16 @@ def test_create_app_registers_llm_adapters():
     )
 
 
-def test_request_scoped_session_middleware_resets_context_and_removes_session(
+def test_request_scoped_session_resets_context_and_removes_session(
     monkeypatch,
 ):
     app = create_app()
 
     remove_mock = AsyncMock()
-    monkeypatch.setattr("core.fastapi.middlewares.request_scoped_db_session.session.remove", remove_mock)
+    monkeypatch.setattr(
+        "core.fastapi.middlewares.request_scoped_db_session.session.remove",
+        remove_mock,
+    )
 
     @app.get("/test/session-scope")
     async def test_route():

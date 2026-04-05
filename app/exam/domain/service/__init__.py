@@ -1,17 +1,17 @@
 from app.exam.domain.service.generator import (
     ExamQuestionGenerationCriterion,
+    ExamQuestionGenerationLevelCount,
     ExamQuestionGenerationPort,
-    ExamQuestionGenerationRatio,
     ExamQuestionSourceMaterial,
-    GenerateExamQuestionsRequest,
     GeneratedExamQuestionDraft,
+    GenerateExamQuestionsRequest,
 )
 from app.exam.domain.service.realtime import RealtimeSessionPort
 
 __all__ = [
     "ExamQuestionGenerationCriterion",
     "ExamQuestionGenerationPort",
-    "ExamQuestionGenerationRatio",
+    "ExamQuestionGenerationLevelCount",
     "ExamQuestionSourceMaterial",
     "GenerateExamQuestionsRequest",
     "GeneratedExamQuestionDraft",

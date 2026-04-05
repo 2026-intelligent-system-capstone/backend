@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Enum, ForeignKey, Integer, JSON, String
+from sqlalchemy import JSON, Column, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 from app.classroom.domain.entity.classroom_material import (

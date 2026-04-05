@@ -8,7 +8,6 @@ from app.classroom.adapter.output.persistence.sqlalchemy import (
     ClassroomSQLAlchemyRepository,
 )
 from app.classroom.application.service import ClassroomService
-from app.classroom.domain.service import ClassroomMaterialIngestPort
 from app.file.container import FileContainer
 from app.user.adapter.output.persistence.sqlalchemy import (
     UserSQLAlchemyRepository,

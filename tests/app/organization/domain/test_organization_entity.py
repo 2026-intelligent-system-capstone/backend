@@ -1,5 +1,7 @@
-from app.organization.domain.entity import Organization, OrganizationAuthProvider
-
+from app.organization.domain.entity import (
+    Organization,
+    OrganizationAuthProvider,
+)
 
 
 def make_organization() -> Organization:

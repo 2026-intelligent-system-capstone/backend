@@ -34,6 +34,10 @@ def downgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("version_id", sa.BigInteger(), nullable=False),
         sa.ForeignKeyConstraint(["exam_id"], ["t_exam.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["student_id"], ["t_user.id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["student_id"],
+            ["t_user.id"],
+            ondelete="RESTRICT",
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
