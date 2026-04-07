@@ -17,10 +17,11 @@ from core.common.entity import AggregateRoot, Entity
 
 
 class ExamType(StrEnum):
-    QUIZ = "quiz"
+    WEEKLY = "weekly"
     MIDTERM = "midterm"
     FINAL = "final"
     MOCK = "mock"
+    PROJECT = "project"
 
 
 class ExamStatus(StrEnum):

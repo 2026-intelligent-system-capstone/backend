@@ -96,6 +96,19 @@ BLOOM_LEVEL_DESCRIPTIONS = """
 """.strip()
 
 
+EXAM_TYPE_GUIDANCE = {
+    "weekly": "핵심 개념을 짧고 선명하게 확인하는 주간평가입니다. 범위를 과도하게 넓히지 말고, 이해와 적용을 빠르게 확인할 수 있는 질문을 우선하세요.",
+    "midterm": "중간평가입니다. 여러 주차의 핵심 개념을 연결해 이해·적용·분석을 균형 있게 평가하세요.",
+    "final": "기말평가입니다. 학기 전반의 내용을 종합적으로 다루고, 비교·분석·적용이 함께 드러나는 질문을 구성하세요.",
+    "mock": "모의평가입니다. 실제 시험처럼 난이도와 질문 톤을 유지하고, 실전 점검에 적합한 질문 흐름을 구성하세요.",
+    "project": "프로젝트 평가입니다. 구현 결과만 묻지 말고 설계 근거, 기술 선택의 트레이드오프, 구현 과정의 의사결정, 결과물의 한계와 개선 방향을 설명하게 하는 질문을 우선하세요.",
+}
+
+
+def build_exam_type_guidance(exam_type: str) -> str:
+    return EXAM_TYPE_GUIDANCE[exam_type]
+
+
 def build_exam_question_generation_user_prompt(
     *,
     request: GenerateExamQuestionsRequest,
@@ -111,6 +124,8 @@ def build_exam_question_generation_user_prompt(
         f"- 시험 범위: {request.scope_text}\n"
         f"- 난이도: {request.difficulty.value}\n"
         f"- 최대 꼬리질문 수: {request.max_follow_ups}\n\n"
+        f"## 시험 유형별 출제 지침\n"
+        f"- {build_exam_type_guidance(request.exam_type.value)}\n\n"
         f"## 평가 기준\n"
         f"{criteria_text or '- 평가 기준 없음'}\n\n"
         f"## Bloom 단계별 문항 수\n"

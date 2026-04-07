@@ -239,7 +239,7 @@ async def test_generate_questions_returns_backend_drafts(monkeypatch):
             exam_id=EXAM_ID,
             classroom_id=CLASSROOM_ID,
             title="중간 평가",
-            exam_type=ExamType.MIDTERM,
+            exam_type=ExamType.WEEKLY,
             scope_text="1주차 머신러닝 기초",
             max_follow_ups=2,
             difficulty=ExamDifficulty.MEDIUM,
@@ -293,6 +293,8 @@ async def test_generate_questions_returns_backend_drafts(monkeypatch):
         in messages[0]["content"]
     )
     assert "시험 제목: 중간 평가" in messages[1]["content"]
+    assert "시험 유형: weekly" in messages[1]["content"]
+    assert "주간평가입니다" in messages[1]["content"]
     assert "최대 꼬리질문 수: 2" in messages[1]["content"]
     assert "<selected_materials>" in messages[1]["content"]
     assert "<retrieved_context>" in messages[1]["content"]
@@ -324,7 +326,7 @@ async def test_generate_questions_queries_each_selected_material(monkeypatch):
             exam_id=EXAM_ID,
             classroom_id=CLASSROOM_ID,
             title="중간 평가",
-            exam_type=ExamType.MIDTERM,
+            exam_type=ExamType.WEEKLY,
             scope_text="1~2주차 머신러닝 기초",
             max_follow_ups=2,
             difficulty=ExamDifficulty.MEDIUM,
@@ -377,6 +379,65 @@ async def test_generate_questions_queries_each_selected_material(monkeypatch):
     prompt = completion_calls[0]["messages"][1]["content"]
     assert "id: 33333333-3333-3333-3333-333333333333" in prompt
     assert "id: 44444444-4444-4444-4444-444444444444" in prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_questions_includes_project_guidance(monkeypatch):
+    fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
+
+    def build_qdrant_client(*, url: str):
+        assert url == "http://localhost:6333"
+        return fake_qdrant
+
+    monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
+    monkeypatch.setattr(module, "AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr(module.config, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(module.config, "OPENAI_EMBEDDING_MODEL", "embed-model")
+    monkeypatch.setattr(
+        module.config, "OPENAI_EXAM_GENERATION_MODEL", "chat-model"
+    )
+    monkeypatch.setattr(
+        module.config, "QDRANT_COLLECTION_NAME", "lecture_materials"
+    )
+    monkeypatch.setattr(module.config, "QDRANT_URL", "http://localhost:6333")
+
+    adapter = LLMExamQuestionGenerationAdapter()
+    await adapter.generate_questions(
+        request=GenerateExamQuestionsRequest(
+            exam_id=EXAM_ID,
+            classroom_id=CLASSROOM_ID,
+            title="프로젝트 평가",
+            exam_type=ExamType.PROJECT,
+            scope_text="프로젝트 산출물 발표",
+            max_follow_ups=3,
+            difficulty=ExamDifficulty.MEDIUM,
+            criteria=[],
+            bloom_counts=[
+                ExamQuestionGenerationLevelCount(
+                    bloom_level=BloomLevel.APPLY,
+                    count=1,
+                ),
+                ExamQuestionGenerationLevelCount(
+                    bloom_level=BloomLevel.ANALYZE,
+                    count=1,
+                ),
+            ],
+            source_materials=[
+                ExamQuestionSourceMaterial(
+                    material_id=MATERIAL_ID,
+                    file_name="project.pdf",
+                    title="프로젝트 명세",
+                    week=8,
+                )
+            ],
+        )
+    )
+
+    prompt = FakeAsyncOpenAI.last_instance.chat.completions.calls[0]["messages"][1]["content"]
+    assert "시험 유형: project" in prompt
+    assert "설계 근거" in prompt
+    assert "트레이드오프" in prompt
+    assert "개선 방향" in prompt
 
 
 @pytest.mark.asyncio
@@ -455,7 +516,7 @@ async def test_generate_questions_retries_until_valid_response(monkeypatch):
             exam_id=EXAM_ID,
             classroom_id=CLASSROOM_ID,
             title="중간 평가",
-            exam_type=ExamType.MIDTERM,
+            exam_type=ExamType.WEEKLY,
             scope_text="1주차 머신러닝 기초",
             max_follow_ups=2,
             difficulty=ExamDifficulty.MEDIUM,
@@ -495,7 +556,7 @@ async def test_generate_questions_raises_when_openai_key_missing(monkeypatch):
                 exam_id=EXAM_ID,
                 classroom_id=CLASSROOM_ID,
                 title="중간 평가",
-                exam_type=ExamType.MIDTERM,
+                exam_type=ExamType.WEEKLY,
                 scope_text="1주차 머신러닝 기초",
                 max_follow_ups=2,
                 difficulty=ExamDifficulty.MEDIUM,
@@ -587,7 +648,7 @@ async def test_generate_questions_raises_when_bloom_distribution_mismatch(
                 exam_id=EXAM_ID,
                 classroom_id=CLASSROOM_ID,
                 title="중간 평가",
-                exam_type=ExamType.MIDTERM,
+                exam_type=ExamType.WEEKLY,
                 scope_text="1주차 머신러닝 기초",
                 max_follow_ups=2,
                 difficulty=ExamDifficulty.MEDIUM,

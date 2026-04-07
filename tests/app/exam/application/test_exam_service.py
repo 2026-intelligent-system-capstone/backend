@@ -346,12 +346,18 @@ def make_classroom() -> Classroom:
     return classroom
 
 
-def make_exam(*, classroom_id: UUID = CLASSROOM_ID, week: int = WEEK) -> Exam:
+def make_exam(
+    *,
+    classroom_id: UUID = CLASSROOM_ID,
+    week: int = WEEK,
+    exam_type: ExamType = ExamType.MIDTERM,
+    title: str = "중간 평가",
+) -> Exam:
     exam = Exam(
         classroom_id=classroom_id,
-        title="중간 평가",
+        title=title,
         description="1주차 범위 평가",
-        exam_type=ExamType.MIDTERM,
+        exam_type=exam_type,
         status=ExamStatus.READY,
         duration_minutes=60,
         starts_at=STARTS_AT,
@@ -558,7 +564,24 @@ async def test_create_exam_success():
     assert exam.week == WEEK
     instructions = exam.build_realtime_instructions()
     assert "시험 제목: 중간 평가" in instructions
+    assert "시험 유형: midterm" in instructions
     assert "- 2. 문제 해결 과정 (40%)" in instructions
+
+
+def test_exam_build_realtime_instructions_uses_weekly_type_value():
+    exam = make_exam(exam_type=ExamType.WEEKLY, title="주간 평가")
+
+    instructions = exam.build_realtime_instructions()
+
+    assert "시험 유형: weekly" in instructions
+
+
+def test_exam_build_realtime_instructions_uses_project_type_value():
+    exam = make_exam(exam_type=ExamType.PROJECT, title="프로젝트 평가")
+
+    instructions = exam.build_realtime_instructions()
+
+    assert "시험 유형: project" in instructions
 
 
 def test_create_exam_command_requires_positive_week():
