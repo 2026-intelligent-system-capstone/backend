@@ -72,11 +72,15 @@ def make_exam() -> Exam:
     return exam
 
 
-def make_question():
+def make_question(
+    *,
+    question_number: int = 1,
+    status: ExamQuestionStatus = ExamQuestionStatus.GENERATED,
+):
     question = type("Question", (), {})()
     question.id = UUID("88888888-8888-8888-8888-888888888888")
     question.exam_id = EXAM_ID
-    question.question_number = 1
+    question.question_number = question_number
     question.bloom_level = BloomLevel.APPLY
     question.difficulty = ExamDifficulty.MEDIUM
     question.question_text = "회귀와 분류의 차이를 설명하세요."
@@ -87,7 +91,7 @@ def make_question():
     question.source_material_ids = [
         UUID("99999999-9999-9999-9999-999999999999")
     ]
-    question.status = ExamQuestionStatus.GENERATED
+    question.status = status
     return question
 
 
@@ -163,9 +167,117 @@ def test_create_exam_returns_200_for_professor(client, monkeypatch):
     assert response.json()["data"]["criteria"][0]["title"] == "개념 이해"
 
 
+def test_create_exam_accepts_weekly_and_project_types(client, monkeypatch):
+    captured_commands = []
+
+    async def create_stub_exam(*_args, **kwargs):
+        command = kwargs["command"]
+        captured_commands.append(command)
+        exam = make_exam()
+        exam.title = command.title
+        exam.exam_type = command.exam_type
+        return exam
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(ExamService, "create_exam", create_stub_exam)
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    weekly_response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams",
+        json={
+            "title": "주간 평가",
+            "description": "주차 확인 평가",
+            "exam_type": "weekly",
+            "duration_minutes": 30,
+            "starts_at": STARTS_AT.isoformat(),
+            "ends_at": ENDS_AT.isoformat(),
+            "allow_retake": False,
+            "week": WEEK,
+            "criteria": [
+                {
+                    "title": "개념 이해",
+                    "description": "핵심 개념을 설명하는지 평가",
+                    "weight": 100,
+                    "sort_order": 1,
+                    "excellent_definition": "핵심 개념을 정확히 설명한다.",
+                    "average_definition": "핵심 개념 설명은 가능하나 연결이 약하다.",
+                    "poor_definition": "핵심 개념 이해가 부족하다.",
+                }
+            ],
+        },
+    )
+
+    project_response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams",
+        json={
+            "title": "프로젝트 평가",
+            "description": "프로젝트 결과물 평가",
+            "exam_type": "project",
+            "duration_minutes": 90,
+            "starts_at": STARTS_AT.isoformat(),
+            "ends_at": ENDS_AT.isoformat(),
+            "allow_retake": False,
+            "week": WEEK,
+            "criteria": [
+                {
+                    "title": "설계 근거",
+                    "description": "구현 의사결정의 근거를 설명하는지 평가",
+                    "weight": 100,
+                    "sort_order": 1,
+                    "excellent_definition": "설계 선택과 근거를 논리적으로 설명한다.",
+                    "average_definition": "선택은 설명하지만 근거 연결이 약하다.",
+                    "poor_definition": "설계 근거 설명이 부족하다.",
+                }
+            ],
+        },
+    )
+
+    assert weekly_response.status_code == 200
+    assert weekly_response.json()["data"]["exam_type"] == "weekly"
+    assert project_response.status_code == 200
+    assert project_response.json()["data"]["exam_type"] == "project"
+    assert [command.exam_type for command in captured_commands] == [
+        ExamType.WEEKLY,
+        ExamType.PROJECT,
+    ]
+
+
 def test_list_exams_returns_200_for_student(client, monkeypatch):
     async def list_stub_exams(*_args, **_kwargs):
-        return [make_exam()]
+        exam = make_exam()
+        exam.add_question(
+            question_number=1,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="회귀와 분류의 차이를 설명하세요.",
+            scope_text="1주차 머신러닝 기초",
+            evaluation_objective="지도학습 구분 능력 평가",
+            answer_key="출력 형태와 문제 목적 차이를 포함해야 함",
+            scoring_criteria="핵심 개념과 예시 포함",
+            source_material_ids=[
+                UUID("99999999-9999-9999-9999-999999999999")
+            ],
+        )
+        deleted_question = exam.add_question(
+            question_number=2,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="삭제된 문항",
+            scope_text="1주차 머신러닝 기초",
+            evaluation_objective="삭제 테스트",
+            answer_key="삭제 응답 제외",
+            scoring_criteria="삭제 상태 문항",
+            source_material_ids=[
+                UUID("99999999-9999-9999-9999-999999999999")
+            ],
+        )
+        deleted_question.delete()
+        return [exam]
 
     student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
 
@@ -184,11 +296,41 @@ def test_list_exams_returns_200_for_student(client, monkeypatch):
     assert response.json()["data"][0]["week"] == WEEK
     assert response.json()["data"][0]["duration_minutes"] == 60
     assert response.json()["data"][0]["criteria"][0]["weight"] == 100
+    assert len(response.json()["data"][0]["questions"]) == 1
+    assert response.json()["data"][0]["questions"][0]["question_number"] == 1
 
 
 def test_get_exam_returns_200(client, monkeypatch):
     async def get_stub_exam(*_args, **_kwargs):
-        return make_exam()
+        exam = make_exam()
+        exam.add_question(
+            question_number=1,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="회귀와 분류의 차이를 설명하세요.",
+            scope_text="1주차 머신러닝 기초",
+            evaluation_objective="지도학습 구분 능력 평가",
+            answer_key="출력 형태와 문제 목적 차이를 포함해야 함",
+            scoring_criteria="핵심 개념과 예시 포함",
+            source_material_ids=[
+                UUID("99999999-9999-9999-9999-999999999999")
+            ],
+        )
+        deleted_question = exam.add_question(
+            question_number=2,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="삭제된 문항",
+            scope_text="1주차 머신러닝 기초",
+            evaluation_objective="삭제 테스트",
+            answer_key="삭제 응답 제외",
+            scoring_criteria="삭제 상태 문항",
+            source_material_ids=[
+                UUID("99999999-9999-9999-9999-999999999999")
+            ],
+        )
+        deleted_question.delete()
+        return exam
 
     student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
 
@@ -209,6 +351,8 @@ def test_get_exam_returns_200(client, monkeypatch):
     assert response.json()["data"]["criteria"][0]["excellent_definition"] == (
         "핵심 개념을 정확히 설명한다."
     )
+    assert len(response.json()["data"]["questions"]) == 1
+    assert response.json()["data"]["questions"][0]["question_number"] == 1
 
 
 def test_create_exam_returns_422_for_invalid_week(client, monkeypatch):

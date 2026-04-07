@@ -39,6 +39,7 @@ from app.exam.domain.command import (
     RecordExamTurnCommand,
     UpdateExamQuestionCommand,
 )
+from app.exam.domain.entity import ExamQuestionStatus
 from app.exam.domain.usecase import ExamUseCase
 from core.fastapi.dependencies.permission import (
     IsAuthenticated,
@@ -100,6 +101,7 @@ def _build_exam_payload(exam) -> ExamPayload:
         questions=[
             _build_exam_question_payload(question)
             for question in exam.questions
+            if question.status is not ExamQuestionStatus.DELETED
         ],
     )
 
