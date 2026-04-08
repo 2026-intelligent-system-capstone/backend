@@ -8,6 +8,10 @@ from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
 from app.classroom.domain.entity import Classroom
 from app.classroom.domain.usecase import ClassroomUseCase
+from app.exam.application.exception import (
+    ExamSessionAlreadyInProgressException,
+    ExamSessionMaxAttemptsExceededException,
+)
 from app.exam.application.service import ExamService
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
@@ -32,6 +36,7 @@ from app.exam.domain.exception import (
     ExamSessionNotCompletedDomainException,
     ExamSessionOwnershipForbiddenDomainException,
 )
+from sqlalchemy.exc import IntegrityError
 from app.exam.domain.repository import (
     ExamRepository,
     ExamResultRepository,
@@ -76,8 +81,11 @@ class InMemoryExamRepository(ExamRepository):
 class InMemoryExamSessionRepository(ExamSessionRepository):
     def __init__(self):
         self.sessions: dict[UUID, ExamSession] = {}
+        self.raise_on_save: IntegrityError | None = None
 
     async def save(self, entity: ExamSession) -> None:
+        if self.raise_on_save is not None:
+            raise self.raise_on_save
         self.sessions[entity.id] = entity
 
     async def get_by_id(self, entity_id: UUID) -> ExamSession | None:
@@ -97,6 +105,17 @@ class InMemoryExamSessionRepository(ExamSessionRepository):
             for session in self.sessions.values()
             if session.exam_id == exam_id and session.student_id == student_id
         ]
+
+    async def list_by_exam_and_student_for_update(
+        self,
+        *,
+        exam_id: UUID,
+        student_id: UUID,
+    ) -> Sequence[ExamSession]:
+        return await self.list_by_exam_and_student(
+            exam_id=exam_id,
+            student_id=student_id,
+        )
 
 
 class InMemoryExamResultRepository(ExamResultRepository):
@@ -296,7 +315,7 @@ def make_classroom() -> Classroom:
     return classroom
 
 
-def make_exam() -> Exam:
+def make_exam(*, max_attempts: int = 1) -> Exam:
     exam = Exam(
         classroom_id=CLASSROOM_ID,
         title="중간 평가",
@@ -306,7 +325,7 @@ def make_exam() -> Exam:
         duration_minutes=60,
         starts_at=STARTS_AT,
         ends_at=ENDS_AT,
-        allow_retake=False,
+        max_attempts=max_attempts,
         week=WEEK,
         criteria=[
             ExamCriterion(
@@ -547,6 +566,156 @@ async def test_start_exam_session_student_only():
             current_user=make_current_user(
                 role=UserRole.PROFESSOR,
                 user_id=PROFESSOR_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_exam_session_blocks_when_session_already_in_progress():
+    in_progress_session = ExamSession.start(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        started_at=STARTS_AT,
+        attempt_number=1,
+    )
+    session_repository = InMemoryExamSessionRepository()
+    await session_repository.save(in_progress_session)
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam(max_attempts=2)]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    with pytest.raises(ExamSessionAlreadyInProgressException):
+        await service.start_exam_session(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_exam_session_assigns_second_attempt_when_one_completed_exists():
+    completed_session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.COMPLETED,
+        started_at=STARTS_AT,
+        last_activity_at=ENDS_AT,
+        ended_at=ENDS_AT,
+        attempt_number=1,
+    )
+    session_repository = InMemoryExamSessionRepository()
+    await session_repository.save(completed_session)
+    result_repository = InMemoryExamResultRepository()
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam(max_attempts=2)]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    result = await service.start_exam_session(
+        exam_id=EXAM_ID,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+    )
+
+    assert result.session.attempt_number == 2
+    assert len(result_repository.results) == 1
+
+
+@pytest.mark.asyncio
+async def test_start_exam_session_blocks_when_max_attempts_exceeded():
+    first_session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.COMPLETED,
+        started_at=STARTS_AT,
+        last_activity_at=ENDS_AT,
+        ended_at=ENDS_AT,
+        attempt_number=1,
+    )
+    session_repository = InMemoryExamSessionRepository()
+    await session_repository.save(first_session)
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam(max_attempts=1)]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    with pytest.raises(ExamSessionMaxAttemptsExceededException):
+        await service.start_exam_session(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_exam_session_maps_in_progress_integrity_error():
+    session_repository = InMemoryExamSessionRepository()
+    session_repository.raise_on_save = IntegrityError(
+        statement=None,
+        params=None,
+        orig=Exception("ix_t_exam_session_single_in_progress"),
+    )
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam(max_attempts=2)]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    with pytest.raises(ExamSessionAlreadyInProgressException):
+        await service.start_exam_session(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_exam_session_maps_attempt_constraint_integrity_error():
+    session_repository = InMemoryExamSessionRepository()
+    session_repository.raise_on_save = IntegrityError(
+        statement=None,
+        params=None,
+        orig=Exception("uq_t_exam_session_exam_student_attempt"),
+    )
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam(max_attempts=2)]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    with pytest.raises(ExamSessionMaxAttemptsExceededException):
+        await service.start_exam_session(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
             ),
         )
 

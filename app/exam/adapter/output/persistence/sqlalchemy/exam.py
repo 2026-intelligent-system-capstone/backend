@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import selectinload
 
 from app.exam.domain.entity import Exam, ExamResult, ExamSession, ExamTurn
@@ -85,6 +85,25 @@ class ExamSessionSQLAlchemyRepository(ExamSessionRepository):
         )
         result = await session.execute(query)
         return list(result.scalars().all())
+
+    async def list_by_exam_and_student_for_update(
+        self,
+        *,
+        exam_id: UUID,
+        student_id: UUID,
+    ) -> Sequence[ExamSession]:
+        await session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(hashtext(CAST(:lock_key AS text)))"
+            ),
+            {
+                "lock_key": f"exam-session:{exam_id}:{student_id}",
+            },
+        )
+        return await self.list_by_exam_and_student(
+            exam_id=exam_id,
+            student_id=student_id,
+        )
 
 
 class ExamResultSQLAlchemyRepository(ExamResultRepository):

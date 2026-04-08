@@ -2,13 +2,14 @@ from uuid import UUID
 
 from sqlalchemy import (
     JSON,
-    Boolean,
     Column,
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.types import TypeDecorator
@@ -104,7 +105,7 @@ exam_table = BaseTable(
     Column("week", Integer, nullable=False),
     Column("starts_at", DateTime(timezone=True), nullable=False),
     Column("ends_at", DateTime(timezone=True), nullable=False),
-    Column("allow_retake", Boolean, nullable=False, default=False),
+    Column("max_attempts", Integer, nullable=False, default=1),
 )
 
 exam_criterion_table = BaseTable(
@@ -219,6 +220,17 @@ exam_session_table = BaseTable(
     Column("expires_at", DateTime(timezone=True), nullable=True),
     Column("attempt_number", Integer(), nullable=False),
     Column("provider_session_id", String(255), nullable=True),
+    UniqueConstraint("exam_id", "student_id", "attempt_number"),
+)
+
+Index(
+    "ix_t_exam_session_single_in_progress",
+    exam_session_table.c.exam_id,
+    exam_session_table.c.student_id,
+    unique=True,
+    postgresql_where=(
+        exam_session_table.c.status == ExamSessionStatus.IN_PROGRESS.value
+    ),
 )
 
 exam_result_table = BaseTable(

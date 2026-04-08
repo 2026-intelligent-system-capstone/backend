@@ -43,7 +43,7 @@ def client() -> TestClient:
     return TestClient(create_app())
 
 
-def make_exam() -> Exam:
+def make_exam(*, max_attempts: int = 1) -> Exam:
     exam = Exam(
         classroom_id=CLASSROOM_ID,
         title="중간 평가",
@@ -53,7 +53,7 @@ def make_exam() -> Exam:
         duration_minutes=60,
         starts_at=STARTS_AT,
         ends_at=ENDS_AT,
-        allow_retake=False,
+        max_attempts=max_attempts,
         week=WEEK,
         criteria=[
             ExamCriterion(
@@ -140,7 +140,7 @@ def test_create_exam_returns_200_for_professor(client, monkeypatch):
             "duration_minutes": 60,
             "starts_at": STARTS_AT.isoformat(),
             "ends_at": ENDS_AT.isoformat(),
-            "allow_retake": False,
+            "max_attempts": 1,
             "week": WEEK,
             "criteria": [
                 {
@@ -160,6 +160,7 @@ def test_create_exam_returns_200_for_professor(client, monkeypatch):
 
     assert response.status_code == 200
     assert captured["command"].week == WEEK
+    assert captured["command"].max_attempts == 1
     assert response.json()["data"]["title"] == "중간 평가"
     assert response.json()["data"]["exam_type"] == "midterm"
     assert response.json()["data"]["status"] == "ready"
@@ -196,7 +197,7 @@ def test_create_exam_accepts_weekly_and_project_types(client, monkeypatch):
             "duration_minutes": 30,
             "starts_at": STARTS_AT.isoformat(),
             "ends_at": ENDS_AT.isoformat(),
-            "allow_retake": False,
+            "max_attempts": 1,
             "week": WEEK,
             "criteria": [
                 {
@@ -221,7 +222,7 @@ def test_create_exam_accepts_weekly_and_project_types(client, monkeypatch):
             "duration_minutes": 90,
             "starts_at": STARTS_AT.isoformat(),
             "ends_at": ENDS_AT.isoformat(),
-            "allow_retake": False,
+            "max_attempts": 1,
             "week": WEEK,
             "criteria": [
                 {
@@ -347,7 +348,7 @@ def test_get_exam_returns_200(client, monkeypatch):
     assert response.json()["data"]["id"] == str(EXAM_ID)
     assert response.json()["data"]["description"] == "1주차 범위 평가"
     assert response.json()["data"]["week"] == WEEK
-    assert response.json()["data"]["allow_retake"] is False
+    assert response.json()["data"]["max_attempts"] == 1
     assert response.json()["data"]["criteria"][0]["excellent_definition"] == (
         "핵심 개념을 정확히 설명한다."
     )
@@ -373,7 +374,7 @@ def test_create_exam_returns_422_for_invalid_week(client, monkeypatch):
             "duration_minutes": 60,
             "starts_at": STARTS_AT.isoformat(),
             "ends_at": ENDS_AT.isoformat(),
-            "allow_retake": False,
+            "max_attempts": 1,
             "week": 0,
             "criteria": [
                 {

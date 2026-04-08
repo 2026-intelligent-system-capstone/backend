@@ -7,9 +7,12 @@ from enum import StrEnum
 from uuid import UUID
 
 from app.exam.domain.exception import (
+    ExamInvalidMaxAttemptsDomainException,
     ExamInvalidWeekDomainException,
     ExamQuestionNotFoundDomainException,
     ExamResultNotFoundDomainException,
+    ExamSessionAlreadyInProgressDomainException,
+    ExamSessionMaxAttemptsExceededDomainException,
     ExamSessionNotCompletedDomainException,
     ExamSessionOwnershipForbiddenDomainException,
 )
@@ -156,7 +159,7 @@ class Exam(AggregateRoot):
     duration_minutes: int
     starts_at: datetime
     ends_at: datetime
-    allow_retake: bool
+    max_attempts: int
     week: int
     description: str | None = None
     status: ExamStatus = ExamStatus.READY
@@ -174,13 +177,17 @@ class Exam(AggregateRoot):
         duration_minutes: int,
         starts_at: datetime,
         ends_at: datetime,
-        allow_retake: bool,
+        max_attempts: int,
         week: int,
         criteria: Sequence[ExamCriterion],
     ) -> Exam:
         if week < 1:
             raise ExamInvalidWeekDomainException(
                 message="week must be greater than or equal to 1"
+            )
+        if max_attempts < 1:
+            raise ExamInvalidMaxAttemptsDomainException(
+                message="max_attempts must be greater than or equal to 1"
             )
         exam = cls(
             classroom_id=classroom_id,
@@ -191,7 +198,7 @@ class Exam(AggregateRoot):
             duration_minutes=duration_minutes,
             starts_at=starts_at,
             ends_at=ends_at,
-            allow_retake=allow_retake,
+            max_attempts=max_attempts,
             week=week,
         )
         exam.criteria = [
@@ -281,6 +288,21 @@ class Exam(AggregateRoot):
         question = self.find_question(question_id)
         question.delete()
         return question
+
+    def resolve_next_attempt_number(
+        self,
+        *,
+        sessions: Sequence["ExamSession"],
+    ) -> int:
+        if any(session.status is ExamSessionStatus.IN_PROGRESS for session in sessions):
+            raise ExamSessionAlreadyInProgressDomainException()
+        next_attempt_number = max(
+            (session.attempt_number for session in sessions),
+            default=0,
+        ) + 1
+        if next_attempt_number > self.max_attempts:
+            raise ExamSessionMaxAttemptsExceededDomainException()
+        return next_attempt_number
 
     def start_session(
         self,

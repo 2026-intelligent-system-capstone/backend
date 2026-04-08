@@ -53,3 +53,15 @@ class ExamQuestionGenerationFailedException(CustomException):
     code = 502
     error_code = "EXAM_QUESTION_GENERATION__FAILED"
     message = "AI가 유효한 문항을 생성하지 못했습니다. 다시 시도해주세요."
+
+
+class ExamSessionAlreadyInProgressException(CustomException):
+    code = 409
+    error_code = "EXAM_SESSION__ALREADY_IN_PROGRESS"
+    message = "이미 진행 중인 평가가 있습니다."
+
+
+class ExamSessionMaxAttemptsExceededException(CustomException):
+    code = 409
+    error_code = "EXAM_SESSION__MAX_ATTEMPTS_EXCEEDED"
+    message = "허용된 평가 진행 횟수를 초과했습니다."

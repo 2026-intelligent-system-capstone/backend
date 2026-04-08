@@ -39,7 +39,7 @@ class ExamPayload(BaseModel):
     duration_minutes: int
     starts_at: str
     ends_at: str
-    allow_retake: bool
+    max_attempts: int
     week: int
     criteria: list[ExamCriterionPayload]
     questions: list[ExamQuestionPayload] = Field(default_factory=list)

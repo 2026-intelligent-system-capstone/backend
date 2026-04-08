@@ -83,7 +83,7 @@ def _build_exam_payload(exam) -> ExamPayload:
         duration_minutes=exam.duration_minutes,
         starts_at=exam.starts_at.isoformat(),
         ends_at=exam.ends_at.isoformat(),
-        allow_retake=exam.allow_retake,
+        max_attempts=exam.max_attempts,
         week=exam.week,
         criteria=[
             ExamCriterionPayload(

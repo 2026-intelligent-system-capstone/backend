@@ -7,6 +7,8 @@ from app.exam.application.exception.exam import (
     ExamQuestionGenerationMaterialNotReadyException,
     ExamQuestionGenerationUnavailableException,
     ExamQuestionNotFoundException,
+    ExamSessionAlreadyInProgressException,
+    ExamSessionMaxAttemptsExceededException,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "ExamQuestionGenerationMaterialNotReadyException",
     "ExamQuestionGenerationUnavailableException",
     "ExamQuestionNotFoundException",
+    "ExamSessionAlreadyInProgressException",
+    "ExamSessionMaxAttemptsExceededException",
 ]

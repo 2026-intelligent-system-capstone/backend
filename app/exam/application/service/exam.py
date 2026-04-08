@@ -2,6 +2,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
+
 from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
 from app.classroom.domain.entity import ClassroomMaterialIngestStatus
@@ -15,6 +17,8 @@ from app.exam.application.exception import (
     ExamQuestionGenerationMaterialNotReadyException,
     ExamQuestionGenerationUnavailableException,
     ExamQuestionNotFoundException,
+    ExamSessionAlreadyInProgressException,
+    ExamSessionMaxAttemptsExceededException,
 )
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
@@ -34,7 +38,11 @@ from app.exam.domain.entity import (
     ExamTurn,
     StartedExamSession,
 )
-from app.exam.domain.exception import ExamQuestionNotFoundDomainException
+from app.exam.domain.exception import (
+    ExamQuestionNotFoundDomainException,
+    ExamSessionAlreadyInProgressDomainException,
+    ExamSessionMaxAttemptsExceededDomainException,
+)
 from app.exam.domain.repository import (
     ExamRepository,
     ExamResultRepository,
@@ -51,10 +59,23 @@ from app.exam.domain.service import (
 )
 from app.exam.domain.usecase import ExamUseCase
 from app.user.domain.entity import UserRole
+from core.db.session import session
 from core.db.transactional import transactional
 
 
+UNIQUE_ATTEMPT_CONSTRAINT_NAME = "uq_t_exam_session_exam_student_attempt"
+SINGLE_IN_PROGRESS_INDEX_NAME = "ix_t_exam_session_single_in_progress"
+
+
 class ExamService(ExamUseCase):
+    def _map_exam_session_integrity_error(self, error: IntegrityError) -> None:
+        awaitable_message = str(error.orig) if error.orig is not None else str(error)
+        if SINGLE_IN_PROGRESS_INDEX_NAME in awaitable_message:
+            raise ExamSessionAlreadyInProgressException() from error
+        if UNIQUE_ATTEMPT_CONSTRAINT_NAME in awaitable_message:
+            raise ExamSessionMaxAttemptsExceededException() from error
+        raise error
+
     def __init__(
         self,
         *,
@@ -97,7 +118,7 @@ class ExamService(ExamUseCase):
             duration_minutes=command.duration_minutes,
             starts_at=command.starts_at,
             ends_at=command.ends_at,
-            allow_retake=command.allow_retake,
+            max_attempts=command.max_attempts,
             week=command.week,
             criteria=command.criteria,
         )
@@ -368,21 +389,41 @@ class ExamService(ExamUseCase):
             classroom_id=exam.classroom_id,
             current_user=current_user,
         )
+        existing_sessions = (
+            await self.session_repository.list_by_exam_and_student_for_update(
+                exam_id=exam.id,
+                student_id=current_user.id,
+            )
+        )
+        try:
+            attempt_number = exam.resolve_next_attempt_number(
+                sessions=existing_sessions,
+            )
+        except ExamSessionAlreadyInProgressDomainException as exc:
+            raise ExamSessionAlreadyInProgressException() from exc
+        except ExamSessionMaxAttemptsExceededDomainException as exc:
+            raise ExamSessionMaxAttemptsExceededException() from exc
         secret = await self.realtime_session_port.create_client_secret(
             instructions=exam.build_realtime_instructions()
         )
         now = datetime.now(UTC)
-        session = exam.start_session(
+        session_entity = exam.start_session(
             student_id=current_user.id,
             started_at=now,
-            attempt_number=1,
+            attempt_number=attempt_number,
             expires_at=secret.expires_at,
             provider_session_id=secret.provider_session_id,
         )
-        await self.session_repository.save(session)
-        await self.result_repository.save(session.create_pending_result())
+        try:
+            await self.session_repository.save(session_entity)
+            await self.result_repository.save(
+                session_entity.create_pending_result()
+            )
+            await session.flush()
+        except IntegrityError as exc:
+            self._map_exam_session_integrity_error(exc)
         return StartedExamSession(
-            session=session,
+            session=session_entity,
             client_secret=secret.value,
         )
 

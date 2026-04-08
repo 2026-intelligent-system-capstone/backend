@@ -20,6 +20,8 @@ from app.exam.application.exception import (
     ExamQuestionGenerationMaterialNotReadyException,
     ExamQuestionGenerationUnavailableException,
     ExamQuestionNotFoundException,
+    ExamSessionAlreadyInProgressException,
+    ExamSessionMaxAttemptsExceededException,
 )
 from app.exam.application.service import ExamService
 from app.exam.domain.command import (
@@ -45,6 +47,7 @@ from app.exam.domain.entity import (
     ExamType,
     RealtimeClientSecret,
 )
+from app.exam.domain.exception import ExamInvalidMaxAttemptsDomainException
 from app.exam.domain.repository import (
     ExamRepository,
     ExamResultRepository,
@@ -114,6 +117,17 @@ class InMemoryExamSessionRepository(ExamSessionRepository):
             for session in self.sessions.values()
             if session.exam_id == exam_id and session.student_id == student_id
         ]
+
+    async def list_by_exam_and_student_for_update(
+        self,
+        *,
+        exam_id: UUID,
+        student_id: UUID,
+    ) -> Sequence[ExamSession]:
+        return await self.list_by_exam_and_student(
+            exam_id=exam_id,
+            student_id=student_id,
+        )
 
 
 class InMemoryExamResultRepository(ExamResultRepository):
@@ -352,6 +366,7 @@ def make_exam(
     week: int = WEEK,
     exam_type: ExamType = ExamType.MIDTERM,
     title: str = "중간 평가",
+    max_attempts: int = 1,
 ) -> Exam:
     exam = Exam(
         classroom_id=classroom_id,
@@ -362,7 +377,7 @@ def make_exam(
         duration_minutes=60,
         starts_at=STARTS_AT,
         ends_at=ENDS_AT,
-        allow_retake=False,
+        max_attempts=max_attempts,
         week=week,
         criteria=[
             ExamCriterion(
@@ -489,7 +504,7 @@ def test_exam_create_builds_criteria_with_generated_exam_id():
         duration_minutes=60,
         starts_at=STARTS_AT,
         ends_at=ENDS_AT,
-        allow_retake=False,
+        max_attempts=1,
         week=WEEK,
         criteria=criteria,
     )
@@ -502,6 +517,22 @@ def test_exam_create_builds_criteria_with_generated_exam_id():
     assert exam.criteria[0].title == "개념 이해"
     assert exam.week == WEEK
     assert exam.belongs_to_classroom(CLASSROOM_ID) is True
+
+
+def test_exam_create_rejects_invalid_max_attempts():
+    with pytest.raises(ExamInvalidMaxAttemptsDomainException):
+        Exam.create(
+            classroom_id=CLASSROOM_ID,
+            title="중간 평가",
+            description="1주차 범위 평가",
+            exam_type=ExamType.MIDTERM,
+            duration_minutes=60,
+            starts_at=STARTS_AT,
+            ends_at=ENDS_AT,
+            max_attempts=0,
+            week=WEEK,
+            criteria=[],
+        )
 
 
 @pytest.mark.asyncio
@@ -521,8 +552,8 @@ async def test_create_exam_success():
             duration_minutes=60,
             starts_at=STARTS_AT,
             ends_at=ENDS_AT,
-            allow_retake=False,
-        week=WEEK,
+            max_attempts=1,
+            week=WEEK,
             criteria=[
                 ExamCriterionCommand(
                     title="개념 이해",
@@ -556,7 +587,7 @@ async def test_create_exam_success():
     assert exam.duration_minutes == 60
     assert exam.starts_at == STARTS_AT
     assert exam.ends_at == ENDS_AT
-    assert exam.allow_retake is False
+    assert exam.max_attempts == 1
     assert exam.week == WEEK
     assert len(exam.criteria) == 2
     assert exam.criteria[0].title == "개념 이해"
@@ -593,7 +624,7 @@ def test_create_exam_command_requires_positive_week():
             duration_minutes=60,
             starts_at=STARTS_AT,
             ends_at=ENDS_AT,
-            allow_retake=False,
+            max_attempts=1,
             week=0,
             criteria=[
                 ExamCriterionCommand(
@@ -627,8 +658,8 @@ async def test_create_exam_student_forbidden():
                 duration_minutes=60,
                 starts_at=STARTS_AT,
                 ends_at=ENDS_AT,
-                allow_retake=False,
-        week=WEEK,
+                max_attempts=1,
+                week=WEEK,
                 criteria=[
                     ExamCriterionCommand(
                         title="개념 이해",
@@ -699,7 +730,7 @@ async def test_get_exam_returns_operational_fields_and_criteria():
     assert exam.status is ExamStatus.READY
     assert exam.duration_minutes == 60
     assert exam.week == WEEK
-    assert exam.allow_retake is False
+    assert exam.max_attempts == 1
     assert exam.criteria[0].excellent_definition == (
         "핵심 개념과 관계를 정확히 설명한다."
     )

@@ -42,6 +42,12 @@ def test_exam_table_contains_non_nullable_week_column():
     assert exam_table.c.week.nullable is False
 
 
+def test_exam_table_contains_non_nullable_max_attempts_column():
+    assert exam_table.c.max_attempts.nullable is False
+    assert exam_table.c.max_attempts.default is not None
+    assert exam_table.c.max_attempts.default.arg == 1
+
+
 def test_exam_question_table_uses_sqlalchemy_enum_columns():
     assert_enum_column(exam_question_table.c.bloom_level, BloomLevel)
     assert_enum_column(exam_question_table.c.difficulty, ExamDifficulty)
@@ -117,6 +123,27 @@ def test_exam_question_table_rejects_invalid_source_material_id_string(
 def test_exam_session_and_result_tables_use_sqlalchemy_enum_columns():
     assert_enum_column(exam_session_table.c.status, ExamSessionStatus)
     assert_enum_column(exam_result_table.c.status, ExamResultStatus)
+
+
+def test_exam_session_table_contains_unique_attempt_constraint():
+    unique_constraints = list(exam_session_table.constraints)
+
+    assert any(
+        constraint.__class__.__name__ == "UniqueConstraint"
+        and tuple(constraint.columns.keys())
+        == ("exam_id", "student_id", "attempt_number")
+        for constraint in unique_constraints
+    )
+
+
+def test_exam_session_table_contains_single_in_progress_index():
+    assert any(
+        index.name == "ix_t_exam_session_single_in_progress"
+        and tuple(column.name for column in index.columns)
+        == ("exam_id", "student_id")
+        and index.unique is True
+        for index in exam_session_table.indexes
+    )
 
 
 def test_exam_turn_table_uses_sqlalchemy_enum_columns():
