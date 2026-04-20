@@ -97,7 +97,7 @@ class ClassroomUseCase(ABC):
         classroom_id: UUID,
         current_user: CurrentUser,
         command: CreateClassroomMaterialCommand,
-        file_upload: FileUploadData,
+        file_upload: FileUploadData | None = None,
     ) -> ClassroomMaterialDetail:
         """Create classroom material."""
 

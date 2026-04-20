@@ -14,7 +14,9 @@ from app.classroom.adapter.input.api.v1.request import (
 )
 from app.classroom.adapter.input.api.v1.response import (
     ClassroomMaterialFilePayload,
+    ClassroomMaterialIngestCapabilityPayload,
     ClassroomMaterialListResponse,
+    ClassroomMaterialOriginalFilePayload,
     ClassroomMaterialPayload,
     ClassroomMaterialResponse,
     ClassroomMaterialScopeCandidatePayload,
@@ -24,6 +26,7 @@ from app.classroom.domain.command import (
     CreateClassroomMaterialCommand,
     UpdateClassroomMaterialCommand,
 )
+from app.classroom.domain.entity import ClassroomMaterialSourceKind
 from app.classroom.domain.usecase import ClassroomUseCase
 from app.file.domain.service import FileUploadData
 from core.fastapi.dependencies import (
@@ -59,6 +62,8 @@ def _build_uploaded_at(value: datetime | None) -> datetime | None:
 
 
 def _build_classroom_material_payload(result) -> ClassroomMaterialPayload:
+    original_file = result.material.get_original_file()
+    ingest_capability = result.material.get_ingest_capability()
     return ClassroomMaterialPayload(
         id=str(result.material.id),
         classroom_id=str(result.material.classroom_id),
@@ -67,8 +72,15 @@ def _build_classroom_material_payload(result) -> ClassroomMaterialPayload:
         description=result.material.description,
         uploaded_by=str(result.material.uploaded_by),
         uploaded_at=_build_uploaded_at(result.material.created_at),
+        source_kind=result.material.source_kind.value,
+        source_url=result.material.source_url,
         ingest_status=result.material.ingest_status.value,
         ingest_error=result.material.ingest_error,
+        ingest_capability=ClassroomMaterialIngestCapabilityPayload(
+            supported=ingest_capability.supported,
+            reason=ingest_capability.reason,
+        ),
+        ingest_metadata=result.material.ingest_metadata,
         scope_candidates=[
             ClassroomMaterialScopeCandidatePayload(
                 label=candidate.label,
@@ -79,13 +91,28 @@ def _build_classroom_material_payload(result) -> ClassroomMaterialPayload:
             )
             for candidate in result.material.get_scope_candidates()
         ],
-        file=ClassroomMaterialFilePayload(
-            id=str(result.file.id),
-            file_name=result.file.file_name,
-            file_path=result.file.file_path,
-            file_extension=result.file.file_extension,
-            file_size=result.file.file_size,
-            mime_type=result.file.mime_type,
+        file=(
+            ClassroomMaterialFilePayload(
+                id=str(result.file.id),
+                file_name=result.file.file_name,
+                file_path=result.file.file_path,
+                file_extension=result.file.file_extension,
+                file_size=result.file.file_size,
+                mime_type=result.file.mime_type,
+            )
+            if result.file is not None
+            else None
+        ),
+        original_file=(
+            ClassroomMaterialOriginalFilePayload(
+                file_name=original_file.file_name,
+                file_path=original_file.file_path,
+                file_extension=original_file.file_extension,
+                file_size=original_file.file_size,
+                mime_type=original_file.mime_type,
+            )
+            if original_file is not None
+            else None
         ),
     )
 
@@ -101,31 +128,66 @@ async def create_classroom_material(
     title: str = Form(...),
     week: int = Form(...),
     description: str | None = Form(None),
-    uploaded_file: UploadFile = File(...),
+    source_kind: ClassroomMaterialSourceKind = Form(
+        ClassroomMaterialSourceKind.FILE
+    ),
+    source_url: str | None = Form(None),
+    uploaded_file: UploadFile | None = File(None),
     current_user: CurrentUser = Depends(get_current_user),
     usecase: ClassroomUseCase = Depends(Provide[ClassroomContainer.service]),
 ):
+    normalized_description = (
+        description.strip() or None
+        if description is not None
+        else None
+    )
+    normalized_source_url = (
+        source_url.strip() or None if source_url is not None else None
+    )
     try:
         request = CreateClassroomMaterialRequest(
             title=title,
             week=week,
-            description=(
-                description.strip() if description is not None else None
-            ),
+            description=normalized_description,
+            source_kind=source_kind,
+            source_url=normalized_source_url,
         )
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
 
+    if source_kind is ClassroomMaterialSourceKind.FILE and uploaded_file is None:
+        raise RequestValidationError([
+            {
+                "type": "missing",
+                "loc": ("body", "uploaded_file"),
+                "msg": "Field required",
+                "input": None,
+            }
+        ])
+    if source_kind is ClassroomMaterialSourceKind.LINK and uploaded_file is not None:
+        raise RequestValidationError([
+            {
+                "type": "value_error",
+                "loc": ("body", "uploaded_file"),
+                "msg": "링크 자료에는 uploaded_file을 함께 보낼 수 없습니다.",
+                "input": uploaded_file.filename,
+            }
+        ])
+
     result = await usecase.create_classroom_material(
         classroom_id=classroom_id,
         current_user=current_user,
-        command=CreateClassroomMaterialCommand(**request.model_dump()),
-        file_upload=FileUploadData(
-            file_name=uploaded_file.filename or "uploaded-file",
-            mime_type=(
-                uploaded_file.content_type or "application/octet-stream"
-            ),
-            content=uploaded_file.file,
+        command=CreateClassroomMaterialCommand(**request.model_dump(mode="json")),
+        file_upload=(
+            FileUploadData(
+                file_name=uploaded_file.filename or "uploaded-file",
+                mime_type=(
+                    uploaded_file.content_type or "application/octet-stream"
+                ),
+                content=uploaded_file.file,
+            )
+            if uploaded_file is not None
+            else None
         ),
     )
     return ClassroomMaterialResponse(
@@ -214,6 +276,8 @@ async def update_classroom_material(
     title: str | None = Form(None),
     week: int | None = Form(None),
     description: str | None = Form(None),
+    source_kind: ClassroomMaterialSourceKind | None = Form(None),
+    source_url: str | None = Form(None),
     uploaded_file: UploadFile | None = File(None),
     current_user: CurrentUser = Depends(get_current_user),
     usecase: ClassroomUseCase = Depends(Provide[ClassroomContainer.service]),
@@ -224,6 +288,8 @@ async def update_classroom_material(
             "title": title,
             "week": week,
             "description": description,
+            "source_kind": source_kind,
+            "source_url": source_url,
         }.items()
         if value is not None
     }
@@ -240,6 +306,34 @@ async def update_classroom_material(
                 "type": "value_error",
                 "loc": ("body",),
                 "msg": "최소 하나 이상의 수정 필드가 필요합니다.",
+                "input": None,
+            }
+        ])
+
+    if source_kind is ClassroomMaterialSourceKind.LINK and uploaded_file is not None:
+        raise RequestValidationError([
+            {
+                "type": "value_error",
+                "loc": ("body", "uploaded_file"),
+                "msg": "링크 자료에는 uploaded_file을 함께 보낼 수 없습니다.",
+                "input": uploaded_file.filename,
+            }
+        ])
+    if uploaded_file is not None and source_kind is None and request is not None:
+        raise RequestValidationError([
+            {
+                "type": "value_error",
+                "loc": ("body", "uploaded_file"),
+                "msg": "uploaded_file 수정 시 source_kind=file을 함께 지정해야 합니다.",
+                "input": uploaded_file.filename,
+            }
+        ])
+    if source_kind is ClassroomMaterialSourceKind.FILE and uploaded_file is None:
+        raise RequestValidationError([
+            {
+                "type": "value_error",
+                "loc": ("body", "uploaded_file"),
+                "msg": "파일 자료로 변경 시 uploaded_file이 필요합니다.",
                 "input": None,
             }
         ])

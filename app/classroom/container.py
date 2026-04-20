@@ -1,5 +1,6 @@
 from dependency_injector import containers, providers
 
+from app.async_job.container import AsyncJobContainer
 from app.classroom.adapter.output.integration import (
     LLMClassroomMaterialIngestAdapter,
 )
@@ -37,4 +38,5 @@ class ClassroomContainer(containers.DeclarativeContainer):
         material_repository=material_repository,
         file_usecase=FileContainer.service,
         material_ingest_port=material_ingest_port,
+        async_job_service=AsyncJobContainer.service,
     )

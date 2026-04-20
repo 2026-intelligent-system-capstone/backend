@@ -7,4 +7,4 @@ from app.file.domain.entity.file import File
 @dataclass(frozen=True)
 class ClassroomMaterialDetail:
     material: ClassroomMaterial
-    file: File
+    file: File | None = None

@@ -1,6 +1,7 @@
 from dependency_injector import containers, providers
 from dependency_injector.containers import DeclarativeContainer
 
+from app.async_job.container import AsyncJobContainer
 from app.auth.container import AuthContainer
 from app.classroom.container import ClassroomContainer
 from app.exam.container import ExamContainer
@@ -22,6 +23,7 @@ class AppContainer(DeclarativeContainer):
         ]
     )
 
+    async_job = providers.Container(AsyncJobContainer)
     auth = providers.Container(AuthContainer)
     classroom = providers.Container(ClassroomContainer)
     exam = providers.Container(ExamContainer)

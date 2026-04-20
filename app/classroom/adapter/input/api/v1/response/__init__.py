@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +35,19 @@ class ClassroomMaterialFilePayload(BaseModel):
     mime_type: str
 
 
+class ClassroomMaterialOriginalFilePayload(BaseModel):
+    file_name: str
+    file_path: str
+    file_extension: str
+    file_size: int
+    mime_type: str
+
+
+class ClassroomMaterialIngestCapabilityPayload(BaseModel):
+    supported: bool
+    reason: str | None = None
+
+
 class ClassroomMaterialScopeCandidatePayload(BaseModel):
     label: str
     scope_text: str
@@ -50,12 +64,17 @@ class ClassroomMaterialPayload(BaseModel):
     description: str | None = None
     uploaded_by: str
     uploaded_at: datetime | None = None
+    source_kind: str
+    source_url: str | None = None
     ingest_status: str
     ingest_error: str | None = None
+    ingest_capability: ClassroomMaterialIngestCapabilityPayload
+    ingest_metadata: dict[str, Any] = Field(default_factory=dict)
     scope_candidates: list[ClassroomMaterialScopeCandidatePayload] = Field(
         default_factory=list
     )
-    file: ClassroomMaterialFilePayload
+    file: ClassroomMaterialFilePayload | None = None
+    original_file: ClassroomMaterialOriginalFilePayload | None = None
 
 
 class ClassroomMaterialResponse(BaseResponse):

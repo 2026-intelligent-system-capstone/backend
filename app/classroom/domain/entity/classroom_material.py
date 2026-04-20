@@ -4,15 +4,56 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
 from core.common.entity import Entity
+
+
+class ClassroomMaterialSourceKind(StrEnum):
+    FILE = "file"
+    LINK = "link"
 
 
 class ClassroomMaterialIngestStatus(StrEnum):
     PENDING = "pending"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ClassroomMaterialOriginalFile:
+    file_name: str
+    file_path: str
+    file_extension: str
+    file_size: int
+    mime_type: str
+
+
+@dataclass(frozen=True)
+class ClassroomMaterialIngestCapability:
+    supported: bool
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "supported": self.supported,
+            "reason": self.reason,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, capability: dict[str, object] | None
+    ) -> ClassroomMaterialIngestCapability:
+        payload = capability or {}
+        return cls(
+            supported=bool(payload.get("supported", False)),
+            reason=(
+                str(payload["reason"])
+                if payload.get("reason") is not None
+                else None
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -60,11 +101,20 @@ class ClassroomMaterialScopeCandidate:
 @dataclass
 class ClassroomMaterial(Entity):
     classroom_id: UUID
-    file_id: UUID
+    source_kind: ClassroomMaterialSourceKind
     title: str
     week: int
     description: str | None
     uploaded_by: UUID
+    file_id: UUID | None = None
+    source_url: str | None = None
+    original_file_name: str | None = None
+    original_file_path: str | None = None
+    original_file_extension: str | None = None
+    original_file_size: int | None = None
+    original_file_mime_type: str | None = None
+    ingest_capability: dict[str, Any] = field(default_factory=dict)
+    ingest_metadata: dict[str, Any] = field(default_factory=dict)
     ingest_status: ClassroomMaterialIngestStatus = (
         ClassroomMaterialIngestStatus.PENDING
     )
@@ -73,7 +123,7 @@ class ClassroomMaterial(Entity):
     created_at: datetime | None = None
 
     @classmethod
-    def create(
+    def create_file(
         cls,
         *,
         classroom_id: UUID,
@@ -82,14 +132,60 @@ class ClassroomMaterial(Entity):
         week: int,
         description: str | None,
         uploaded_by: UUID,
+        original_file: ClassroomMaterialOriginalFile,
+        ingest_capability: ClassroomMaterialIngestCapability,
+        ingest_metadata: dict[str, Any] | None = None,
     ) -> ClassroomMaterial:
         return cls(
             classroom_id=classroom_id,
+            source_kind=ClassroomMaterialSourceKind.FILE,
             file_id=file_id,
             title=title,
             week=week,
             description=description,
             uploaded_by=uploaded_by,
+            source_url=None,
+            original_file_name=original_file.file_name,
+            original_file_path=original_file.file_path,
+            original_file_extension=original_file.file_extension,
+            original_file_size=original_file.file_size,
+            original_file_mime_type=original_file.mime_type,
+            ingest_capability=ingest_capability.to_dict(),
+            ingest_metadata=dict(ingest_metadata or {}),
+            ingest_status=ClassroomMaterialIngestStatus.PENDING,
+            scope_candidates=[],
+            ingest_error=None,
+        )
+
+    @classmethod
+    def create_link(
+        cls,
+        *,
+        classroom_id: UUID,
+        source_url: str,
+        title: str,
+        week: int,
+        description: str | None,
+        uploaded_by: UUID,
+        ingest_capability: ClassroomMaterialIngestCapability,
+        ingest_metadata: dict[str, Any] | None = None,
+    ) -> ClassroomMaterial:
+        return cls(
+            classroom_id=classroom_id,
+            source_kind=ClassroomMaterialSourceKind.LINK,
+            file_id=None,
+            title=title,
+            week=week,
+            description=description,
+            uploaded_by=uploaded_by,
+            source_url=source_url,
+            original_file_name=None,
+            original_file_path=None,
+            original_file_extension=None,
+            original_file_size=None,
+            original_file_mime_type=None,
+            ingest_capability=ingest_capability.to_dict(),
+            ingest_metadata=dict(ingest_metadata or {}),
             ingest_status=ClassroomMaterialIngestStatus.PENDING,
             scope_candidates=[],
             ingest_error=None,
@@ -105,6 +201,12 @@ class ClassroomMaterial(Entity):
         week: int | None = None,
         description: str | None = None,
         replace_description: bool = False,
+        source_url: str | None = None,
+        replace_source_url: bool = False,
+        ingest_capability: ClassroomMaterialIngestCapability | None = None,
+        replace_ingest_capability: bool = False,
+        ingest_metadata: dict[str, Any] | None = None,
+        replace_ingest_metadata: bool = False,
     ) -> None:
         if title is not None:
             self.title = title
@@ -112,10 +214,53 @@ class ClassroomMaterial(Entity):
             self.week = week
         if replace_description:
             self.description = description
+        if replace_source_url:
+            self.source_url = source_url
+        if replace_ingest_capability and ingest_capability is not None:
+            self.ingest_capability = ingest_capability.to_dict()
+        if replace_ingest_metadata:
+            self.ingest_metadata = dict(ingest_metadata or {})
 
-    def replace_file(self, file_id: UUID) -> UUID:
+    def replace_file(
+        self,
+        *,
+        file_id: UUID,
+        original_file: ClassroomMaterialOriginalFile,
+        ingest_capability: ClassroomMaterialIngestCapability,
+        ingest_metadata: dict[str, Any] | None = None,
+    ) -> UUID | None:
         old_file_id = self.file_id
+        self.source_kind = ClassroomMaterialSourceKind.FILE
         self.file_id = file_id
+        self.source_url = None
+        self.original_file_name = original_file.file_name
+        self.original_file_path = original_file.file_path
+        self.original_file_extension = original_file.file_extension
+        self.original_file_size = original_file.file_size
+        self.original_file_mime_type = original_file.mime_type
+        self.ingest_capability = ingest_capability.to_dict()
+        self.ingest_metadata = dict(ingest_metadata or {})
+        self.mark_ingest_pending()
+        return old_file_id
+
+    def switch_to_link(
+        self,
+        *,
+        source_url: str,
+        ingest_capability: ClassroomMaterialIngestCapability,
+        ingest_metadata: dict[str, Any] | None = None,
+    ) -> UUID | None:
+        old_file_id = self.file_id
+        self.source_kind = ClassroomMaterialSourceKind.LINK
+        self.file_id = None
+        self.source_url = source_url
+        self.original_file_name = None
+        self.original_file_path = None
+        self.original_file_extension = None
+        self.original_file_size = None
+        self.original_file_mime_type = None
+        self.ingest_capability = ingest_capability.to_dict()
+        self.ingest_metadata = dict(ingest_metadata or {})
         self.mark_ingest_pending()
         return old_file_id
 
@@ -144,3 +289,28 @@ class ClassroomMaterial(Entity):
             ClassroomMaterialScopeCandidate.from_dict(candidate)
             for candidate in self.scope_candidates
         ]
+
+    def get_original_file(self) -> ClassroomMaterialOriginalFile | None:
+        if (
+            self.original_file_name is None
+            or self.original_file_path is None
+            or self.original_file_extension is None
+            or self.original_file_size is None
+            or self.original_file_mime_type is None
+        ):
+            return None
+        return ClassroomMaterialOriginalFile(
+            file_name=self.original_file_name,
+            file_path=self.original_file_path,
+            file_extension=self.original_file_extension,
+            file_size=self.original_file_size,
+            mime_type=self.original_file_mime_type,
+        )
+
+    def get_ingest_capability(self) -> ClassroomMaterialIngestCapability:
+        return ClassroomMaterialIngestCapability.from_dict(
+            self.ingest_capability
+        )
+
+    def supports_ingest(self) -> bool:
+        return self.get_ingest_capability().supported

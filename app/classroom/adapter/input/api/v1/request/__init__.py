@@ -1,7 +1,8 @@
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import AnyHttpUrl, Field, model_validator
 
+from app.classroom.domain.entity import ClassroomMaterialSourceKind
 from core.common.request.base import BaseRequest
 
 
@@ -40,22 +41,51 @@ class UpdateClassroomRequest(BaseRequest):
 
 
 class CreateClassroomMaterialRequest(BaseRequest):
-    null_fields = {"description"}
+    null_fields = {"description", "source_url"}
 
     title: str = Field(..., min_length=1, max_length=200)
     week: int = Field(..., ge=1, le=16)
     description: str | None = Field(None, max_length=1000)
+    source_kind: ClassroomMaterialSourceKind = Field(
+        ClassroomMaterialSourceKind.FILE
+    )
+    source_url: AnyHttpUrl | None = Field(None)
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        if self.source_kind is ClassroomMaterialSourceKind.LINK:
+            if self.source_url is None:
+                raise ValueError("링크 자료에는 source_url이 필요합니다.")
+        elif self.source_url is not None:
+            raise ValueError(
+                "파일 자료에는 source_url을 함께 보낼 수 없습니다."
+            )
+        return self
 
 
 class UpdateClassroomMaterialRequest(BaseRequest):
-    null_fields = {"description"}
+    null_fields = {"description", "source_url"}
 
     title: str | None = Field(None, min_length=1, max_length=200)
     week: int | None = Field(None, ge=1, le=16)
     description: str | None = Field(None, max_length=1000)
+    source_kind: ClassroomMaterialSourceKind | None = Field(None)
+    source_url: AnyHttpUrl | None = Field(None)
 
     @model_validator(mode="after")
     def validate_non_empty_material_update(self):
         if not self.model_fields_set:
             raise ValueError("최소 하나 이상의 수정 필드가 필요합니다.")
+        if self.source_kind is ClassroomMaterialSourceKind.LINK:
+            if self.source_url is None:
+                raise ValueError("링크 자료에는 source_url이 필요합니다.")
+        if self.source_kind is ClassroomMaterialSourceKind.FILE:
+            if self.source_url is not None:
+                raise ValueError(
+                    "파일 자료에는 source_url을 함께 보낼 수 없습니다."
+                )
+        if self.source_kind is None and "source_url" in self.model_fields_set:
+            raise ValueError(
+                "source_url 수정 시 source_kind를 함께 지정해야 합니다."
+            )
         return self

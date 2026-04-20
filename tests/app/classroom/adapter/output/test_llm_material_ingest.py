@@ -1,6 +1,7 @@
 import json
 from io import BytesIO
 from uuid import UUID
+from zipfile import ZipFile
 
 import pytest
 
@@ -153,12 +154,15 @@ async def test_ingest_material_extracts_scope_candidates_and_upserts_chunks(
             title="1주차 자료",
             week=1,
             description="머신러닝 입문",
+            source_kind=module.ClassroomMaterialSourceKind.FILE,
             file_name="week1.pdf",
             mime_type="application/pdf",
             content=b"%PDF-1.4",
         )
     )
 
+    assert result.support_status == "supported"
+    assert len(result.extracted_chunks) == 2
     assert len(result.scope_candidates) == 1
     assert result.scope_candidates[0].label == "1주차 핵심 개념"
     assert result.scope_candidates[0].keywords == ["머신러닝", "지도학습"]
@@ -170,6 +174,10 @@ async def test_ingest_material_extracts_scope_candidates_and_upserts_chunks(
     assert points[0].payload["material_id"] == str(MATERIAL_ID)
     assert points[0].payload["classroom_id"] == str(CLASSROOM_ID)
     assert points[0].payload["file_name"] == "week1.pdf"
+    assert points[0].payload["source_type"] == "pdf"
+    assert points[0].payload["source_unit_type"] == "page"
+    assert points[0].payload["citation_label"] == "p.1"
+    assert points[0].payload["source_locator"] == {"page": 1}
 
     chat_calls = FakeAsyncOpenAI.last_instance.chat.completions.calls
     assert len(chat_calls) == 1
@@ -196,6 +204,7 @@ async def test_ingest_material_raises_when_openai_key_missing(monkeypatch):
                 title="1주차 자료",
                 week=1,
                 description=None,
+                source_kind=module.ClassroomMaterialSourceKind.FILE,
                 file_name="week1.pdf",
                 mime_type="application/pdf",
                 content=b"%PDF-1.4",
@@ -205,30 +214,6 @@ async def test_ingest_material_raises_when_openai_key_missing(monkeypatch):
     assert (
         exc_info.value.message
         == "강의 자료 적재 환경이 올바르게 설정되지 않았습니다."
-    )
-
-
-@pytest.mark.asyncio
-async def test_ingest_material_raises_for_non_pdf(monkeypatch):
-    monkeypatch.setattr(module.config, "OPENAI_API_KEY", "test-key")
-
-    adapter = LLMClassroomMaterialIngestAdapter()
-    with pytest.raises(ClassroomMaterialIngestDomainException) as exc_info:
-        await adapter.ingest_material(
-            request=ClassroomMaterialIngestRequest(
-                material_id=MATERIAL_ID,
-                classroom_id=CLASSROOM_ID,
-                title="1주차 자료",
-                week=1,
-                description=None,
-                file_name="week1.txt",
-                mime_type="text/plain",
-                content=b"plain-text",
-            )
-        )
-
-    assert (
-        exc_info.value.message == "PDF 형식의 강의 자료만 적재할 수 있습니다."
     )
 
 
@@ -256,6 +241,28 @@ class InvalidJsonAsyncOpenAI(FakeAsyncOpenAI):
         )()
 
 
+class EmptyCandidatesChatCompletionsAPI:
+    async def create(self, **kwargs):
+        _ = kwargs
+        message = type(
+            "Message",
+            (),
+            {"content": json.dumps({"candidates": []})},
+        )()
+        choice = type("Choice", (), {"message": message})()
+        return type("Completion", (), {"choices": [choice]})()
+
+
+class EmptyCandidatesAsyncOpenAI(FakeAsyncOpenAI):
+    def __init__(self, *, api_key: str):
+        super().__init__(api_key=api_key)
+        self.chat = type(
+            "ChatAPI",
+            (),
+            {"completions": EmptyCandidatesChatCompletionsAPI()},
+        )()
+
+
 @pytest.mark.asyncio
 async def test_ingest_material_raises_when_pdf_has_no_extractable_text(
     monkeypatch,
@@ -272,6 +279,7 @@ async def test_ingest_material_raises_when_pdf_has_no_extractable_text(
                 title="1주차 자료",
                 week=1,
                 description=None,
+                source_kind=module.ClassroomMaterialSourceKind.FILE,
                 file_name="week1.pdf",
                 mime_type="application/pdf",
                 content=b"%PDF-1.4",
@@ -313,6 +321,7 @@ async def test_ingest_material_raises_when_scope_candidates_response_invalid(
                 title="1주차 자료",
                 week=1,
                 description="머신러닝 입문",
+                source_kind=module.ClassroomMaterialSourceKind.FILE,
                 file_name="week1.pdf",
                 mime_type="application/pdf",
                 content=b"%PDF-1.4",
@@ -356,6 +365,7 @@ async def test_ingest_material_preserves_original_pdf_page_numbers(
             title="1주차 자료",
             week=1,
             description="머신러닝 입문",
+            source_kind=module.ClassroomMaterialSourceKind.FILE,
             file_name="week1.pdf",
             mime_type="application/pdf",
             content=b"%PDF-1.4",
@@ -363,4 +373,260 @@ async def test_ingest_material_preserves_original_pdf_page_numbers(
     )
 
     points = fake_qdrant.upserts[0]["points"]
-    assert [point.payload["page"] for point in points] == [1, 3]
+    assert [point.payload["source_locator"]["page"] for point in points] == [1, 3]
+
+
+@pytest.mark.asyncio
+async def test_ingest_material_accepts_youtube_link_as_partial_supported(
+    monkeypatch,
+):
+    fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
+
+    def build_qdrant_client(*, url: str):
+        return fake_qdrant
+
+    monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
+    monkeypatch.setattr(module, "AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr(module.config, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(module.config, "OPENAI_EMBEDDING_MODEL", "embed-model")
+    monkeypatch.setattr(
+        module.config, "OPENAI_EXAM_GENERATION_MODEL", "chat-model"
+    )
+    monkeypatch.setattr(
+        module.config, "QDRANT_COLLECTION_NAME", "lecture_materials"
+    )
+    monkeypatch.setattr(module.config, "QDRANT_URL", "http://localhost:6333")
+
+    adapter = LLMClassroomMaterialIngestAdapter()
+    result = await adapter.ingest_material(
+        request=ClassroomMaterialIngestRequest(
+            material_id=MATERIAL_ID,
+            classroom_id=CLASSROOM_ID,
+            title="유튜브 자료",
+            week=2,
+            description="강의 링크",
+            source_kind=module.ClassroomMaterialSourceKind.LINK,
+            file_name="youtube-link.txt",
+            mime_type="text/plain",
+            content=b"https://youtu.be/demo",
+            source_url="https://www.youtube.com/watch?v=demo",
+        )
+    )
+
+    assert result.support_status == "partial_supported"
+    assert result.extracted_chunks[0].source_type == "youtube"
+    assert result.extracted_chunks[0].source_unit_type == "transcript_segment"
+    assert result.extracted_chunks[0].source_locator == {
+        "url": "https://www.youtube.com/watch?v=demo",
+        "has_transcript": False,
+    }
+    point = fake_qdrant.upserts[0]["points"][0]
+    assert point.payload["support_status"] == "partial_supported"
+    assert point.payload["source_type"] == "youtube"
+
+
+@pytest.mark.asyncio
+async def test_ingest_material_accepts_youtube_link_without_scope_candidates(
+    monkeypatch,
+):
+    fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
+
+    def build_qdrant_client(*, url: str):
+        return fake_qdrant
+
+    monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
+    monkeypatch.setattr(module, "AsyncOpenAI", EmptyCandidatesAsyncOpenAI)
+    monkeypatch.setattr(module.config, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(module.config, "OPENAI_EMBEDDING_MODEL", "embed-model")
+    monkeypatch.setattr(
+        module.config, "OPENAI_EXAM_GENERATION_MODEL", "chat-model"
+    )
+    monkeypatch.setattr(
+        module.config, "QDRANT_COLLECTION_NAME", "lecture_materials"
+    )
+    monkeypatch.setattr(module.config, "QDRANT_URL", "http://localhost:6333")
+
+    adapter = LLMClassroomMaterialIngestAdapter()
+    result = await adapter.ingest_material(
+        request=ClassroomMaterialIngestRequest(
+            material_id=MATERIAL_ID,
+            classroom_id=CLASSROOM_ID,
+            title="유튜브 자료",
+            week=2,
+            description="강의 링크",
+            source_kind=module.ClassroomMaterialSourceKind.LINK,
+            file_name="youtube-link.txt",
+            mime_type="text/plain",
+            content=b"https://youtu.be/demo",
+            source_url="https://www.youtube.com/watch?v=demo",
+        )
+    )
+
+    assert result.support_status == "partial_supported"
+    assert result.scope_candidates == []
+    assert len(result.extracted_chunks) == 1
+    assert result.extracted_chunks[0].source_type == "youtube"
+    assert result.extracted_chunks[0].source_locator == {
+        "url": "https://www.youtube.com/watch?v=demo",
+        "has_transcript": False,
+    }
+    assert fake_qdrant.upserts[0]["points"][0].payload["support_status"] == (
+        "partial_supported"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ingest_material_treats_plain_text_file_with_youtube_text_as_text(
+    monkeypatch,
+):
+    fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
+
+    def build_qdrant_client(*, url: str):
+        return fake_qdrant
+
+    monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
+    monkeypatch.setattr(module, "AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr(module.config, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(module.config, "OPENAI_EMBEDDING_MODEL", "embed-model")
+    monkeypatch.setattr(
+        module.config, "OPENAI_EXAM_GENERATION_MODEL", "chat-model"
+    )
+    monkeypatch.setattr(
+        module.config, "QDRANT_COLLECTION_NAME", "lecture_materials"
+    )
+    monkeypatch.setattr(module.config, "QDRANT_URL", "http://localhost:6333")
+
+    adapter = LLMClassroomMaterialIngestAdapter()
+    result = await adapter.ingest_material(
+        request=ClassroomMaterialIngestRequest(
+            material_id=MATERIAL_ID,
+            classroom_id=CLASSROOM_ID,
+            title="텍스트 자료",
+            week=2,
+            description="강의 메모",
+            source_kind=module.ClassroomMaterialSourceKind.FILE,
+            file_name="notes.txt",
+            mime_type="text/plain",
+            content=(
+                b"Watch https://youtu.be/demo and summarize the key ideas."
+            ),
+        )
+    )
+
+    assert result.support_status == "supported"
+    assert result.extracted_chunks[0].source_type == "text"
+    assert result.extracted_chunks[0].citation_label == "notes.txt"
+
+
+@pytest.mark.asyncio
+async def test_ingest_material_extracts_text_files_from_zip(monkeypatch):
+    fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
+
+    def build_qdrant_client(*, url: str):
+        return fake_qdrant
+
+    monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
+    monkeypatch.setattr(module, "AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr(module.config, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(module.config, "OPENAI_EMBEDDING_MODEL", "embed-model")
+    monkeypatch.setattr(
+        module.config, "OPENAI_EXAM_GENERATION_MODEL", "chat-model"
+    )
+    monkeypatch.setattr(
+        module.config, "QDRANT_COLLECTION_NAME", "lecture_materials"
+    )
+    monkeypatch.setattr(module.config, "QDRANT_URL", "http://localhost:6333")
+
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("week1/summary.txt", "선형회귀 핵심 개념")
+        archive.writestr("week1/ignore.bin", b"\x00\x01")
+
+    adapter = LLMClassroomMaterialIngestAdapter()
+    result = await adapter.ingest_material(
+        request=ClassroomMaterialIngestRequest(
+            material_id=MATERIAL_ID,
+            classroom_id=CLASSROOM_ID,
+            title="압축 자료",
+            week=3,
+            description="zip 묶음",
+            source_kind=module.ClassroomMaterialSourceKind.FILE,
+            file_name="week3.zip",
+            mime_type="application/zip",
+            content=buffer.getvalue(),
+        )
+    )
+
+    assert result.support_status == "partial_supported"
+    assert len(result.extracted_chunks) == 1
+    assert result.extracted_chunks[0].source_type == "zip_text"
+    assert result.extracted_chunks[0].citation_label == "week1/summary.txt"
+    point = fake_qdrant.upserts[0]["points"][0]
+    assert point.payload["source_locator"] == {"archive_path": "week1/summary.txt"}
+
+
+@pytest.mark.asyncio
+async def test_ingest_material_creates_placeholder_for_office_document(
+    monkeypatch,
+):
+    fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
+
+    def build_qdrant_client(*, url: str):
+        return fake_qdrant
+
+    monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
+    monkeypatch.setattr(module, "AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr(module.config, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(module.config, "OPENAI_EMBEDDING_MODEL", "embed-model")
+    monkeypatch.setattr(
+        module.config, "OPENAI_EXAM_GENERATION_MODEL", "chat-model"
+    )
+    monkeypatch.setattr(
+        module.config, "QDRANT_COLLECTION_NAME", "lecture_materials"
+    )
+    monkeypatch.setattr(module.config, "QDRANT_URL", "http://localhost:6333")
+
+    adapter = LLMClassroomMaterialIngestAdapter()
+    result = await adapter.ingest_material(
+        request=ClassroomMaterialIngestRequest(
+            material_id=MATERIAL_ID,
+            classroom_id=CLASSROOM_ID,
+            title="문서 자료",
+            week=4,
+            description="docx 업로드",
+            source_kind=module.ClassroomMaterialSourceKind.FILE,
+            file_name="week4.docx",
+            mime_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+            content=b"docx-binary",
+        )
+    )
+
+    assert result.support_status == "partial_supported"
+    assert result.extracted_chunks[0].source_type == "office_document"
+    assert result.extracted_chunks[0].source_locator["extraction"] == "placeholder"
+
+
+@pytest.mark.asyncio
+async def test_ingest_material_raises_for_unsupported_type(monkeypatch):
+    monkeypatch.setattr(module.config, "OPENAI_API_KEY", "test-key")
+
+    adapter = LLMClassroomMaterialIngestAdapter()
+    with pytest.raises(ClassroomMaterialIngestDomainException) as exc_info:
+        await adapter.ingest_material(
+            request=ClassroomMaterialIngestRequest(
+                material_id=MATERIAL_ID,
+                classroom_id=CLASSROOM_ID,
+                title="기타 자료",
+                week=1,
+                description=None,
+                source_kind=module.ClassroomMaterialSourceKind.FILE,
+                file_name="week1.bin",
+                mime_type="application/octet-stream",
+                content=b"binary",
+            )
+        )
+
+    assert exc_info.value.message == "현재 지원하지 않는 강의 자료 형식입니다."
