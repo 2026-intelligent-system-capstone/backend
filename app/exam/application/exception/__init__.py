@@ -1,25 +1,31 @@
 from app.exam.application.exception.exam import (
     ExamNotFoundException,
+    ExamQuestionGenerationAlreadyInProgressException,
     ExamQuestionGenerationContextUnavailableException,
     ExamQuestionGenerationFailedException,
     ExamQuestionGenerationMaterialIngestFailedException,
     ExamQuestionGenerationMaterialNotFoundException,
     ExamQuestionGenerationMaterialNotReadyException,
     ExamQuestionGenerationUnavailableException,
+    ExamQuestionInvalidPayloadException,
     ExamQuestionNotFoundException,
     ExamSessionAlreadyInProgressException,
     ExamSessionMaxAttemptsExceededException,
+    ExamSessionUnavailableException,
 )
 
 __all__ = [
     "ExamNotFoundException",
+    "ExamQuestionGenerationAlreadyInProgressException",
     "ExamQuestionGenerationContextUnavailableException",
     "ExamQuestionGenerationFailedException",
     "ExamQuestionGenerationMaterialIngestFailedException",
     "ExamQuestionGenerationMaterialNotFoundException",
     "ExamQuestionGenerationMaterialNotReadyException",
     "ExamQuestionGenerationUnavailableException",
+    "ExamQuestionInvalidPayloadException",
     "ExamQuestionNotFoundException",
     "ExamSessionAlreadyInProgressException",
     "ExamSessionMaxAttemptsExceededException",
+    "ExamSessionUnavailableException",
 ]

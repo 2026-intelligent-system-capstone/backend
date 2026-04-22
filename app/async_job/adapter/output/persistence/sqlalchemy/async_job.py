@@ -9,6 +9,8 @@ from core.db.session import session
 from core.db.sqlalchemy.models.async_job import async_job_table
 from sqlalchemy import select, text
 
+ADVISORY_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext(:lock_key))"
+
 
 class AsyncJobSQLAlchemyRepository(AsyncJobRepository):
     @asynccontextmanager
@@ -18,7 +20,7 @@ class AsyncJobSQLAlchemyRepository(AsyncJobRepository):
         dedupe_key: str,
     ) -> AsyncIterator[None]:
         await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(CAST(:lock_key AS text)))"),
+            text(ADVISORY_LOCK_SQL),
             {
                 "lock_key": f"async-job-dedupe:{dedupe_key}",
             },
@@ -43,7 +45,12 @@ class AsyncJobSQLAlchemyRepository(AsyncJobRepository):
         *,
         target_id: UUID,
     ) -> AsyncJob | None:
-        query = select(AsyncJob).where(async_job_table.c.target_id == target_id).order_by(async_job_table.c.created_at.desc()).limit(1)
+        query = (
+            select(AsyncJob)
+            .where(async_job_table.c.target_id == target_id)
+            .order_by(async_job_table.c.created_at.desc())
+            .limit(1)
+        )
         result = await session.execute(query)
         return result.scalar_one_or_none()
 
@@ -52,7 +59,11 @@ class AsyncJobSQLAlchemyRepository(AsyncJobRepository):
         *,
         target_id: UUID,
     ) -> Sequence[AsyncJob]:
-        query = select(AsyncJob).where(async_job_table.c.target_id == target_id).order_by(async_job_table.c.created_at.desc())
+        query = (
+            select(AsyncJob)
+            .where(async_job_table.c.target_id == target_id)
+            .order_by(async_job_table.c.created_at.desc())
+        )
         result = await session.execute(query)
         return list(result.scalars().all())
 
@@ -65,7 +76,10 @@ class AsyncJobSQLAlchemyRepository(AsyncJobRepository):
             select(AsyncJob)
             .where(
                 async_job_table.c.dedupe_key == dedupe_key,
-                async_job_table.c.status.in_((AsyncJobStatus.QUEUED.value, AsyncJobStatus.RUNNING.value)),
+                async_job_table.c.status.in_((
+                    AsyncJobStatus.QUEUED.value,
+                    AsyncJobStatus.RUNNING.value,
+                )),
             )
             .order_by(async_job_table.c.created_at.desc())
             .limit(1)

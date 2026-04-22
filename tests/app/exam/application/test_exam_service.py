@@ -1,9 +1,14 @@
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
 
+from app.async_job.domain.entity import (
+    AsyncJob,
+    AsyncJobTargetType,
+    AsyncJobType,
+)
 from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
 from app.classroom.domain.entity import (
@@ -13,15 +18,14 @@ from app.classroom.domain.entity import (
 from app.classroom.domain.usecase import ClassroomUseCase
 from app.exam.application.exception import (
     ExamNotFoundException,
-    ExamQuestionGenerationContextUnavailableException,
-    ExamQuestionGenerationFailedException,
+    ExamQuestionGenerationAlreadyInProgressException,
     ExamQuestionGenerationMaterialIngestFailedException,
     ExamQuestionGenerationMaterialNotFoundException,
     ExamQuestionGenerationMaterialNotReadyException,
     ExamQuestionGenerationUnavailableException,
+    ExamQuestionInvalidPayloadException,
     ExamQuestionNotFoundException,
-    ExamSessionAlreadyInProgressException,
-    ExamSessionMaxAttemptsExceededException,
+    ExamSessionUnavailableException,
 )
 from app.exam.application.service import ExamService
 from app.exam.domain.command import (
@@ -29,6 +33,7 @@ from app.exam.domain.command import (
     CreateExamQuestionCommand,
     ExamCriterionCommand,
     ExamQuestionBloomCountCommand,
+    ExamQuestionTypeCountCommand,
     GenerateExamQuestionsCommand,
     UpdateExamQuestionCommand,
 )
@@ -37,7 +42,9 @@ from app.exam.domain.entity import (
     Exam,
     ExamCriterion,
     ExamDifficulty,
+    ExamGenerationStatus,
     ExamQuestionStatus,
+    ExamQuestionType,
     ExamResult,
     ExamResultStatus,
     ExamSession,
@@ -54,11 +61,7 @@ from app.exam.domain.repository import (
     ExamSessionRepository,
     ExamTurnRepository,
 )
-from app.exam.domain.service import (
-    ExamQuestionGenerationPort,
-    GeneratedExamQuestionDraft,
-    RealtimeSessionPort,
-)
+from app.exam.domain.service import RealtimeSessionPort
 from app.user.domain.entity import UserRole
 
 ORG_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -67,8 +70,9 @@ EXAM_ID = UUID("33333333-3333-3333-3333-333333333333")
 PROFESSOR_ID = UUID("44444444-4444-4444-4444-444444444444")
 STUDENT_ID = UUID("55555555-5555-5555-5555-555555555555")
 SESSION_ID = UUID("66666666-6666-6666-6666-666666666666")
-STARTS_AT = datetime(2026, 4, 1, 9, 0, tzinfo=UTC)
-ENDS_AT = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+NOW = datetime.now(UTC)
+STARTS_AT = NOW - timedelta(hours=1)
+ENDS_AT = NOW + timedelta(hours=1)
 WEEK = 1
 
 
@@ -155,6 +159,17 @@ class InMemoryExamResultRepository(ExamResultRepository):
             if result.exam_id == exam_id and result.student_id == student_id
         ]
 
+    async def list_by_exam_and_student_for_update(
+        self,
+        *,
+        exam_id: UUID,
+        student_id: UUID,
+    ) -> Sequence[ExamResult]:
+        return await self.list_by_exam_and_student(
+            exam_id=exam_id,
+            student_id=student_id,
+        )
+
 
 class InMemoryExamTurnRepository(ExamTurnRepository):
     def __init__(self):
@@ -196,17 +211,39 @@ class FakeRealtimeSessionPort(RealtimeSessionPort):
         )
 
 
-class FakeExamQuestionGenerationPort(ExamQuestionGenerationPort):
-    def __init__(
-        self,
-        drafts: Sequence[GeneratedExamQuestionDraft] | None = None,
-    ):
-        self.drafts = list(drafts or [])
-        self.requests = []
+class FakeAsyncJobService:
+    def __init__(self):
+        self.jobs: list[AsyncJob] = []
+        self.enqueue_calls: list[dict[str, object]] = []
 
-    async def generate_questions(self, *, request):
-        self.requests.append(request)
-        return list(self.drafts)
+    async def enqueue(
+        self,
+        *,
+        job_type: AsyncJobType,
+        target_type: AsyncJobTargetType,
+        target_id: UUID,
+        requested_by: UUID,
+        payload: dict[str, object],
+        dedupe_key: str | None = None,
+    ) -> AsyncJob:
+        self.enqueue_calls.append({
+            "job_type": job_type,
+            "target_type": target_type,
+            "target_id": target_id,
+            "requested_by": requested_by,
+            "payload": payload,
+            "dedupe_key": dedupe_key,
+        })
+        job = AsyncJob.enqueue(
+            job_type=job_type,
+            target_type=target_type,
+            target_id=target_id,
+            requested_by=requested_by,
+            payload=payload,
+            dedupe_key=dedupe_key,
+        )
+        self.jobs.append(job)
+        return job
 
 
 class FakeClassroomUseCase(ClassroomUseCase):
@@ -246,7 +283,8 @@ class FakeClassroomUseCase(ClassroomUseCase):
     async def list_classrooms(
         self, *, current_user: CurrentUser
     ) -> list[Classroom]:
-        raise NotImplementedError
+        _ = current_user
+        return [self.classroom]
 
     async def update_classroom(
         self,
@@ -401,16 +439,37 @@ def make_exam(
 def make_question_command() -> CreateExamQuestionCommand:
     return CreateExamQuestionCommand(
         question_number=1,
+        max_score=1.0,
+        question_type=ExamQuestionType.SUBJECTIVE,
         bloom_level=BloomLevel.APPLY,
         difficulty=ExamDifficulty.MEDIUM,
         question_text="회귀와 분류의 차이를 설명하세요.",
-        scope_text="1주차 머신러닝 기초",
-        evaluation_objective="학습자가 지도학습의 핵심 구분을 이해하는지 평가",
-        answer_key="지도학습 목적과 출력 형태 차이를 포함해야 한다.",
-        scoring_criteria="핵심 개념과 예시를 함께 설명하면 정답",
-        source_material_ids=[
-            UUID("99999999-9999-9999-9999-999999999999")
-        ],
+        intent_text=(
+            "1주차 머신러닝 기초 범위에서 지도학습의 핵심 구분을 "
+            "설명하도록 유도"
+        ),
+        rubric_text=(
+            "출력 형태와 학습 목표 차이를 포함하고, 핵심 개념과 예시를 "
+            "함께 설명하면 정답"
+        ),
+        correct_answer_text="회귀와 분류",
+        source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
+    )
+
+
+def make_multiple_choice_question_command() -> CreateExamQuestionCommand:
+    return CreateExamQuestionCommand(
+        question_number=1,
+        max_score=1.0,
+        question_type=ExamQuestionType.MULTIPLE_CHOICE,
+        bloom_level=BloomLevel.APPLY,
+        difficulty=ExamDifficulty.MEDIUM,
+        question_text="지도학습 예시를 고르세요.",
+        intent_text="객관식에서 개념 분류 능력을 평가합니다.",
+        rubric_text="정확한 개념 선택 여부를 평가합니다.",
+        answer_options=["회귀", "분류", "강화학습"],
+        correct_answer_text="회귀",
+        source_material_ids=[],
     )
 
 
@@ -453,13 +512,14 @@ def build_service(
     *,
     exams: list[Exam] | None = None,
     materials: list | None = None,
-    question_generation_port: FakeExamQuestionGenerationPort | None = None,
+    async_job_service: FakeAsyncJobService | None = None,
+    question_generation_port: object | None = object(),
 ):
     session_repository = InMemoryExamSessionRepository()
     result_repository = InMemoryExamResultRepository()
     turn_repository = InMemoryExamTurnRepository()
     realtime_port = FakeRealtimeSessionPort()
-    generation_port = question_generation_port
+    fake_async_job_service = async_job_service
     service = ExamService(
         repository=InMemoryExamRepository(exams),
         classroom_usecase=FakeClassroomUseCase(
@@ -470,7 +530,8 @@ def build_service(
         result_repository=result_repository,
         turn_repository=turn_repository,
         realtime_session_port=realtime_port,
-        question_generation_port=generation_port,
+        question_generation_port=question_generation_port,
+        async_job_service=fake_async_job_service,
     )
     return (
         service,
@@ -478,7 +539,7 @@ def build_service(
         result_repository,
         turn_repository,
         realtime_port,
-        generation_port,
+        fake_async_job_service,
     )
 
 
@@ -640,6 +701,99 @@ def test_create_exam_command_requires_positive_week():
         )
 
 
+def test_create_exam_question_command_requires_mc_options():
+    with pytest.raises(ValueError, match="answer_options"):
+        CreateExamQuestionCommand(
+            question_number=1,
+            max_score=1.0,
+            question_type=ExamQuestionType.MULTIPLE_CHOICE,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="지도학습 예시를 고르세요.",
+            intent_text="객관식에서 개념 분류 능력을 평가합니다.",
+            rubric_text="정확한 개념 선택 여부를 평가합니다.",
+            answer_options=[],
+            correct_answer_text="회귀",
+            source_material_ids=[],
+        )
+
+
+def test_create_exam_question_command_requires_mc_answer():
+    with pytest.raises(ValueError, match="correct_answer_text"):
+        CreateExamQuestionCommand(
+            question_number=1,
+            max_score=1.0,
+            question_type=ExamQuestionType.MULTIPLE_CHOICE,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="지도학습 예시를 고르세요.",
+            intent_text="객관식에서 개념 분류 능력을 평가합니다.",
+            rubric_text="정확한 개념 선택 여부를 평가합니다.",
+            answer_options=["회귀", "분류"],
+            correct_answer_text=None,
+            source_material_ids=[],
+        )
+
+
+def test_create_exam_question_command_requires_two_mc_options():
+    with pytest.raises(ValueError, match="at least two"):
+        CreateExamQuestionCommand(
+            question_number=1,
+            max_score=1.0,
+            question_type=ExamQuestionType.MULTIPLE_CHOICE,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="지도학습 예시를 고르세요.",
+            intent_text="객관식에서 개념 분류 능력을 평가합니다.",
+            rubric_text="정확한 개념 선택 여부를 평가합니다.",
+            answer_options=["회귀"],
+            correct_answer_text="회귀",
+            source_material_ids=[],
+        )
+
+
+def test_create_exam_question_command_requires_correct_answer_for_subjective():
+    with pytest.raises(ValueError, match="correct_answer_text"):
+        CreateExamQuestionCommand(
+            question_number=1,
+            max_score=1.0,
+            question_type=ExamQuestionType.SUBJECTIVE,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="회귀와 분류의 차이를 설명하세요.",
+            intent_text="주관식에서 핵심 개념 구분 능력을 평가합니다.",
+            rubric_text="핵심 개념과 예시를 설명하면 정답",
+            correct_answer_text=None,
+            source_material_ids=[],
+        )
+
+
+def test_update_exam_question_command_requires_options_when_switching_to_mc():
+    with pytest.raises(ValueError, match="answer_options"):
+        UpdateExamQuestionCommand(
+            question_type=ExamQuestionType.MULTIPLE_CHOICE,
+            correct_answer_text="회귀",
+        )
+
+
+def test_update_exam_question_command_requires_answer_when_switching_to_mc():
+    with pytest.raises(ValueError, match="correct_answer_text"):
+        UpdateExamQuestionCommand(
+            question_type=ExamQuestionType.MULTIPLE_CHOICE,
+            answer_options=["회귀", "분류"],
+        )
+
+
+def test_update_exam_question_command_requires_rubric_when_switching_to_oral():
+    with pytest.raises(ValueError, match="rubric_text"):
+        UpdateExamQuestionCommand(question_type=ExamQuestionType.ORAL)
+
+
+def test_update_exam_question_command_requires_answer_for_subjective():
+    with pytest.raises(ValueError, match="correct_answer_text"):
+        UpdateExamQuestionCommand(question_type=ExamQuestionType.SUBJECTIVE)
+
+
 @pytest.mark.asyncio
 async def test_create_exam_student_forbidden():
     service, _, _, _, _, _ = build_service()
@@ -737,6 +891,232 @@ async def test_get_exam_returns_operational_fields_and_criteria():
 
 
 @pytest.mark.asyncio
+async def test_list_student_exams_marks_closed_exam_as_completed():
+    closed_exam = make_exam()
+    closed_exam.status = ExamStatus.CLOSED
+    service, _, _, _, _, _ = build_service(exams=[closed_exam])
+
+    exams = await service.list_student_exams(
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        )
+    )
+
+    assert len(exams) == 1
+    assert exams[0].exam.id == EXAM_ID
+    assert exams[0].is_completed is True
+    assert exams[0].can_enter is False
+    assert exams[0].latest_result is None
+
+
+@pytest.mark.asyncio
+async def test_list_student_exams_marks_submitted_student_completed():
+    exam = make_exam()
+    session = ExamSession.start(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        started_at=STARTS_AT,
+        attempt_number=1,
+        expires_at=ENDS_AT,
+    )
+    session.complete(ENDS_AT)
+    result = session.create_pending_result()
+    result.finalize(
+        overall_score=91.0,
+        summary="핵심 개념과 적용 예시를 모두 설명했습니다.",
+        submitted_at=ENDS_AT,
+    )
+    service, session_repository, result_repository, _, _, _ = build_service(
+        exams=[exam]
+    )
+    await session_repository.save(session)
+    await result_repository.save(result)
+
+    exams = await service.list_student_exams(
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        )
+    )
+
+    assert len(exams) == 1
+    assert exams[0].exam.id == EXAM_ID
+    assert exams[0].is_completed is True
+    assert exams[0].can_enter is False
+    assert exams[0].latest_result.id == result.id
+
+
+@pytest.mark.asyncio
+async def test_list_student_exams_returns_latest_completed_result():
+    exam = make_exam(max_attempts=2)
+    first_session = ExamSession.start(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        started_at=STARTS_AT,
+        attempt_number=1,
+        expires_at=ENDS_AT,
+    )
+    first_session.complete(STARTS_AT + timedelta(minutes=10))
+    completed_result = first_session.create_pending_result()
+    completed_result.finalize(
+        overall_score=88.0,
+        summary="첫 번째 응시 완료",
+        submitted_at=STARTS_AT + timedelta(minutes=10),
+    )
+    second_session = ExamSession.start(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        started_at=STARTS_AT + timedelta(minutes=20),
+        attempt_number=2,
+        expires_at=ENDS_AT,
+    )
+    pending_result = second_session.create_pending_result()
+    service, session_repository, result_repository, _, _, _ = build_service(
+        exams=[exam]
+    )
+    await session_repository.save(first_session)
+    await session_repository.save(second_session)
+    await result_repository.save(completed_result)
+    await result_repository.save(pending_result)
+
+    exams = await service.list_student_exams(
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        )
+    )
+
+    assert len(exams) == 1
+    assert exams[0].is_completed is True
+    assert exams[0].can_enter is False
+    assert exams[0].latest_result.id == completed_result.id
+
+
+@pytest.mark.asyncio
+async def test_get_student_exam_returns_result_only_gate_for_completed_exam():
+    closed_exam = make_exam()
+    closed_exam.status = ExamStatus.CLOSED
+    service, _, _, _, _, _ = build_service(exams=[closed_exam])
+
+    student_exam = await service.get_student_exam(
+        exam_id=EXAM_ID,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+    )
+
+    assert student_exam.exam.id == EXAM_ID
+    assert student_exam.is_completed is True
+    assert student_exam.can_enter is False
+
+
+@pytest.mark.asyncio
+async def test_list_student_exams_marks_upcoming_exam_as_not_enterable():
+    upcoming_exam = make_exam()
+    upcoming_exam.starts_at = datetime.now(UTC) + timedelta(hours=1)
+    upcoming_exam.ends_at = datetime.now(UTC) + timedelta(hours=2)
+    service, _, _, _, _, _ = build_service(exams=[upcoming_exam])
+
+    exams = await service.list_student_exams(
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        )
+    )
+
+    assert len(exams) == 1
+    assert exams[0].is_completed is False
+    assert exams[0].can_enter is False
+    assert exams[0].latest_result is None
+
+
+@pytest.mark.asyncio
+async def test_get_student_exam_returns_latest_completed_result():
+    exam = make_exam(max_attempts=2)
+    first_session = ExamSession.start(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        started_at=STARTS_AT,
+        attempt_number=1,
+        expires_at=ENDS_AT,
+    )
+    first_session.complete(STARTS_AT + timedelta(minutes=10))
+    completed_result = first_session.create_pending_result()
+    completed_result.finalize(
+        overall_score=88.0,
+        summary="첫 번째 응시 완료",
+        submitted_at=STARTS_AT + timedelta(minutes=10),
+    )
+    second_session = ExamSession.start(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        started_at=STARTS_AT + timedelta(minutes=20),
+        attempt_number=2,
+        expires_at=ENDS_AT,
+    )
+    pending_result = second_session.create_pending_result()
+    service, session_repository, result_repository, _, _, _ = build_service(
+        exams=[exam]
+    )
+    await session_repository.save(first_session)
+    await session_repository.save(second_session)
+    await result_repository.save(completed_result)
+    await result_repository.save(pending_result)
+
+    student_exam = await service.get_student_exam(
+        exam_id=EXAM_ID,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+    )
+
+    assert student_exam.is_completed is True
+    assert student_exam.can_enter is False
+    assert student_exam.latest_result.id == completed_result.id
+
+
+@pytest.mark.asyncio
+async def test_get_student_exam_marks_upcoming_exam_as_not_enterable():
+    upcoming_exam = make_exam()
+    upcoming_exam.starts_at = datetime.now(UTC) + timedelta(hours=1)
+    upcoming_exam.ends_at = datetime.now(UTC) + timedelta(hours=2)
+    service, _, _, _, _, _ = build_service(exams=[upcoming_exam])
+
+    student_exam = await service.get_student_exam(
+        exam_id=EXAM_ID,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+    )
+
+    assert student_exam.is_completed is False
+    assert student_exam.can_enter is False
+    assert student_exam.latest_result is None
+
+
+@pytest.mark.asyncio
+async def test_get_student_exam_raises_for_other_classroom():
+    service, _, _, _, _, _ = build_service(
+        exams=[
+            make_exam(classroom_id=UUID("77777777-7777-7777-7777-777777777777"))
+        ]
+    )
+
+    with pytest.raises(ExamNotFoundException):
+        await service.get_student_exam(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_create_exam_question_success():
     service, _, _, _, _, _ = build_service(exams=[make_exam()])
 
@@ -752,6 +1132,8 @@ async def test_create_exam_question_success():
 
     assert question.exam_id == EXAM_ID
     assert question.question_number == 1
+    assert question.max_score == 1.0
+    assert question.question_type is ExamQuestionType.SUBJECTIVE
     assert question.bloom_level is BloomLevel.APPLY
     assert question.difficulty is ExamDifficulty.MEDIUM
     assert question.status is ExamQuestionStatus.GENERATED
@@ -773,13 +1155,136 @@ async def test_update_exam_question_marks_reviewed():
         ),
         command=UpdateExamQuestionCommand(
             question_text="수정된 질문",
-            scope_text="수정 범위",
+            intent_text="수정된 범위와 평가 의도",
+            max_score=2.5,
         ),
     )
 
     assert question.question_text == "수정된 질문"
-    assert question.scope_text == "수정 범위"
+    assert question.intent_text == "수정된 범위와 평가 의도"
+    assert question.max_score == 2.5
+    assert question.question_type is ExamQuestionType.SUBJECTIVE
     assert question.status is ExamQuestionStatus.REVIEWED
+
+
+@pytest.mark.asyncio
+async def test_update_exam_question_rejects_mc_without_required_answer_fields():
+    exam = make_exam()
+    created = exam.add_question(
+        **make_multiple_choice_question_command().model_dump()
+    )
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    with pytest.raises(ExamQuestionInvalidPayloadException):
+        await service.update_exam_question(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            question_id=created.id,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=UpdateExamQuestionCommand(answer_options=[]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_legacy_multiple_choice_question_allows_text_only_edit():
+    exam = make_exam()
+    created = exam.add_question(
+        question_number=1,
+        max_score=1.0,
+        question_type=ExamQuestionType.MULTIPLE_CHOICE,
+        bloom_level=BloomLevel.APPLY,
+        difficulty=ExamDifficulty.MEDIUM,
+        question_text="기존 객관식 문항",
+        intent_text="기존 의도",
+        rubric_text="기존 루브릭",
+        answer_options=[],
+        correct_answer_text="회귀",
+        source_material_ids=[],
+    )
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    question = await service.update_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        question_id=created.id,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateExamQuestionCommand(
+            question_text="수정된 기존 객관식 문항"
+        ),
+    )
+
+    assert question.question_text == "수정된 기존 객관식 문항"
+    assert question.question_type is ExamQuestionType.MULTIPLE_CHOICE
+    assert question.answer_options == []
+    assert question.correct_answer_text == "회귀"
+
+
+@pytest.mark.asyncio
+async def test_update_legacy_mc_rejects_answer_edit_without_full_contract():
+    exam = make_exam()
+    created = exam.add_question(
+        question_number=1,
+        max_score=1.0,
+        question_type=ExamQuestionType.MULTIPLE_CHOICE,
+        bloom_level=BloomLevel.APPLY,
+        difficulty=ExamDifficulty.MEDIUM,
+        question_text="기존 객관식 문항",
+        intent_text="기존 의도",
+        rubric_text="기존 루브릭",
+        answer_options=[],
+        correct_answer_text="회귀",
+        source_material_ids=[],
+    )
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    with pytest.raises(ExamQuestionInvalidPayloadException):
+        await service.update_exam_question(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            question_id=created.id,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=UpdateExamQuestionCommand(correct_answer_text="분류"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_mc_question_to_subjective_keeps_exact_answer():
+    exam = make_exam()
+    created = exam.add_question(
+        **make_multiple_choice_question_command().model_dump()
+    )
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    question = await service.update_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        question_id=created.id,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateExamQuestionCommand(
+            question_type=ExamQuestionType.SUBJECTIVE,
+            question_text="회귀의 정의를 한 문장으로 설명하세요.",
+            correct_answer_text="입력과 출력의 관계를 예측하는 지도학습 방식",
+        ),
+    )
+
+    assert question.question_type is ExamQuestionType.SUBJECTIVE
+    assert question.answer_options == []
+    assert (
+        question.correct_answer_text
+        == "입력과 출력의 관계를 예측하는 지도학습 방식"
+    )
 
 
 @pytest.mark.asyncio
@@ -882,6 +1387,39 @@ async def test_start_exam_session_returns_client_secret_and_session():
 
 
 @pytest.mark.asyncio
+async def test_start_exam_session_raises_unavailable_for_closed_exam():
+    closed_exam = make_exam()
+    closed_exam.status = ExamStatus.CLOSED
+    service, _, _, _, _, _ = build_service(exams=[closed_exam])
+
+    with pytest.raises(ExamSessionUnavailableException):
+        await service.start_exam_session(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_exam_session_raises_unavailable_before_exam_window_opens():
+    upcoming_exam = make_exam()
+    upcoming_exam.starts_at = datetime.now(UTC) + timedelta(hours=1)
+    upcoming_exam.ends_at = datetime.now(UTC) + timedelta(hours=2)
+    service, _, _, _, _, _ = build_service(exams=[upcoming_exam])
+
+    with pytest.raises(ExamSessionUnavailableException):
+        await service.start_exam_session(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_start_exam_session_professor_forbidden():
     service, _, _, _, _, _ = build_service(exams=[make_exam()])
 
@@ -896,30 +1434,16 @@ async def test_start_exam_session_professor_forbidden():
 
 
 @pytest.mark.asyncio
-async def test_generate_exam_questions_success():
+async def test_generate_exam_questions_enqueues_job_and_marks_exam_queued():
     material_id = UUID("99999999-9999-9999-9999-999999999999")
-    generation_port = FakeExamQuestionGenerationPort(
-        drafts=[
-            GeneratedExamQuestionDraft(
-                question_number=1,
-                bloom_level=BloomLevel.APPLY,
-                difficulty=ExamDifficulty.MEDIUM,
-                question_text="회귀와 분류의 차이를 설명하세요.",
-                scope_text="1주차 머신러닝 기초",
-                evaluation_objective="지도학습 핵심 구분 평가",
-                answer_key="출력 형태와 문제 목적 차이를 포함해야 한다.",
-                scoring_criteria="핵심 개념과 예시 포함",
-                source_material_ids=[material_id],
-            )
-        ]
-    )
+    async_job_service = FakeAsyncJobService()
     service, _, _, _, _, _ = build_service(
         exams=[make_exam()],
         materials=[make_material_result(material_id=material_id)],
-        question_generation_port=generation_port,
+        async_job_service=async_job_service,
     )
 
-    questions = await service.generate_exam_questions(
+    result = await service.generate_exam_questions(
         classroom_id=CLASSROOM_ID,
         exam_id=EXAM_ID,
         current_user=make_current_user(
@@ -937,51 +1461,62 @@ async def test_generate_exam_questions_success():
                     count=1,
                 )
             ],
+            question_type_counts=[
+                ExamQuestionTypeCountCommand(
+                    question_type=ExamQuestionType.ORAL,
+                    count=1,
+                )
+            ],
         ),
     )
 
-    assert len(questions) == 1
-    assert questions[0].question_number == 1
-    assert questions[0].status is ExamQuestionStatus.GENERATED
-    assert questions[0].source_material_ids == [material_id]
-    assert len(generation_port.requests) == 1
-    request = generation_port.requests[0]
-    assert request.scope_text == "1주차 머신러닝 기초"
-    assert request.total_questions == 1
-    assert request.max_follow_ups == 2
-    assert request.bloom_counts[0].bloom_level is BloomLevel.APPLY
-    assert request.bloom_counts[0].count == 1
-    assert request.source_materials[0].material_id == material_id
-    assert request.criteria[0].title == "개념 이해"
+    assert result.exam_id == EXAM_ID
+    assert result.generation_status is ExamGenerationStatus.QUEUED
+    assert result.generation_requested_at is not None
+    assert result.generation_error is None
+    assert result.job.job_type is AsyncJobType.EXAM_QUESTION_GENERATION
+    assert result.job.status.value == "queued"
+    assert len(async_job_service.enqueue_calls) == 1
+    enqueue_call = async_job_service.enqueue_calls[0]
+    assert enqueue_call["job_type"] is AsyncJobType.EXAM_QUESTION_GENERATION
+    assert enqueue_call["target_type"] is AsyncJobTargetType.EXAM
+    assert enqueue_call["target_id"] == EXAM_ID
+    assert enqueue_call["requested_by"] == PROFESSOR_ID
+    assert enqueue_call["dedupe_key"] == f"exam-question-generation:{EXAM_ID}"
+    payload = enqueue_call["payload"]
+    assert payload["exam_id"] == str(EXAM_ID)
+    assert payload["classroom_id"] == str(CLASSROOM_ID)
+    assert payload["request"]["scope_text"] == "1주차 머신러닝 기초"
+    assert payload["request"]["max_follow_ups"] == 2
+    assert payload["request"]["difficulty"] == "medium"
+    assert payload["request"]["source_material_ids"] == [str(material_id)]
+    assert payload["request"]["bloom_counts"] == [
+        {"bloom_level": "apply", "count": 1}
+    ]
+    assert payload["request"]["question_type_counts"] == [
+        {"question_type": "oral", "count": 1}
+    ]
+    assert "question_type_strategy" not in payload["request"]
+    assert "total_question_count" not in payload["request"]
+    saved_exam = service.repository.exams[EXAM_ID]
+    assert saved_exam.generation_status is ExamGenerationStatus.QUEUED
+    assert saved_exam.generation_job_id == result.job.job_id
+    assert saved_exam.generation_requested_at is not None
+    assert result.generation_requested_at == saved_exam.generation_requested_at
+    assert saved_exam.generation_completed_at is None
 
 
 @pytest.mark.asyncio
-async def test_generate_exam_questions_appends_after_existing_questions():
+async def test_generate_exam_questions_normalizes_strategy_counts():
     material_id = UUID("99999999-9999-9999-9999-999999999999")
-    exam = make_exam()
-    exam.add_question(**make_question_command().model_dump())
-    generation_port = FakeExamQuestionGenerationPort(
-        drafts=[
-            GeneratedExamQuestionDraft(
-                question_number=1,
-                bloom_level=BloomLevel.ANALYZE,
-                difficulty=ExamDifficulty.MEDIUM,
-                question_text="지도학습과 비지도학습의 차이를 비교해주세요.",
-                scope_text="1주차 머신러닝 기초",
-                evaluation_objective="학습 방식 차이 분석 능력 평가",
-                answer_key="정답 데이터 유무와 활용 사례 차이를 설명해야 한다.",
-                scoring_criteria="핵심 비교 기준을 2개 이상 제시하면 정답",
-                source_material_ids=[material_id],
-            )
-        ]
-    )
+    async_job_service = FakeAsyncJobService()
     service, _, _, _, _, _ = build_service(
-        exams=[exam],
+        exams=[make_exam()],
         materials=[make_material_result(material_id=material_id)],
-        question_generation_port=generation_port,
+        async_job_service=async_job_service,
     )
 
-    questions = await service.generate_exam_questions(
+    result = await service.generate_exam_questions(
         classroom_id=CLASSROOM_ID,
         exam_id=EXAM_ID,
         current_user=make_current_user(
@@ -990,27 +1525,96 @@ async def test_generate_exam_questions_appends_after_existing_questions():
         ),
         command=GenerateExamQuestionsCommand(
             scope_text="1주차 머신러닝 기초",
-            max_follow_ups=0,
+            max_follow_ups=2,
             difficulty=ExamDifficulty.MEDIUM,
             source_material_ids=[material_id],
+            total_question_count=4,
+            question_type_strategy="oral_focus",
             bloom_counts=[
                 ExamQuestionBloomCountCommand(
-                    bloom_level=BloomLevel.ANALYZE,
+                    bloom_level=BloomLevel.REMEMBER,
                     count=1,
-                )
+                ),
+                ExamQuestionBloomCountCommand(
+                    bloom_level=BloomLevel.APPLY,
+                    count=3,
+                ),
             ],
         ),
     )
 
-    assert questions[0].question_number == 2
+    payload = async_job_service.enqueue_calls[0]["payload"]
+    question_type_counts = payload["request"]["question_type_counts"]
+    assert result.generation_status is ExamGenerationStatus.QUEUED
+    assert sum(item["count"] for item in question_type_counts) == 4
+    assert {item["question_type"] for item in question_type_counts} == {
+        "multiple_choice",
+        "subjective",
+        "oral",
+    }
+    counts_by_type = {
+        item["question_type"]: item["count"] for item in question_type_counts
+    }
+    assert question_type_counts[0]["question_type"] == "oral"
+    assert counts_by_type["oral"] >= counts_by_type["subjective"]
+    assert counts_by_type["oral"] >= counts_by_type["multiple_choice"]
+    assert "question_type_strategy" not in payload["request"]
+    assert "total_question_count" not in payload["request"]
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_already_in_progress_raises():
+    material_id = UUID("99999999-9999-9999-9999-999999999999")
+    exam = make_exam()
+    exam.mark_generation_queued(
+        job_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        requested_at=STARTS_AT,
+    )
+    async_job_service = FakeAsyncJobService()
+    service, _, _, _, _, _ = build_service(
+        exams=[exam],
+        materials=[make_material_result(material_id=material_id)],
+        async_job_service=async_job_service,
+    )
+
+    with pytest.raises(ExamQuestionGenerationAlreadyInProgressException):
+        await service.generate_exam_questions(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=GenerateExamQuestionsCommand(
+                scope_text="1주차 머신러닝 기초",
+                max_follow_ups=0,
+                difficulty=ExamDifficulty.MEDIUM,
+                source_material_ids=[material_id],
+                bloom_counts=[
+                    ExamQuestionBloomCountCommand(
+                        bloom_level=BloomLevel.ANALYZE,
+                        count=1,
+                    )
+                ],
+                question_type_counts=[
+                    ExamQuestionTypeCountCommand(
+                        question_type=ExamQuestionType.MULTIPLE_CHOICE,
+                        count=1,
+                    )
+                ],
+            ),
+        )
+
+    assert async_job_service.enqueue_calls == []
 
 
 @pytest.mark.asyncio
 async def test_generate_exam_questions_invalid_material_raises():
+    async_job_service = FakeAsyncJobService()
     service, _, _, _, _, _ = build_service(
         exams=[make_exam()],
         materials=[],
-        question_generation_port=FakeExamQuestionGenerationPort(drafts=[]),
+        async_job_service=async_job_service,
     )
 
     with pytest.raises(ExamQuestionGenerationMaterialNotFoundException):
@@ -1034,14 +1638,22 @@ async def test_generate_exam_questions_invalid_material_raises():
                         count=1,
                     )
                 ],
+                question_type_counts=[
+                    ExamQuestionTypeCountCommand(
+                        question_type=ExamQuestionType.SUBJECTIVE,
+                        count=1,
+                    )
+                ],
             ),
         )
+
+    assert async_job_service.enqueue_calls == []
 
 
 @pytest.mark.asyncio
 async def test_generate_exam_questions_pending_material_raises():
     material_id = UUID("99999999-9999-9999-9999-999999999999")
-    generation_port = FakeExamQuestionGenerationPort(drafts=[])
+    async_job_service = FakeAsyncJobService()
     service, _, _, _, _, _ = build_service(
         exams=[make_exam()],
         materials=[
@@ -1050,7 +1662,7 @@ async def test_generate_exam_questions_pending_material_raises():
                 ingest_status=ClassroomMaterialIngestStatus.PENDING,
             )
         ],
-        question_generation_port=generation_port,
+        async_job_service=async_job_service,
     )
 
     with pytest.raises(ExamQuestionGenerationMaterialNotReadyException):
@@ -1072,17 +1684,22 @@ async def test_generate_exam_questions_pending_material_raises():
                         count=1,
                     )
                 ],
+                question_type_counts=[
+                    ExamQuestionTypeCountCommand(
+                        question_type=ExamQuestionType.SUBJECTIVE,
+                        count=1,
+                    )
+                ],
             ),
         )
 
-    assert generation_port.requests == []
+    assert async_job_service.enqueue_calls == []
 
 
 @pytest.mark.asyncio
-async def test_generate_exam_questions_failed_material_raises_before_generation(
-):
+async def test_generate_exam_questions_failed_material_raises_before_enqueue():
     material_id = UUID("99999999-9999-9999-9999-999999999999")
-    generation_port = FakeExamQuestionGenerationPort(drafts=[])
+    async_job_service = FakeAsyncJobService()
     service, _, _, _, _, _ = build_service(
         exams=[make_exam()],
         materials=[
@@ -1091,7 +1708,7 @@ async def test_generate_exam_questions_failed_material_raises_before_generation(
                 ingest_status=ClassroomMaterialIngestStatus.FAILED,
             )
         ],
-        question_generation_port=generation_port,
+        async_job_service=async_job_service,
     )
 
     with pytest.raises(ExamQuestionGenerationMaterialIngestFailedException):
@@ -1113,115 +1730,16 @@ async def test_generate_exam_questions_failed_material_raises_before_generation(
                         count=1,
                     )
                 ],
-            ),
-        )
-
-    assert generation_port.requests == []
-
-
-@pytest.mark.asyncio
-async def test_generate_exam_questions_failed_exception_propagates():
-    class FailingExamQuestionGenerationPort(ExamQuestionGenerationPort):
-        async def generate_questions(self, *, request):
-            _ = request
-            raise ExamQuestionGenerationFailedException()
-
-    service, _, _, _, _, _ = build_service(
-        exams=[make_exam()],
-        question_generation_port=FailingExamQuestionGenerationPort(),
-    )
-
-    with pytest.raises(ExamQuestionGenerationFailedException):
-        await service.generate_exam_questions(
-            classroom_id=CLASSROOM_ID,
-            exam_id=EXAM_ID,
-            current_user=make_current_user(
-                role=UserRole.PROFESSOR,
-                user_id=PROFESSOR_ID,
-            ),
-            command=GenerateExamQuestionsCommand(
-                scope_text="1주차 머신러닝 기초",
-                max_follow_ups=0,
-                difficulty=ExamDifficulty.MEDIUM,
-                source_material_ids=[],
-                bloom_counts=[
-                    ExamQuestionBloomCountCommand(
-                        bloom_level=BloomLevel.APPLY,
+                question_type_counts=[
+                    ExamQuestionTypeCountCommand(
+                        question_type=ExamQuestionType.SUBJECTIVE,
                         count=1,
                     )
                 ],
             ),
         )
 
-
-@pytest.mark.asyncio
-async def test_generate_exam_questions_context_unavailable_propagates():
-    class FailingExamQuestionGenerationPort(ExamQuestionGenerationPort):
-        async def generate_questions(self, *, request):
-            _ = request
-            raise ExamQuestionGenerationContextUnavailableException()
-
-    service, _, _, _, _, _ = build_service(
-        exams=[make_exam()],
-        question_generation_port=FailingExamQuestionGenerationPort(),
-    )
-
-    with pytest.raises(ExamQuestionGenerationContextUnavailableException):
-        await service.generate_exam_questions(
-            classroom_id=CLASSROOM_ID,
-            exam_id=EXAM_ID,
-            current_user=make_current_user(
-                role=UserRole.PROFESSOR,
-                user_id=PROFESSOR_ID,
-            ),
-            command=GenerateExamQuestionsCommand(
-                scope_text="1주차 머신러닝 기초",
-                max_follow_ups=0,
-                difficulty=ExamDifficulty.MEDIUM,
-                source_material_ids=[],
-                bloom_counts=[
-                    ExamQuestionBloomCountCommand(
-                        bloom_level=BloomLevel.APPLY,
-                        count=1,
-                    )
-                ],
-            ),
-        )
-
-
-@pytest.mark.asyncio
-async def test_generate_exam_questions_unexpected_error_propagates():
-    class FailingExamQuestionGenerationPort(ExamQuestionGenerationPort):
-        async def generate_questions(self, *, request):
-            _ = request
-            raise RuntimeError("unexpected generation error")
-
-    service, _, _, _, _, _ = build_service(
-        exams=[make_exam()],
-        question_generation_port=FailingExamQuestionGenerationPort(),
-    )
-
-    with pytest.raises(RuntimeError, match="unexpected generation error"):
-        await service.generate_exam_questions(
-            classroom_id=CLASSROOM_ID,
-            exam_id=EXAM_ID,
-            current_user=make_current_user(
-                role=UserRole.PROFESSOR,
-                user_id=PROFESSOR_ID,
-            ),
-            command=GenerateExamQuestionsCommand(
-                scope_text="1주차 머신러닝 기초",
-                max_follow_ups=0,
-                difficulty=ExamDifficulty.MEDIUM,
-                source_material_ids=[],
-                bloom_counts=[
-                    ExamQuestionBloomCountCommand(
-                        bloom_level=BloomLevel.APPLY,
-                        count=1,
-                    )
-                ],
-            ),
-        )
+    assert async_job_service.enqueue_calls == []
 
 
 @pytest.mark.asyncio
@@ -1244,6 +1762,12 @@ async def test_generate_exam_questions_unavailable_raises():
                 bloom_counts=[
                     ExamQuestionBloomCountCommand(
                         bloom_level=BloomLevel.APPLY,
+                        count=1,
+                    )
+                ],
+                question_type_counts=[
+                    ExamQuestionTypeCountCommand(
+                        question_type=ExamQuestionType.SUBJECTIVE,
                         count=1,
                     )
                 ],

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 from uuid import UUID
@@ -7,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from app.auth.application.exception import AuthForbiddenException
 from app.classroom.application.exception import (
-    ClassroomMaterialDownloadUnavailableException,
     ClassroomMaterialNotFoundException,
 )
 from app.classroom.application.service import ClassroomService
@@ -83,10 +83,10 @@ def make_result(*, source_kind: str = "file", source_url: str | None = None):
             self.week_range = week_range
             self.confidence = confidence
 
+    @dataclass
     class IngestCapability:
-        def __init__(self, *, supported: bool, reason: str | None = None):
-            self.supported = supported
-            self.reason = reason
+        supported: bool
+        reason: str | None = None
 
     class OriginalFile:
         def __init__(self):
@@ -250,7 +250,6 @@ def test_create_classroom_material_accepts_link_payload_without_uploaded_file(
     assert body["data"]["ingest_error"] is None
     assert body["data"]["file"] is None
     assert body["data"]["original_file"] is None
-
 
 
 def test_create_classroom_material_returns_403_for_student(

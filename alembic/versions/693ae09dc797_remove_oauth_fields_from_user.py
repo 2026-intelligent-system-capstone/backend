@@ -21,7 +21,8 @@ depends_on = None
 def upgrade() -> None:
     op.execute(
         sa.text(
-            "UPDATE t_user SET password = '__oauth_removed__' "
+            "UPDATE t_user "
+            "SET password = '__oauth_removed__' "
             "WHERE password IS NULL"
         )
     )

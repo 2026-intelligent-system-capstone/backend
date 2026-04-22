@@ -13,9 +13,7 @@ def assert_enum_column(column, enum_class):
     assert column.type.enum_class is enum_class
     assert column.type.native_enum is False
     assert column.type.validate_strings is True
-    assert column.type.enums == [
-        member.value for member in enum_class
-    ]
+    assert column.type.enums == [member.value for member in enum_class]
 
 
 def test_classroom_material_table_uses_non_native_enum_values():

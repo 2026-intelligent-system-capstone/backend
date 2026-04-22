@@ -5,12 +5,14 @@ from app.exam.domain.entity import (
     ExamCriterion,
     ExamQuestion,
     ExamResult,
+    ExamResultCriterion,
     ExamSession,
     ExamTurn,
 )
 from core.db.sqlalchemy.models.exam import (
     exam_criterion_table,
     exam_question_table,
+    exam_result_criterion_table,
     exam_result_table,
     exam_session_table,
     exam_table,
@@ -46,8 +48,20 @@ def init_exam_mappers():
         version_id_col=exam_session_table.c.version_id,
     )
     mapper_registry.map_imperatively(
+        ExamResultCriterion,
+        exam_result_criterion_table,
+        version_id_col=exam_result_criterion_table.c.version_id,
+    )
+    mapper_registry.map_imperatively(
         ExamResult,
         exam_result_table,
+        properties={
+            "criteria_results": relationship(
+                ExamResultCriterion,
+                cascade="all, delete-orphan",
+                order_by=exam_result_criterion_table.c.created_at.asc(),
+            ),
+        },
         version_id_col=exam_result_table.c.version_id,
     )
     mapper_registry.map_imperatively(

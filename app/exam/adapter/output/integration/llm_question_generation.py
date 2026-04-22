@@ -17,7 +17,11 @@ from app.exam.application.exception import (
     ExamQuestionGenerationFailedException,
     ExamQuestionGenerationUnavailableException,
 )
-from app.exam.domain.entity import BloomLevel, ExamDifficulty
+from app.exam.domain.entity import (
+    BloomLevel,
+    ExamDifficulty,
+    ExamQuestionType,
+)
 from app.exam.domain.service import (
     ExamQuestionGenerationPort,
     GeneratedExamQuestionDraft,
@@ -55,8 +59,11 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
             input=request.scope_text,
         )
 
-        distribution = self._build_distribution(request)
-        total_questions = sum(distribution.values())
+        bloom_distribution = self._build_bloom_distribution(request)
+        question_type_distribution = self._build_question_type_distribution(
+            request
+        )
+        total_questions = sum(bloom_distribution.values())
         allowed_material_ids = {
             str(material.material_id): material.material_id
             for material in request.source_materials
@@ -80,7 +87,12 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
         )
         bloom_plan = "\n".join(
             f"- {level.value}: {count}문항"
-            for level, count in distribution.items()
+            for level, count in bloom_distribution.items()
+            if count > 0
+        )
+        question_type_plan = "\n".join(
+            f"- {question_type.value}: {count}문항"
+            for question_type, count in question_type_distribution.items()
             if count > 0
         )
         source_materials = "\n".join(
@@ -95,6 +107,7 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
             request=request,
             criteria_text=criteria,
             bloom_plan_text=bloom_plan,
+            question_type_plan_text=question_type_plan,
             source_materials_text=source_materials,
             context=context[:12000],
         )
@@ -123,7 +136,8 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
                     content=content,
                     request=request,
                     total_questions=total_questions,
-                    distribution=distribution,
+                    bloom_distribution=bloom_distribution,
+                    question_type_distribution=question_type_distribution,
                     allowed_material_ids=allowed_material_ids,
                 )
                 return drafts
@@ -215,13 +229,7 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
         context_blocks = []
         current_length = 0
         for hit in selected_hits:
-            block = (
-                f"[자료: {hit.payload.get('title')}, "
-                f"파일: {hit.payload.get('file_name')}, "
-                f"주차: {hit.payload.get('week')}, "
-                f"페이지: {hit.payload.get('page')}]\n"
-                f"{str(hit.payload.get('text', '')).strip()}"
-            )
+            block = self._build_context_block(hit.payload)
             separator_length = 0 if not context_blocks else len("\n\n---\n\n")
             additional_length = separator_length + len(block)
             if current_length + additional_length > 12000:
@@ -231,12 +239,44 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
 
         return "\n\n---\n\n".join(context_blocks)
 
-    def _build_distribution(
+    def _build_context_block(self, payload: dict[str, object]) -> str:
+        title = str(payload.get("title") or "제목 없음")
+        file_name = str(payload.get("file_name") or "파일명 없음")
+        week = payload.get("week")
+        source_type = str(payload.get("source_type") or "unknown")
+        source_unit_type = str(payload.get("source_unit_type") or "unknown")
+        citation_label = str(payload.get("citation_label") or "근거 위치 없음")
+        support_status = str(payload.get("support_status") or "supported")
+        text = str(payload.get("text", "")).strip()
+        locator = payload.get("source_locator") or {}
+        if isinstance(locator, dict):
+            locator_text = ", ".join(
+                f"{key}={value}" for key, value in locator.items()
+            )
+        else:
+            locator_text = str(locator)
+
+        return (
+            f"[자료: {title}, 파일: {file_name}, 주차: {week}, "
+            f"형식: {source_type}, 단위: {source_unit_type}, "
+            f"인용: {citation_label}, 지원상태: {support_status}, "
+            f"locator: {locator_text or '-'}]\n"
+            f"{text}"
+        )
+
+    def _build_bloom_distribution(
         self,
         request: GenerateExamQuestionsRequest,
     ) -> dict[BloomLevel, int]:
+        return {item.bloom_level: item.count for item in request.bloom_counts}
+
+    def _build_question_type_distribution(
+        self,
+        request: GenerateExamQuestionsRequest,
+    ) -> dict[ExamQuestionType, int]:
         return {
-            item.bloom_level: item.count for item in request.bloom_counts
+            item.question_type: item.count
+            for item in request.question_type_counts
         }
 
     def _parse_and_validate_questions(
@@ -245,7 +285,8 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
         content: str,
         request: GenerateExamQuestionsRequest,
         total_questions: int,
-        distribution: dict[BloomLevel, int],
+        bloom_distribution: dict[BloomLevel, int],
+        question_type_distribution: dict[ExamQuestionType, int],
         allowed_material_ids: dict[str, UUID],
     ) -> list[GeneratedExamQuestionDraft]:
         try:
@@ -268,7 +309,14 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
             )
             for index, item in enumerate(questions, start=1)
         ]
-        self._validate_distribution(drafts=drafts, distribution=distribution)
+        self._validate_bloom_distribution(
+            drafts=drafts,
+            distribution=bloom_distribution,
+        )
+        self._validate_question_type_distribution(
+            drafts=drafts,
+            distribution=question_type_distribution,
+        )
         self._validate_duplicates(drafts)
         return drafts
 
@@ -281,26 +329,49 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
         allowed_material_ids: dict[str, UUID],
     ) -> GeneratedExamQuestionDraft:
         try:
+            question_type = ExamQuestionType(str(item["question_type"]).strip())
             bloom_level = BloomLevel(str(item["bloom_level"]).strip())
             difficulty = ExamDifficulty(str(item["difficulty"]).strip())
+            max_score = float(item["max_score"])
             question_text = str(item["question_text"]).strip()
-            scope_text = str(item["scope_text"]).strip()
-            evaluation_objective = str(item["evaluation_objective"]).strip()
-            answer_key = str(item["answer_key"]).strip()
-            scoring_criteria = str(item["scoring_criteria"]).strip()
+            intent_text = str(item["intent_text"]).strip()
+            rubric_text = str(item["rubric_text"]).strip()
+            raw_answer_options = item["answer_options"]
+            raw_correct_answer_text = item["correct_answer_text"]
         except (KeyError, ValueError, TypeError) as exc:
             raise ExamQuestionGenerationFailedException() from exc
 
+        if not isinstance(raw_answer_options, list):
+            raise ExamQuestionGenerationFailedException()
+        answer_options = [
+            str(option).strip()
+            for option in raw_answer_options
+            if str(option).strip()
+        ]
+        if raw_correct_answer_text is None:
+            correct_answer_text = None
+        else:
+            correct_answer_text = str(raw_correct_answer_text).strip() or None
+
+        if question_type is ExamQuestionType.NONE:
+            raise ExamQuestionGenerationFailedException()
         if difficulty is not request.difficulty:
             raise ExamQuestionGenerationFailedException()
-        if not all([
-            question_text,
-            scope_text,
-            evaluation_objective,
-            answer_key,
-            scoring_criteria,
-        ]):
+        if max_score <= 0:
             raise ExamQuestionGenerationFailedException()
+        if not all([question_text, intent_text, rubric_text]):
+            raise ExamQuestionGenerationFailedException()
+        if question_type is ExamQuestionType.MULTIPLE_CHOICE:
+            if not answer_options or correct_answer_text is None:
+                raise ExamQuestionGenerationFailedException()
+            if correct_answer_text not in answer_options:
+                raise ExamQuestionGenerationFailedException()
+        elif question_type is ExamQuestionType.SUBJECTIVE:
+            if answer_options or correct_answer_text is None:
+                raise ExamQuestionGenerationFailedException()
+        elif question_type is ExamQuestionType.ORAL:
+            if answer_options or correct_answer_text is not None:
+                raise ExamQuestionGenerationFailedException()
 
         filtered_source_material_ids = []
         for source_material_id in item.get("source_material_ids", []):
@@ -313,17 +384,19 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
 
         return GeneratedExamQuestionDraft(
             question_number=index,
+            max_score=max_score,
+            question_type=question_type,
             bloom_level=bloom_level,
             difficulty=difficulty,
             question_text=question_text,
-            scope_text=scope_text,
-            evaluation_objective=evaluation_objective,
-            answer_key=answer_key,
-            scoring_criteria=scoring_criteria,
+            intent_text=intent_text,
+            rubric_text=rubric_text,
+            answer_options=answer_options,
+            correct_answer_text=correct_answer_text,
             source_material_ids=filtered_source_material_ids,
         )
 
-    def _validate_distribution(
+    def _validate_bloom_distribution(
         self,
         *,
         drafts: list[GeneratedExamQuestionDraft],
@@ -336,6 +409,21 @@ class LLMExamQuestionGenerationAdapter(ExamQuestionGenerationPort):
             )
         for level, expected_count in distribution.items():
             if actual_distribution.get(level, 0) != expected_count:
+                raise ExamQuestionGenerationFailedException()
+
+    def _validate_question_type_distribution(
+        self,
+        *,
+        drafts: list[GeneratedExamQuestionDraft],
+        distribution: dict[ExamQuestionType, int],
+    ) -> None:
+        actual_distribution: dict[ExamQuestionType, int] = {}
+        for draft in drafts:
+            actual_distribution[draft.question_type] = (
+                actual_distribution.get(draft.question_type, 0) + 1
+            )
+        for question_type, expected_count in distribution.items():
+            if actual_distribution.get(question_type, 0) != expected_count:
                 raise ExamQuestionGenerationFailedException()
 
     def _validate_duplicates(

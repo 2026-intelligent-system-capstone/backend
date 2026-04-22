@@ -32,9 +32,9 @@ def upgrade() -> None:
         ),
     )
     op.execute(
-        sa.text(
-            "UPDATE t_exam SET week = :week WHERE week IS NULL"
-        ).bindparams(week=TEMPORARY_WEEK_DEFAULT)
+        sa.text("UPDATE t_exam SET week = :week WHERE week IS NULL").bindparams(
+            week=TEMPORARY_WEEK_DEFAULT
+        )
     )
     op.alter_column(
         "t_exam",

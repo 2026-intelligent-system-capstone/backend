@@ -45,11 +45,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_constraint("ck_t_exam_exam_type", "t_exam", type_="check")
-    op.execute(
-        sa.text(
-            "DELETE FROM t_exam WHERE exam_type = 'project'"
-        )
-    )
+    op.execute(sa.text("DELETE FROM t_exam WHERE exam_type = 'project'"))
     op.execute(
         sa.text(
             "UPDATE t_exam SET exam_type = 'quiz' WHERE exam_type = 'weekly'"

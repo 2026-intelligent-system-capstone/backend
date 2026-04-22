@@ -264,6 +264,7 @@ async def test_create_classroom_material_success_via_classroom_service():
             title="1주차 자료",
             week=1,
             description="소개 자료",
+            source_kind="file",
         ),
         file_upload=FileUploadData(
             file_name="week1.pdf",

@@ -373,7 +373,10 @@ async def test_ingest_material_preserves_original_pdf_page_numbers(
     )
 
     points = fake_qdrant.upserts[0]["points"]
-    assert [point.payload["source_locator"]["page"] for point in points] == [1, 3]
+    assert [point.payload["source_locator"]["page"] for point in points] == [
+        1,
+        3,
+    ]
 
 
 @pytest.mark.asyncio
@@ -383,6 +386,7 @@ async def test_ingest_material_accepts_youtube_link_as_partial_supported(
     fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
 
     def build_qdrant_client(*, url: str):
+        _ = url
         return fake_qdrant
 
     monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
@@ -432,6 +436,7 @@ async def test_ingest_material_accepts_youtube_link_without_scope_candidates(
     fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
 
     def build_qdrant_client(*, url: str):
+        _ = url
         return fake_qdrant
 
     monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
@@ -482,6 +487,7 @@ async def test_ingest_material_treats_plain_text_file_with_youtube_text_as_text(
     fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
 
     def build_qdrant_client(*, url: str):
+        _ = url
         return fake_qdrant
 
     monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
@@ -523,6 +529,7 @@ async def test_ingest_material_extracts_text_files_from_zip(monkeypatch):
     fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
 
     def build_qdrant_client(*, url: str):
+        _ = url
         return fake_qdrant
 
     monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
@@ -562,7 +569,9 @@ async def test_ingest_material_extracts_text_files_from_zip(monkeypatch):
     assert result.extracted_chunks[0].source_type == "zip_text"
     assert result.extracted_chunks[0].citation_label == "week1/summary.txt"
     point = fake_qdrant.upserts[0]["points"][0]
-    assert point.payload["source_locator"] == {"archive_path": "week1/summary.txt"}
+    assert point.payload["source_locator"] == {
+        "archive_path": "week1/summary.txt"
+    }
 
 
 @pytest.mark.asyncio
@@ -572,6 +581,7 @@ async def test_ingest_material_creates_placeholder_for_office_document(
     fake_qdrant = FakeQdrantClient(url="http://localhost:6333")
 
     def build_qdrant_client(*, url: str):
+        _ = url
         return fake_qdrant
 
     monkeypatch.setattr(module, "QdrantClient", build_qdrant_client)
@@ -597,8 +607,7 @@ async def test_ingest_material_creates_placeholder_for_office_document(
             source_kind=module.ClassroomMaterialSourceKind.FILE,
             file_name="week4.docx",
             mime_type=(
-                "application/vnd.openxmlformats-officedocument."
-                "wordprocessingml.document"
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             ),
             content=b"docx-binary",
         )
@@ -606,7 +615,9 @@ async def test_ingest_material_creates_placeholder_for_office_document(
 
     assert result.support_status == "partial_supported"
     assert result.extracted_chunks[0].source_type == "office_document"
-    assert result.extracted_chunks[0].source_locator["extraction"] == "placeholder"
+    assert (
+        result.extracted_chunks[0].source_locator["extraction"] == "placeholder"
+    )
 
 
 @pytest.mark.asyncio

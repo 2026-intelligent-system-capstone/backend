@@ -67,23 +67,37 @@ EXAM_QUESTION_GENERATION_SYSTEM_PROMPT = """
 형식은 {"questions": [...]} 입니다.
 각 문항은 다음 키를 모두 포함해야 합니다.
 - question_number
+- max_score
+- question_type
 - bloom_level
 - difficulty
 - question_text
-- scope_text
-- evaluation_objective
-- answer_key
-- scoring_criteria
+- intent_text
+- rubric_text
+- answer_options
+- correct_answer_text
 - source_material_ids
 
 값 제약:
+- question_type은 multiple_choice, subjective, oral 중 하나여야 합니다.
 - bloom_level은 none, remember, understand, apply, analyze,
   evaluate, create 중 하나여야 합니다.
 - difficulty는 easy, medium, hard 중 하나여야 합니다.
+- max_score는 0보다 큰 숫자여야 합니다.
 - source_material_ids는 반드시 선택 자료에 제공된
   material id 문자열만 사용해야 합니다.
-- question_text, scope_text, evaluation_objective, answer_key,
-  scoring_criteria는 모두 비어 있지 않아야 합니다.
+- intent_text는 문항의 시험 범위와 평가 목표를 함께 드러내야 합니다.
+- rubric_text는 정답 기준과 채점 기준을 함께 드러내야 합니다.
+- answer_options는 문자열 배열이어야 합니다.
+- multiple_choice 문항은 학생에게 그대로 노출할 실제 선택지들을
+  answer_options에 모두 포함해야 합니다.
+- subjective 문항은 answer_options를 빈 배열로 두고,
+  correct_answer_text에 단 하나의 정확한 정답만 넣어야 합니다.
+- oral 문항은 answer_options를 빈 배열로 두고,
+  correct_answer_text는 null이어야 합니다.
+- multiple_choice 문항의 correct_answer_text는 정답 선택지를
+  정확히 식별할 수 있어야 합니다.
+- question_text, intent_text, rubric_text는 모두 비어 있지 않아야 합니다.
 """.strip()
 
 BLOOM_LEVEL_DESCRIPTIONS = """
@@ -97,11 +111,28 @@ BLOOM_LEVEL_DESCRIPTIONS = """
 
 
 EXAM_TYPE_GUIDANCE = {
-    "weekly": "핵심 개념을 짧고 선명하게 확인하는 주간평가입니다. 범위를 과도하게 넓히지 말고, 이해와 적용을 빠르게 확인할 수 있는 질문을 우선하세요.",
-    "midterm": "중간평가입니다. 여러 주차의 핵심 개념을 연결해 이해·적용·분석을 균형 있게 평가하세요.",
-    "final": "기말평가입니다. 학기 전반의 내용을 종합적으로 다루고, 비교·분석·적용이 함께 드러나는 질문을 구성하세요.",
-    "mock": "모의평가입니다. 실제 시험처럼 난이도와 질문 톤을 유지하고, 실전 점검에 적합한 질문 흐름을 구성하세요.",
-    "project": "프로젝트 평가입니다. 구현 결과만 묻지 말고 설계 근거, 기술 선택의 트레이드오프, 구현 과정의 의사결정, 결과물의 한계와 개선 방향을 설명하게 하는 질문을 우선하세요.",
+    "weekly": (
+        "핵심 개념을 짧고 선명하게 확인하는 주간평가입니다. 범위를 "
+        "과도하게 넓히지 말고, 이해와 적용을 빠르게 확인할 수 있는 "
+        "질문을 우선하세요."
+    ),
+    "midterm": (
+        "중간평가입니다. 여러 주차의 핵심 개념을 연결해 이해·적용·분석을 "
+        "균형 있게 평가하세요."
+    ),
+    "final": (
+        "기말평가입니다. 학기 전반의 내용을 종합적으로 다루고, "
+        "비교·분석·적용이 함께 드러나는 질문을 구성하세요."
+    ),
+    "mock": (
+        "모의평가입니다. 실제 시험처럼 난이도와 질문 톤을 유지하고, "
+        "실전 점검에 적합한 질문 흐름을 구성하세요."
+    ),
+    "project": (
+        "프로젝트 평가입니다. 구현 결과만 묻지 말고 설계 근거, "
+        "기술 선택의 트레이드오프, 구현 과정의 의사결정, 결과물의 "
+        "한계와 개선 방향을 설명하게 하는 질문을 우선하세요."
+    ),
 }
 
 
@@ -114,6 +145,7 @@ def build_exam_question_generation_user_prompt(
     request: GenerateExamQuestionsRequest,
     criteria_text: str,
     bloom_plan_text: str,
+    question_type_plan_text: str,
     source_materials_text: str,
     context: str,
 ) -> str:
@@ -130,6 +162,8 @@ def build_exam_question_generation_user_prompt(
         f"{criteria_text or '- 평가 기준 없음'}\n\n"
         f"## Bloom 단계별 문항 수\n"
         f"{bloom_plan_text}\n\n"
+        f"## 문제 유형별 문항 수\n"
+        f"{question_type_plan_text}\n\n"
         f"## Bloom 단계 설명\n"
         f"{BLOOM_LEVEL_DESCRIPTIONS}\n\n"
         f"## 선택 자료\n"

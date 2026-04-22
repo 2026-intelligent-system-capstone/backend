@@ -687,8 +687,7 @@ class ClassroomService(ClassroomUseCase):
             replace_source_url=(
                 (
                     "source_url" in delivered_fields
-                    and target_source_kind
-                    is ClassroomMaterialSourceKind.LINK
+                    and target_source_kind is ClassroomMaterialSourceKind.LINK
                 )
                 or target_source_kind is ClassroomMaterialSourceKind.FILE
             ),

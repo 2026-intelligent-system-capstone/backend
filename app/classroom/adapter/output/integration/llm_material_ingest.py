@@ -1,8 +1,8 @@
 import json
 from collections.abc import Iterable
 from io import BytesIO
-from zipfile import BadZipFile, ZipFile
 from uuid import uuid4
+from zipfile import BadZipFile, ZipFile
 
 from openai import AsyncOpenAI
 from pypdf import PdfReader
@@ -35,7 +35,6 @@ from app.classroom.domain.service import (
     ClassroomMaterialIngestResult,
 )
 from core.config import config
-
 
 TEXT_MIME_TYPES = {
     "text/plain",
@@ -183,8 +182,7 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
                 ],
             )
             content = (
-                completion.choices[0].message.content
-                or '{"candidates": []}'
+                completion.choices[0].message.content or '{"candidates": []}'
             )
             parsed = json.loads(content)
         except ClassroomMaterialIngestDomainException:
@@ -253,15 +251,21 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
         if request.mime_type == "application/pdf":
             return self._extract_pdf_chunks(request), SUPPORTED_STATUS
         if self._is_youtube_link_request(request):
-            return self._extract_youtube_link_chunks(request), PARTIAL_SUPPORTED_STATUS
+            return self._extract_youtube_link_chunks(
+                request
+            ), PARTIAL_SUPPORTED_STATUS
         if self._is_zip_mime_type(request.mime_type):
             return self._extract_zip_chunks(request), PARTIAL_SUPPORTED_STATUS
         if request.mime_type in TEXT_MIME_TYPES:
             return self._extract_plain_text_chunks(request), SUPPORTED_STATUS
         if request.mime_type in OFFICE_MIME_TYPES:
-            return self._extract_office_placeholder_chunks(request), PARTIAL_SUPPORTED_STATUS
+            return self._extract_office_placeholder_chunks(
+                request
+            ), PARTIAL_SUPPORTED_STATUS
         if request.mime_type.startswith(VIDEO_MIME_PREFIXES):
-            return self._extract_media_placeholder_chunks(request), PARTIAL_SUPPORTED_STATUS
+            return self._extract_media_placeholder_chunks(
+                request
+            ), PARTIAL_SUPPORTED_STATUS
         return [], UNSUPPORTED_STATUS
 
     def _extract_pdf_chunks(
@@ -279,12 +283,10 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
         for page_number, page in enumerate(pages, start=1):
             text = page.extract_text()
             if text and text.strip():
-                extracted_pages.append(
-                    {
-                        "page": page_number,
-                        "text": text.strip(),
-                    }
-                )
+                extracted_pages.append({
+                    "page": page_number,
+                    "text": text.strip(),
+                })
 
         chunks: list[ClassroomMaterialExtractedChunk] = []
         chunk_index = 0
@@ -366,13 +368,15 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
         self,
         request: ClassroomMaterialIngestRequest,
     ) -> list[ClassroomMaterialExtractedChunk]:
-        locator = request.source_url or request.content.decode(
-            "utf-8", errors="ignore"
-        ).strip()
+        locator = (
+            request.source_url
+            or request.content.decode("utf-8", errors="ignore").strip()
+        )
         placeholder = (
-            "YouTube 링크형 강의 자료입니다. 현재 transcript 자동 수집은 연결되지 "
-            "않았으며, 링크 메타데이터만 보존합니다. transcript와 timestamp가 "
-            "연결되면 같은 source_locator에 확장 가능합니다."
+            "YouTube 링크형 강의 자료입니다. 현재 transcript 자동 수집은 "
+            "연결되지 않았으며, 링크 메타데이터만 보존합니다. "
+            "transcript와 timestamp가 연결되면 같은 source_locator에 "
+            "확장 가능합니다."
         )
         return [
             ClassroomMaterialExtractedChunk(
@@ -393,8 +397,9 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
         request: ClassroomMaterialIngestRequest,
     ) -> list[ClassroomMaterialExtractedChunk]:
         placeholder = (
-            f"{request.file_name} 문서는 현재 본문 추출기가 연결되지 않았습니다. "
-            "파일 메타데이터만 보존했으며, 추후 문서 텍스트 추출 전략으로 대체할 수 있습니다."
+            f"{request.file_name} 문서는 현재 본문 추출기가 연결되지 "
+            "않았습니다. 파일 메타데이터만 보존했으며, 추후 문서 텍스트 "
+            "추출 전략으로 대체할 수 있습니다."
         )
         return [
             ClassroomMaterialExtractedChunk(
@@ -416,9 +421,9 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
         request: ClassroomMaterialIngestRequest,
     ) -> list[ClassroomMaterialExtractedChunk]:
         placeholder = (
-            f"{request.file_name} 미디어 자료입니다. 현재 원본 비디오/오디오 다운로드 "
-            "및 transcript 추출은 수행하지 않고, transcript/timestamp 확장을 위한 "
-            "placeholder만 저장합니다."
+            f"{request.file_name} 미디어 자료입니다. 현재 원본 "
+            "비디오/오디오 다운로드 및 transcript 추출은 수행하지 않고, "
+            "transcript/timestamp 확장을 위한 placeholder만 저장합니다."
         )
         return [
             ClassroomMaterialExtractedChunk(

@@ -95,9 +95,7 @@ class Classroom(Entity):
             normalized_professor_ids.append(current_user.id)
         return normalized_professor_ids
 
-    def normalized_student_ids(
-        self, student_ids: Iterable[UUID]
-    ) -> list[UUID]:
+    def normalized_student_ids(self, student_ids: Iterable[UUID]) -> list[UUID]:
         return list(dict.fromkeys(student_ids))
 
     def update_details(

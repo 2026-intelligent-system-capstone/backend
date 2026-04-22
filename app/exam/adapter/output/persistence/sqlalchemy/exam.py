@@ -19,6 +19,8 @@ from core.db.sqlalchemy.models.exam import (
     exam_turn_table,
 )
 
+ADVISORY_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext(:lock_key))"
+
 
 class ExamSQLAlchemyRepository(ExamRepository):
     async def save(self, entity: Exam) -> None:
@@ -93,9 +95,7 @@ class ExamSessionSQLAlchemyRepository(ExamSessionRepository):
         student_id: UUID,
     ) -> Sequence[ExamSession]:
         await session.execute(
-            text(
-                "SELECT pg_advisory_xact_lock(hashtext(CAST(:lock_key AS text)))"
-            ),
+            text(ADVISORY_LOCK_SQL),
             {
                 "lock_key": f"exam-session:{exam_id}:{student_id}",
             },
@@ -111,13 +111,19 @@ class ExamResultSQLAlchemyRepository(ExamResultRepository):
         session.add(entity)
 
     async def get_by_id(self, entity_id: UUID) -> ExamResult | None:
-        query = select(ExamResult).where(exam_result_table.c.id == entity_id)
+        query = (
+            select(ExamResult)
+            .options(selectinload("*"))
+            .where(exam_result_table.c.id == entity_id)
+        )
         result = await session.execute(query)
         return result.scalar_one_or_none()
 
     async def list(self) -> Sequence[ExamResult]:
-        query = select(ExamResult).order_by(
-            exam_result_table.c.created_at.desc()
+        query = (
+            select(ExamResult)
+            .options(selectinload("*"))
+            .order_by(exam_result_table.c.created_at.desc())
         )
         result = await session.execute(query)
         return list(result.scalars().all())
@@ -130,6 +136,7 @@ class ExamResultSQLAlchemyRepository(ExamResultRepository):
     ) -> Sequence[ExamResult]:
         query = (
             select(ExamResult)
+            .options(selectinload("*"))
             .where(
                 exam_result_table.c.exam_id == exam_id,
                 exam_result_table.c.student_id == student_id,
@@ -138,6 +145,23 @@ class ExamResultSQLAlchemyRepository(ExamResultRepository):
         )
         result = await session.execute(query)
         return list(result.scalars().all())
+
+    async def list_by_exam_and_student_for_update(
+        self,
+        *,
+        exam_id: UUID,
+        student_id: UUID,
+    ) -> Sequence[ExamResult]:
+        await session.execute(
+            text(ADVISORY_LOCK_SQL),
+            {
+                "lock_key": f"exam-result:{exam_id}:{student_id}",
+            },
+        )
+        return await self.list_by_exam_and_student(
+            exam_id=exam_id,
+            student_id=student_id,
+        )
 
 
 class ExamTurnSQLAlchemyRepository(ExamTurnRepository):

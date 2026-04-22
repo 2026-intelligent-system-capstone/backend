@@ -19,7 +19,9 @@ from app.exam.domain.entity import (
     ExamSession,
     ExamTurn,
     StartedExamSession,
+    StudentExam,
 )
+from app.exam.domain.service import ExamQuestionGenerationSubmitResult
 
 
 class ExamUseCase(ABC):
@@ -94,8 +96,25 @@ class ExamUseCase(ABC):
         exam_id: UUID,
         current_user: CurrentUser,
         command: GenerateExamQuestionsCommand,
-    ) -> Sequence[ExamQuestion]:
-        """Generate and persist draft exam questions."""
+    ) -> ExamQuestionGenerationSubmitResult:
+        """Submit async exam question generation job."""
+
+    @abstractmethod
+    async def list_student_exams(
+        self,
+        *,
+        current_user: CurrentUser,
+    ) -> Sequence[StudentExam]:
+        """List current student's accessible exams with completion state."""
+
+    @abstractmethod
+    async def get_student_exam(
+        self,
+        *,
+        exam_id: UUID,
+        current_user: CurrentUser,
+    ) -> StudentExam:
+        """Get one current student's accessible exam with completion state."""
 
     @abstractmethod
     async def start_exam_session(

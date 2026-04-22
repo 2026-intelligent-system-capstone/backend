@@ -5,7 +5,12 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
-from app.async_job.domain.entity import AsyncJobReference, AsyncJobStatus, AsyncJobTargetType, AsyncJobType
+from app.async_job.domain.entity import (
+    AsyncJobReference,
+    AsyncJobStatus,
+    AsyncJobTargetType,
+    AsyncJobType,
+)
 from app.exam.application.exception import (
     ExamNotFoundException,
     ExamQuestionGenerationAlreadyInProgressException,
@@ -91,7 +96,9 @@ def make_question(
     max_score: float = 1.0,
     question_type: ExamQuestionType = ExamQuestionType.SUBJECTIVE,
     question_text: str = "회귀와 분류의 차이를 설명하세요.",
-    rubric_text: str = "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답",
+    rubric_text: str = (
+        "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답"
+    ),
     answer_options: list[str] | None = None,
     correct_answer_text: str | None = "회귀와 분류",
     status: ExamQuestionStatus = ExamQuestionStatus.GENERATED,
@@ -108,9 +115,7 @@ def make_question(
         rubric_text=rubric_text,
         answer_options=list(answer_options or []),
         correct_answer_text=correct_answer_text,
-        source_material_ids=[
-            UUID("99999999-9999-9999-9999-999999999999")
-        ],
+        source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         status=status,
     )
     question.id = UUID("88888888-8888-8888-8888-888888888888")
@@ -228,7 +233,9 @@ def test_create_exam_accepts_weekly_and_project_types(client, monkeypatch):
                     "weight": 100,
                     "sort_order": 1,
                     "excellent_definition": "핵심 개념을 정확히 설명한다.",
-                    "average_definition": "핵심 개념 설명은 가능하나 연결이 약하다.",
+                    "average_definition": (
+                        "핵심 개념 설명은 가능하나 연결이 약하다."
+                    ),
                     "poor_definition": "핵심 개념 이해가 부족하다.",
                 }
             ],
@@ -252,8 +259,12 @@ def test_create_exam_accepts_weekly_and_project_types(client, monkeypatch):
                     "description": "구현 의사결정의 근거를 설명하는지 평가",
                     "weight": 100,
                     "sort_order": 1,
-                    "excellent_definition": "설계 선택과 근거를 논리적으로 설명한다.",
-                    "average_definition": "선택은 설명하지만 근거 연결이 약하다.",
+                    "excellent_definition": (
+                        "설계 선택과 근거를 논리적으로 설명한다."
+                    ),
+                    "average_definition": (
+                        "선택은 설명하지만 근거 연결이 약하다."
+                    ),
                     "poor_definition": "설계 근거 설명이 부족하다.",
                 }
             ],
@@ -283,10 +294,11 @@ def test_list_exams_returns_200_for_student(client, monkeypatch):
             difficulty=ExamDifficulty.MEDIUM,
             question_text="회귀와 분류의 차이를 설명하세요.",
             intent_text="1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가",
-            rubric_text="출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답",
-            source_material_ids=[
-                UUID("99999999-9999-9999-9999-999999999999")
-            ],
+            rubric_text=(
+                "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
+                "예시를 설명하면 정답"
+            ),
+            source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         deleted_question = exam.add_question(
             question_number=2,
@@ -296,9 +308,7 @@ def test_list_exams_returns_200_for_student(client, monkeypatch):
             question_text="삭제된 문항",
             intent_text="1주차 머신러닝 기초 범위의 삭제 테스트 문항",
             rubric_text="삭제 응답에서 제외되어야 하는 문항",
-            source_material_ids=[
-                UUID("99999999-9999-9999-9999-999999999999")
-            ],
+            source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         deleted_question.delete()
         return [exam]
@@ -324,13 +334,11 @@ def test_list_exams_returns_200_for_student(client, monkeypatch):
     assert response.json()["data"][0]["generation_job_id"] == (
         "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     )
-    assert response.json()["data"][0]["generation_requested_at"] == STARTS_AT.isoformat()
-    assert len(response.json()["data"][0]["questions"]) == 1
-    assert response.json()["data"][0]["questions"][0]["question_number"] == 1
-    assert response.json()["data"][0]["questions"][0]["max_score"] == 2.5
-    assert response.json()["data"][0]["questions"][0]["rubric_text"] == ""
-    assert response.json()["data"][0]["questions"][0]["answer_options"] == []
-    assert response.json()["data"][0]["questions"][0]["correct_answer_text"] is None
+    assert (
+        response.json()["data"][0]["generation_requested_at"]
+        == STARTS_AT.isoformat()
+    )
+    assert response.json()["data"][0]["questions"] == []
 
 
 def test_get_exam_returns_200(client, monkeypatch):
@@ -349,11 +357,12 @@ def test_get_exam_returns_200(client, monkeypatch):
             difficulty=ExamDifficulty.MEDIUM,
             question_text="회귀와 분류의 차이를 설명하세요.",
             intent_text="1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가",
-            rubric_text="출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답",
+            rubric_text=(
+                "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
+                "예시를 설명하면 정답"
+            ),
             correct_answer_text="출력 변수 예측은 회귀, 범주 예측은 분류",
-            source_material_ids=[
-                UUID("99999999-9999-9999-9999-999999999999")
-            ],
+            source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         exam.add_question(
             question_number=2,
@@ -372,9 +381,7 @@ def test_get_exam_returns_200(client, monkeypatch):
                 "주성분 분석",
             ],
             correct_answer_text="회귀",
-            source_material_ids=[
-                UUID("99999999-9999-9999-9999-999999999999")
-            ],
+            source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         exam.add_question(
             question_number=3,
@@ -385,9 +392,7 @@ def test_get_exam_returns_200(client, monkeypatch):
             question_text="모델 성능 저하 원인을 말로 설명하세요.",
             intent_text="성능 저하 원인을 분석적으로 설명하는지 평가",
             rubric_text="과적합, 데이터 편향, 피처 품질 저하를 언급하면 우수",
-            source_material_ids=[
-                UUID("99999999-9999-9999-9999-999999999999")
-            ],
+            source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         deleted_question = exam.add_question(
             question_number=4,
@@ -397,9 +402,7 @@ def test_get_exam_returns_200(client, monkeypatch):
             question_text="삭제된 문항",
             intent_text="1주차 머신러닝 기초 범위의 삭제 테스트 문항",
             rubric_text="삭제 응답에서 제외되어야 하는 문항",
-            source_material_ids=[
-                UUID("99999999-9999-9999-9999-999999999999")
-            ],
+            source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         deleted_question.delete()
         return exam
@@ -421,12 +424,21 @@ def test_get_exam_returns_200(client, monkeypatch):
     assert response.json()["data"]["week"] == WEEK
     assert response.json()["data"]["max_attempts"] == 1
     assert response.json()["data"]["generation_status"] == "failed"
-    assert response.json()["data"]["generation_error"] == "생성 중 오류가 발생했습니다."
+    assert (
+        response.json()["data"]["generation_error"]
+        == "생성 중 오류가 발생했습니다."
+    )
     assert response.json()["data"]["generation_job_id"] == (
         "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     )
-    assert response.json()["data"]["generation_requested_at"] == STARTS_AT.isoformat()
-    assert response.json()["data"]["generation_completed_at"] == ENDS_AT.isoformat()
+    assert (
+        response.json()["data"]["generation_requested_at"]
+        == STARTS_AT.isoformat()
+    )
+    assert (
+        response.json()["data"]["generation_completed_at"]
+        == ENDS_AT.isoformat()
+    )
     assert response.json()["data"]["criteria"][0]["excellent_definition"] == (
         "핵심 개념을 정확히 설명한다."
     )
@@ -435,9 +447,19 @@ def test_get_exam_returns_200(client, monkeypatch):
     assert len(questions) == 3
     assert questions[0]["question_number"] == 1
     assert questions[0]["max_score"] == 2.5
-    assert questions[0]["intent_text"] == "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가"
-    assert questions[0]["rubric_text"] == "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답"
-    assert questions[0]["correct_answer_text"] == "출력 변수 예측은 회귀, 범주 예측은 분류"
+    assert (
+        questions[0]["intent_text"]
+        == "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가"
+    )
+    assert (
+        questions[0]["rubric_text"]
+        == "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 "
+        "설명하면 정답"
+    )
+    assert (
+        questions[0]["correct_answer_text"]
+        == "출력 변수 예측은 회귀, 범주 예측은 분류"
+    )
     assert questions[0]["answer_options"] == []
     assert questions[1]["question_type"] == "multiple_choice"
     assert questions[1]["max_score"] == 3.0
@@ -506,10 +528,11 @@ def test_list_exams_hides_answers_for_student(client, monkeypatch):
             difficulty=ExamDifficulty.MEDIUM,
             question_text="회귀와 분류의 차이를 설명하세요.",
             intent_text="1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가",
-            rubric_text="출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답",
-            source_material_ids=[
-                UUID("99999999-9999-9999-9999-999999999999")
-            ],
+            rubric_text=(
+                "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
+                "예시를 설명하면 정답"
+            ),
+            source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         return [exam]
 
@@ -525,10 +548,7 @@ def test_list_exams_hides_answers_for_student(client, monkeypatch):
     response = client.get(f"/api/classrooms/{CLASSROOM_ID}/exams")
 
     assert response.status_code == 200
-    assert response.json()["data"][0]["questions"][0]["max_score"] == 2.5
-    assert response.json()["data"][0]["questions"][0]["rubric_text"] == ""
-    assert response.json()["data"][0]["questions"][0]["answer_options"] == []
-    assert response.json()["data"][0]["questions"][0]["correct_answer_text"] is None
+    assert response.json()["data"][0]["questions"] == []
 
 
 def test_get_exam_hides_answers_for_student(client, monkeypatch):
@@ -542,10 +562,11 @@ def test_get_exam_hides_answers_for_student(client, monkeypatch):
             difficulty=ExamDifficulty.MEDIUM,
             question_text="회귀와 분류의 차이를 설명하세요.",
             intent_text="1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가",
-            rubric_text="출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답",
-            source_material_ids=[
-                UUID("99999999-9999-9999-9999-999999999999")
-            ],
+            rubric_text=(
+                "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
+                "예시를 설명하면 정답"
+            ),
+            source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         return exam
 
@@ -561,10 +582,7 @@ def test_get_exam_hides_answers_for_student(client, monkeypatch):
     response = client.get(f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}")
 
     assert response.status_code == 200
-    assert response.json()["data"]["questions"][0]["max_score"] == 2.5
-    assert response.json()["data"]["questions"][0]["rubric_text"] == ""
-    assert response.json()["data"]["questions"][0]["answer_options"] == []
-    assert response.json()["data"]["questions"][0]["correct_answer_text"] is None
+    assert response.json()["data"]["questions"] == []
 
 
 def test_create_exam_question_returns_200_for_professor(client, monkeypatch):
@@ -593,12 +611,15 @@ def test_create_exam_question_returns_200_for_professor(client, monkeypatch):
             "bloom_level": "apply",
             "difficulty": "medium",
             "question_text": "회귀와 분류의 차이를 설명하세요.",
-            "intent_text": "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가",
-            "rubric_text": "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답",
+            "intent_text": (
+                "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가"
+            ),
+            "rubric_text": (
+                "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
+                "예시를 설명하면 정답"
+            ),
             "correct_answer_text": "회귀와 분류",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
         },
     )
 
@@ -614,7 +635,7 @@ def test_create_exam_question_returns_200_for_professor(client, monkeypatch):
     ]
 
 
-def test_create_exam_question_returns_422_when_subjective_correct_answer_missing(
+def test_create_exam_question_422_when_subjective_answer_missing(
     client,
     monkeypatch,
 ):
@@ -675,7 +696,7 @@ def test_create_exam_question_returns_422_when_oral_rubric_missing(
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_create_exam_question_returns_422_when_multiple_choice_answer_options_missing(
+def test_create_exam_question_422_when_mc_options_missing(
     client,
     monkeypatch,
 ):
@@ -707,7 +728,7 @@ def test_create_exam_question_returns_422_when_multiple_choice_answer_options_mi
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_create_exam_question_returns_422_when_multiple_choice_has_single_answer_option(
+def test_create_exam_question_422_when_mc_has_single_option(
     client,
     monkeypatch,
 ):
@@ -740,7 +761,7 @@ def test_create_exam_question_returns_422_when_multiple_choice_has_single_answer
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_create_exam_question_returns_422_when_multiple_choice_correct_answer_missing(
+def test_create_exam_question_422_when_mc_correct_answer_missing(
     client,
     monkeypatch,
 ):
@@ -772,7 +793,7 @@ def test_create_exam_question_returns_422_when_multiple_choice_correct_answer_mi
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_create_exam_question_returns_422_when_multiple_choice_correct_answer_not_in_options(
+def test_create_exam_question_422_when_mc_answer_not_in_options(
     client,
     monkeypatch,
 ):
@@ -826,8 +847,7 @@ def test_update_exam_question_returns_200_for_professor(client, monkeypatch):
     set_access_token_cookie(client, professor_user)
 
     response = client.patch(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/"
-        "88888888-8888-8888-8888-888888888888",
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/88888888-8888-8888-8888-888888888888",
         json={"question_text": "수정된 질문", "max_score": 2.5},
     )
 
@@ -853,8 +873,7 @@ def test_update_exam_question_returns_422_when_switching_to_oral_without_rubric(
     set_access_token_cookie(client, professor_user)
 
     response = client.patch(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/"
-        "88888888-8888-8888-8888-888888888888",
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/88888888-8888-8888-8888-888888888888",
         json={"question_type": "oral"},
     )
 
@@ -862,7 +881,7 @@ def test_update_exam_question_returns_422_when_switching_to_oral_without_rubric(
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_update_exam_question_returns_422_when_switching_to_subjective_without_correct_answer(
+def test_update_exam_question_422_switching_to_subjective_without_answer(
     client,
     monkeypatch,
 ):
@@ -874,9 +893,9 @@ def test_update_exam_question_returns_422_when_switching_to_subjective_without_c
     monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
     set_access_token_cookie(client, professor_user)
 
+    question_id = "88888888-8888-8888-8888-888888888888"
     response = client.patch(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/"
-        "88888888-8888-8888-8888-888888888888",
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/{question_id}",
         json={"question_type": "subjective"},
     )
 
@@ -884,7 +903,7 @@ def test_update_exam_question_returns_422_when_switching_to_subjective_without_c
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_update_exam_question_returns_422_when_switching_to_multiple_choice_without_answer_options(
+def test_update_exam_question_422_switching_to_mc_without_options(
     client,
     monkeypatch,
 ):
@@ -896,9 +915,9 @@ def test_update_exam_question_returns_422_when_switching_to_multiple_choice_with
     monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
     set_access_token_cookie(client, professor_user)
 
+    question_id = "88888888-8888-8888-8888-888888888888"
     response = client.patch(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/"
-        "88888888-8888-8888-8888-888888888888",
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/{question_id}",
         json={
             "question_type": "multiple_choice",
             "correct_answer_text": "회귀",
@@ -909,7 +928,7 @@ def test_update_exam_question_returns_422_when_switching_to_multiple_choice_with
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_update_exam_question_returns_422_when_switching_to_multiple_choice_without_correct_answer(
+def test_update_exam_question_422_switching_to_mc_without_answer(
     client,
     monkeypatch,
 ):
@@ -922,8 +941,7 @@ def test_update_exam_question_returns_422_when_switching_to_multiple_choice_with
     set_access_token_cookie(client, professor_user)
 
     response = client.patch(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/"
-        "88888888-8888-8888-8888-888888888888",
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/88888888-8888-8888-8888-888888888888",
         json={
             "question_type": "multiple_choice",
             "answer_options": ["회귀", "분류"],
@@ -955,8 +973,13 @@ def test_create_exam_question_returns_422_for_non_positive_max_score(
             "bloom_level": "apply",
             "difficulty": "medium",
             "question_text": "회귀와 분류의 차이를 설명하세요.",
-            "intent_text": "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가",
-            "rubric_text": "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답",
+            "intent_text": (
+                "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가"
+            ),
+            "rubric_text": (
+                "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
+                "예시를 설명하면 정답"
+            ),
             "correct_answer_text": "회귀와 분류",
             "source_material_ids": [],
         },
@@ -979,8 +1002,7 @@ def test_update_exam_question_returns_422_for_non_positive_max_score(
     set_access_token_cookie(client, professor_user)
 
     response = client.patch(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/"
-        "88888888-8888-8888-8888-888888888888",
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/88888888-8888-8888-8888-888888888888",
         json={"max_score": 0},
     )
 
@@ -1008,8 +1030,7 @@ def test_delete_exam_question_returns_200_for_professor(client, monkeypatch):
     set_access_token_cookie(client, professor_user)
 
     response = client.delete(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/"
-        "88888888-8888-8888-8888-888888888888"
+        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/88888888-8888-8888-8888-888888888888"
     )
 
     assert response.status_code == 200
@@ -1037,8 +1058,13 @@ def test_create_exam_question_returns_403_for_student(client, monkeypatch):
             "bloom_level": "apply",
             "difficulty": "medium",
             "question_text": "회귀와 분류의 차이를 설명하세요.",
-            "intent_text": "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가",
-            "rubric_text": "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 설명하면 정답",
+            "intent_text": (
+                "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가"
+            ),
+            "rubric_text": (
+                "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
+                "예시를 설명하면 정답"
+            ),
             "source_material_ids": [],
         },
     )
@@ -1088,12 +1114,8 @@ def test_generate_exam_questions_returns_202_for_professor(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 1}
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
+            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1119,9 +1141,7 @@ def test_generate_exam_questions_returns_202_for_professor(
     assert captured["command"].question_type_strategy is None
     assert body["data"]["exam_id"] == str(EXAM_ID)
     assert body["data"]["generation_status"] == "queued"
-    assert body["data"]["job_id"] == (
-        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    )
+    assert body["data"]["job_id"] == ("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     assert body["data"]["job_status"] == "queued"
     assert body["data"]["generation_requested_at"] == STARTS_AT.isoformat()
     assert body["data"]["generation_error"] is None
@@ -1168,24 +1188,24 @@ def test_generate_exam_questions_returns_202_for_strategy_request(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
             "total_question_count": 3,
             "question_type_strategy": "oral_focus",
             "bloom_counts": [
                 {"bloom_level": "remember", "count": 1},
-                {"bloom_level": "apply", "count": 2}
+                {"bloom_level": "apply", "count": 2},
             ],
         },
     )
 
     assert response.status_code == 202
     assert captured["command"].total_question_count == 3
-    assert captured["command"].question_type_strategy is ExamQuestionTypeStrategy.ORAL_FOCUS
+    assert (
+        captured["command"].question_type_strategy
+        is ExamQuestionTypeStrategy.ORAL_FOCUS
+    )
     assert captured["command"].question_type_counts is None
     assert [item.count for item in captured["command"].bloom_counts] == [1, 2]
-
 
 
 def test_generate_exam_questions_returns_400_for_invalid_materials(
@@ -1214,12 +1234,8 @@ def test_generate_exam_questions_returns_400_for_invalid_materials(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 1}
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
+            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1258,12 +1274,8 @@ def test_generate_exam_questions_returns_400_for_pending_material(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 1}
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
+            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1302,12 +1314,8 @@ def test_generate_exam_questions_returns_409_for_already_in_progress(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 1}
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
+            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1318,7 +1326,6 @@ def test_generate_exam_questions_returns_409_for_already_in_progress(
     assert response.json()["error_code"] == (
         "EXAM_QUESTION_GENERATION__ALREADY_IN_PROGRESS"
     )
-
 
 
 def test_generate_exam_questions_returns_400_for_failed_material(
@@ -1347,12 +1354,8 @@ def test_generate_exam_questions_returns_400_for_failed_material(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 1}
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
+            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1383,12 +1386,8 @@ def test_generate_exam_questions_returns_422_for_legacy_mismatched_totals(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 1}
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
+            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 2}
             ],
@@ -1397,7 +1396,6 @@ def test_generate_exam_questions_returns_422_for_legacy_mismatched_totals(
 
     assert response.status_code == 422
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
-
 
 
 def test_generate_exam_questions_returns_422_for_strategy_total_mismatch(
@@ -1418,20 +1416,15 @@ def test_generate_exam_questions_returns_422_for_strategy_total_mismatch(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
             "total_question_count": 2,
             "question_type_strategy": "oral_focus",
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 3}
-            ],
+            "bloom_counts": [{"bloom_level": "apply", "count": 3}],
         },
     )
 
     assert response.status_code == 422
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
-
 
 
 def test_generate_exam_questions_returns_422_for_mixed_strategy_and_legacy_mode(
@@ -1452,14 +1445,10 @@ def test_generate_exam_questions_returns_422_for_mixed_strategy_and_legacy_mode(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
             "total_question_count": 1,
             "question_type_strategy": "oral_focus",
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 1}
-            ],
+            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1488,15 +1477,9 @@ def test_generate_exam_questions_returns_422_for_invalid_question_type(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 1}
-            ],
-            "question_type_counts": [
-                {"question_type": "essay", "count": 1}
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
+            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "question_type_counts": [{"question_type": "essay", "count": 1}],
         },
     )
 
@@ -1522,15 +1505,9 @@ def test_generate_exam_questions_returns_422_for_none_question_type(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
-            "bloom_counts": [
-                {"bloom_level": "apply", "count": 1}
-            ],
-            "question_type_counts": [
-                {"question_type": "none", "count": 1}
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
+            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "question_type_counts": [{"question_type": "none", "count": 1}],
         },
     )
 
@@ -1579,17 +1556,15 @@ def test_generate_exam_questions_accepts_question_type_count_above_five(
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
             "difficulty": "medium",
-            "source_material_ids": [
-                "99999999-9999-9999-9999-999999999999"
-            ],
+            "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
             "bloom_counts": [
                 {"bloom_level": "remember", "count": 5},
                 {"bloom_level": "understand", "count": 5},
-                {"bloom_level": "apply", "count": 2}
+                {"bloom_level": "apply", "count": 2},
             ],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 6},
-                {"question_type": "oral", "count": 6}
+                {"question_type": "oral", "count": 6},
             ],
         },
     )
@@ -1643,13 +1618,7 @@ def test_list_student_exams_returns_200_for_student(client, monkeypatch):
     assert response.json()["data"][0]["is_completed"] is True
     assert response.json()["data"][0]["can_enter"] is False
     assert response.json()["data"][0]["latest_result"] is None
-    assert response.json()["data"][0]["questions"][0]["question_text"] == ""
-    assert response.json()["data"][0]["questions"][0]["rubric_text"] == ""
-    assert response.json()["data"][0]["questions"][0]["answer_options"] == []
-    assert (
-        response.json()["data"][0]["questions"][0]["correct_answer_text"]
-        is None
-    )
+    assert response.json()["data"][0]["questions"] == []
 
 
 def test_get_student_exam_returns_200_for_student(client, monkeypatch):
@@ -1693,10 +1662,7 @@ def test_get_student_exam_returns_200_for_student(client, monkeypatch):
     assert response.json()["data"]["is_completed"] is True
     assert response.json()["data"]["can_enter"] is False
     assert response.json()["data"]["latest_result"] is None
-    assert response.json()["data"]["questions"][0]["question_text"] == ""
-    assert response.json()["data"]["questions"][0]["rubric_text"] == ""
-    assert response.json()["data"]["questions"][0]["answer_options"] == []
-    assert response.json()["data"]["questions"][0]["correct_answer_text"] is None
+    assert response.json()["data"]["questions"] == []
 
 
 def test_start_exam_session_returns_200_for_student(client, monkeypatch):
@@ -1757,7 +1723,9 @@ def test_get_student_exam_returns_404_when_exam_not_found(client, monkeypatch):
     assert response.json()["error_code"] == "EXAM__NOT_FOUND"
 
 
-def test_start_exam_session_returns_409_when_session_unavailable(client, monkeypatch):
+def test_start_exam_session_returns_409_when_session_unavailable(
+    client, monkeypatch
+):
     async def start_session_stub(*_args, **_kwargs):
         raise ExamSessionUnavailableException()
 
@@ -1815,7 +1783,9 @@ def test_start_exam_session_returns_409_when_max_attempts_exceeded(
     response = client.post(f"/api/exams/{EXAM_ID}/sessions")
 
     assert response.status_code == 409
-    assert response.json()["error_code"] == "EXAM_SESSION__MAX_ATTEMPTS_EXCEEDED"
+    assert (
+        response.json()["error_code"] == "EXAM_SESSION__MAX_ATTEMPTS_EXCEEDED"
+    )
 
 
 def test_list_my_exam_results_returns_200_for_student(client, monkeypatch):
@@ -1836,7 +1806,10 @@ def test_list_my_exam_results_returns_200_for_student(client, monkeypatch):
                 ExamResultCriterion(
                     criterion_id=UUID("99999999-9999-9999-9999-999999999998"),
                     score=87.5,
-                    feedback="핵심 개념 설명은 정확하지만 적용 예시가 다소 부족합니다.",
+                    feedback=(
+                        "핵심 개념 설명은 정확하지만 적용 예시가 다소 "
+                        "부족합니다."
+                    ),
                 )
             ]
 
@@ -1858,14 +1831,22 @@ def test_list_my_exam_results_returns_200_for_student(client, monkeypatch):
     assert response.json()["data"][0]["student_id"] == str(STUDENT_ID)
     assert response.json()["data"][0]["status"] == "completed"
     assert response.json()["data"][0]["overall_score"] == 87.5
-    assert response.json()["data"][0]["strengths"] == ["지도학습 정의를 정확히 설명했습니다."]
-    assert response.json()["data"][0]["weaknesses"] == ["대표 알고리즘 예시가 부족했습니다."]
-    assert response.json()["data"][0]["improvement_suggestions"] == ["분류와 회귀 예시를 함께 연습하세요."]
+    assert response.json()["data"][0]["strengths"] == [
+        "지도학습 정의를 정확히 설명했습니다."
+    ]
+    assert response.json()["data"][0]["weaknesses"] == [
+        "대표 알고리즘 예시가 부족했습니다."
+    ]
+    assert response.json()["data"][0]["improvement_suggestions"] == [
+        "분류와 회귀 예시를 함께 연습하세요."
+    ]
     assert response.json()["data"][0]["criteria_results"] == [
         {
             "criterion_id": "99999999-9999-9999-9999-999999999998",
             "score": 87.5,
-            "feedback": "핵심 개념 설명은 정확하지만 적용 예시가 다소 부족합니다.",
+            "feedback": (
+                "핵심 개념 설명은 정확하지만 적용 예시가 다소 부족합니다."
+            ),
         }
     ]
 
@@ -1894,8 +1875,7 @@ def test_record_exam_turn_returns_200_for_student(client, monkeypatch):
     set_access_token_cookie(client, student_user)
 
     response = client.post(
-        f"/api/exams/{EXAM_ID}/sessions/"
-        "66666666-6666-6666-6666-666666666666/turns",
+        f"/api/exams/{EXAM_ID}/sessions/66666666-6666-6666-6666-666666666666/turns",
         json={
             "role": "assistant",
             "event_type": "question",
@@ -1936,8 +1916,7 @@ def test_complete_exam_session_returns_200_for_student(client, monkeypatch):
     set_access_token_cookie(client, student_user)
 
     response = client.post(
-        f"/api/exams/{EXAM_ID}/sessions/"
-        "66666666-6666-6666-6666-666666666666/complete",
+        f"/api/exams/{EXAM_ID}/sessions/66666666-6666-6666-6666-666666666666/complete",
         json={"occurred_at": ENDS_AT.isoformat()},
     )
 
@@ -1975,8 +1954,7 @@ def test_finalize_exam_result_returns_200_for_student(client, monkeypatch):
     set_access_token_cookie(client, student_user)
 
     response = client.post(
-        f"/api/exams/{EXAM_ID}/sessions/"
-        "66666666-6666-6666-6666-666666666666/results/finalize",
+        f"/api/exams/{EXAM_ID}/sessions/66666666-6666-6666-6666-666666666666/results/finalize",
         json={
             "occurred_at": ENDS_AT.isoformat(),
         },
@@ -1998,8 +1976,7 @@ def test_finalize_exam_result_rejects_client_score_fields(client, monkeypatch):
     set_access_token_cookie(client, student_user)
 
     response = client.post(
-        f"/api/exams/{EXAM_ID}/sessions/"
-        "66666666-6666-6666-6666-666666666666/results/finalize",
+        f"/api/exams/{EXAM_ID}/sessions/66666666-6666-6666-6666-666666666666/results/finalize",
         json={
             "overall_score": 92,
             "summary": "개념 이해와 문제 해결 과정이 모두 우수합니다.",

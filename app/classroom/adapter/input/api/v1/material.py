@@ -137,9 +137,7 @@ async def create_classroom_material(
     usecase: ClassroomUseCase = Depends(Provide[ClassroomContainer.service]),
 ):
     normalized_description = (
-        description.strip() or None
-        if description is not None
-        else None
+        description.strip() or None if description is not None else None
     )
     normalized_source_url = (
         source_url.strip() or None if source_url is not None else None
@@ -155,7 +153,10 @@ async def create_classroom_material(
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
 
-    if source_kind is ClassroomMaterialSourceKind.FILE and uploaded_file is None:
+    if (
+        source_kind is ClassroomMaterialSourceKind.FILE
+        and uploaded_file is None
+    ):
         raise RequestValidationError([
             {
                 "type": "missing",
@@ -164,7 +165,10 @@ async def create_classroom_material(
                 "input": None,
             }
         ])
-    if source_kind is ClassroomMaterialSourceKind.LINK and uploaded_file is not None:
+    if (
+        source_kind is ClassroomMaterialSourceKind.LINK
+        and uploaded_file is not None
+    ):
         raise RequestValidationError([
             {
                 "type": "value_error",
@@ -177,7 +181,9 @@ async def create_classroom_material(
     result = await usecase.create_classroom_material(
         classroom_id=classroom_id,
         current_user=current_user,
-        command=CreateClassroomMaterialCommand(**request.model_dump(mode="json")),
+        command=CreateClassroomMaterialCommand(
+            **request.model_dump(mode="json")
+        ),
         file_upload=(
             FileUploadData(
                 file_name=uploaded_file.filename or "uploaded-file",
@@ -310,7 +316,10 @@ async def update_classroom_material(
             }
         ])
 
-    if source_kind is ClassroomMaterialSourceKind.LINK and uploaded_file is not None:
+    if (
+        source_kind is ClassroomMaterialSourceKind.LINK
+        and uploaded_file is not None
+    ):
         raise RequestValidationError([
             {
                 "type": "value_error",
@@ -319,16 +328,26 @@ async def update_classroom_material(
                 "input": uploaded_file.filename,
             }
         ])
-    if uploaded_file is not None and source_kind is None and request is not None:
+    if (
+        uploaded_file is not None
+        and source_kind is None
+        and request is not None
+    ):
         raise RequestValidationError([
             {
                 "type": "value_error",
                 "loc": ("body", "uploaded_file"),
-                "msg": "uploaded_file 수정 시 source_kind=file을 함께 지정해야 합니다.",
+                "msg": (
+                    "uploaded_file 수정 시 source_kind=file을 함께 "
+                    "지정해야 합니다."
+                ),
                 "input": uploaded_file.filename,
             }
         ])
-    if source_kind is ClassroomMaterialSourceKind.FILE and uploaded_file is None:
+    if (
+        source_kind is ClassroomMaterialSourceKind.FILE
+        and uploaded_file is None
+    ):
         raise RequestValidationError([
             {
                 "type": "value_error",

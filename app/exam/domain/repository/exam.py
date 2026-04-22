@@ -42,6 +42,15 @@ class ExamResultRepository(BaseRepository[ExamResult]):
     ) -> Sequence[ExamResult]:
         pass
 
+    @abstractmethod
+    async def list_by_exam_and_student_for_update(
+        self,
+        *,
+        exam_id: UUID,
+        student_id: UUID,
+    ) -> Sequence[ExamResult]:
+        pass
+
 
 class ExamTurnRepository(BaseRepository[ExamTurn]):
     @abstractmethod

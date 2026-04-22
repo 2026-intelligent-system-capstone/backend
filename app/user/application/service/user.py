@@ -74,13 +74,9 @@ class UserService(UserUseCase):
             ),
             role=(command.role if "role" in delivered_fields else None),
             email=(command.email if "email" in delivered_fields else None),
-            clear_email=(
-                "email" in delivered_fields and command.email is None
-            ),
+            clear_email=("email" in delivered_fields and command.email is None),
             name=(command.name if "name" in delivered_fields else None),
-            status=(
-                command.status if "status" in delivered_fields else None
-            ),
+            status=(command.status if "status" in delivered_fields else None),
         )
 
         await self.repository.save(user)

@@ -109,9 +109,7 @@ class AuthService(AuthUseCase):
             raise AuthInvalidRefreshTokenException()
 
         try:
-            user_id, jti = AuthTokens.parse_refresh_token(
-                command.refresh_token
-            )
+            user_id, jti = AuthTokens.parse_refresh_token(command.refresh_token)
         except AuthInvalidRefreshTokenDomainException as exc:
             raise AuthInvalidRefreshTokenException() from exc
 
@@ -143,9 +141,7 @@ class AuthService(AuthUseCase):
             return
 
         try:
-            user_id, jti = AuthTokens.parse_refresh_token(
-                command.refresh_token
-            )
+            user_id, jti = AuthTokens.parse_refresh_token(command.refresh_token)
         except AuthInvalidRefreshTokenDomainException:
             return
 

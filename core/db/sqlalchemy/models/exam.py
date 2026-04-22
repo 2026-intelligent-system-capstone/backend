@@ -2,9 +2,11 @@ from uuid import UUID
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Column,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -17,7 +19,9 @@ from sqlalchemy.types import TypeDecorator
 from app.exam.domain.entity import (
     BloomLevel,
     ExamDifficulty,
+    ExamGenerationStatus,
     ExamQuestionStatus,
+    ExamQuestionType,
     ExamResultStatus,
     ExamSessionStatus,
     ExamStatus,
@@ -106,6 +110,24 @@ exam_table = BaseTable(
     Column("starts_at", DateTime(timezone=True), nullable=False),
     Column("ends_at", DateTime(timezone=True), nullable=False),
     Column("max_attempts", Integer, nullable=False, default=1),
+    Column(
+        "generation_status",
+        Enum(
+            ExamGenerationStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+        default=ExamGenerationStatus.IDLE.value,
+    ),
+    Column("generation_error", String(1000), nullable=True),
+    Column("generation_job_id", PG_UUID(as_uuid=True), nullable=True),
+    Column("generation_requested_at", DateTime(timezone=True), nullable=True),
+    Column("generation_completed_at", DateTime(timezone=True), nullable=True),
 )
 
 exam_criterion_table = BaseTable(
@@ -138,6 +160,20 @@ exam_question_table = BaseTable(
         nullable=False,
     ),
     Column("question_number", Integer, nullable=False),
+    Column("max_score", Float(), nullable=False, default=1.0),
+    Column(
+        "question_type",
+        Enum(
+            ExamQuestionType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
     Column(
         "bloom_level",
         Enum(
@@ -165,10 +201,14 @@ exam_question_table = BaseTable(
         nullable=False,
     ),
     Column("question_text", String(5000), nullable=False),
-    Column("scope_text", String(1000), nullable=False),
-    Column("evaluation_objective", String(2000), nullable=False),
-    Column("answer_key", String(5000), nullable=False),
-    Column("scoring_criteria", String(5000), nullable=False),
+    Column("intent_text", String(5000), nullable=False),
+    Column("rubric_text", String(12000), nullable=False),
+    Column("answer_options", JSON(), nullable=False, default=list),
+    Column("correct_answer_text", String(2000), nullable=True),
+    Column("scope_text", String(1000), nullable=True),
+    Column("evaluation_objective", String(2000), nullable=True),
+    Column("answer_key", String(5000), nullable=True),
+    Column("scoring_criteria", String(5000), nullable=True),
     Column("source_material_ids", UUIDListJSON(), nullable=False, default=list),
     Column(
         "status",
@@ -182,6 +222,10 @@ exam_question_table = BaseTable(
             length=50,
         ),
         nullable=False,
+    ),
+    CheckConstraint(
+        "max_score > 0",
+        name="ck_t_exam_question_max_score_positive",
     ),
 )
 
@@ -269,8 +313,31 @@ exam_result_table = BaseTable(
         nullable=False,
     ),
     Column("submitted_at", DateTime(timezone=True), nullable=True),
-    Column("overall_score", Integer(), nullable=True),
+    Column("overall_score", Float(), nullable=True),
     Column("summary", String(2000), nullable=True),
+    Column("strengths", JSON(), nullable=False, default=list),
+    Column("weaknesses", JSON(), nullable=False, default=list),
+    Column("improvement_suggestions", JSON(), nullable=False, default=list),
+)
+
+exam_result_criterion_table = BaseTable(
+    "t_exam_result_criterion",
+    metadata,
+    Column("id", PG_UUID(as_uuid=True), primary_key=True),
+    Column(
+        "result_id",
+        PG_UUID(as_uuid=True),
+        ForeignKey("t_exam_result.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "criterion_id",
+        PG_UUID(as_uuid=True),
+        ForeignKey("t_exam_criterion.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("score", Float(), nullable=True),
+    Column("feedback", String(2000), nullable=True),
 )
 
 exam_turn_table = BaseTable(

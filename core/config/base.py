@@ -64,6 +64,9 @@ class CommonSettings(BaseSettings):
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_COLLECTION_NAME: str = "lecture_materials"
 
+    ASYNC_JOB_WORKER_ENABLED: bool = True
+    ASYNC_JOB_WORKER_POLL_INTERVAL_SECONDS: float = 2.0
+
     LOG_LEVEL: LogLevel = "INFO"
     LOG_FORMAT: LogFormat = "plain"
     LOG_DEBUG: bool = False

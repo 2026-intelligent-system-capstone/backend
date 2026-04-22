@@ -108,17 +108,30 @@ class InMemoryAsyncJobRepository(AsyncJobRepository):
         return list(self.jobs.values())
 
     async def get_latest_by_target(self, *, target_id: UUID) -> AsyncJob | None:
-        matches = [job for job in self.jobs.values() if job.target_id == target_id]
+        matches = [
+            job for job in self.jobs.values() if job.target_id == target_id
+        ]
         matches.sort(key=lambda job: job.created_at, reverse=True)
         return matches[0] if matches else None
 
-    async def get_active_by_dedupe_key(self, *, dedupe_key: str) -> AsyncJob | None:
-        matches = [job for job in self.jobs.values() if job.dedupe_key == dedupe_key and job.status in {AsyncJobStatus.QUEUED, AsyncJobStatus.RUNNING}]
+    async def get_active_by_dedupe_key(
+        self, *, dedupe_key: str
+    ) -> AsyncJob | None:
+        matches = [
+            job
+            for job in self.jobs.values()
+            if job.dedupe_key == dedupe_key
+            and job.status in {AsyncJobStatus.QUEUED, AsyncJobStatus.RUNNING}
+        ]
         matches.sort(key=lambda job: job.available_at, reverse=True)
         return matches[0] if matches else None
 
     async def claim_next_runnable(self, *, now: datetime) -> AsyncJob | None:
-        queued_jobs = [job for job in self.jobs.values() if job.status is AsyncJobStatus.QUEUED and job.available_at <= now]
+        queued_jobs = [
+            job
+            for job in self.jobs.values()
+            if job.status is AsyncJobStatus.QUEUED and job.available_at <= now
+        ]
         queued_jobs.sort(key=lambda job: job.available_at)
         return queued_jobs[0] if queued_jobs else None
 
@@ -128,7 +141,9 @@ class InMemoryAsyncJobRepository(AsyncJobRepository):
 
 class InMemoryClassroomRepository(ClassroomRepository):
     def __init__(self, classrooms: list[Classroom] | None = None):
-        self.classrooms = {classroom.id: classroom for classroom in classrooms or []}
+        self.classrooms = {
+            classroom.id: classroom for classroom in classrooms or []
+        }
 
     async def save(self, entity: Classroom) -> None:
         self.classrooms[entity.id] = entity
@@ -151,7 +166,11 @@ class InMemoryClassroomRepository(ClassroomRepository):
         return None
 
     async def list_by_organization(self, organization_id: UUID):
-        return [classroom for classroom in self.classrooms.values() if classroom.organization_id == organization_id]
+        return [
+            classroom
+            for classroom in self.classrooms.values()
+            if classroom.organization_id == organization_id
+        ]
 
     async def delete(self, entity: Classroom) -> None:
         self.classrooms.pop(entity.id, None)
@@ -171,7 +190,11 @@ class InMemoryClassroomMaterialRepository(ClassroomMaterialRepository):
         return list(self.materials.values())
 
     async def list_by_classroom(self, classroom_id: UUID):
-        return [material for material in self.materials.values() if material.classroom_id == classroom_id]
+        return [
+            material
+            for material in self.materials.values()
+            if material.classroom_id == classroom_id
+        ]
 
     async def delete(self, entity: ClassroomMaterial) -> None:
         self.materials.pop(entity.id, None)
@@ -202,7 +225,9 @@ class FakeFileUseCase(FileUseCase):
     async def get_file_download(self, file_id: UUID) -> FileDownload:
         self.events.append(f"get_file_download:{file_id}")
         self.downloaded_file_ids.append(file_id)
-        return FileDownload(file=self.files[file_id], content=BytesIO(b"pdf-content"))
+        return FileDownload(
+            file=self.files[file_id], content=BytesIO(b"pdf-content")
+        )
 
     async def list_files(self):
         return list(self.files.values())
@@ -242,7 +267,12 @@ class InMemoryExamRepository(ExamRepository):
         self.events: list[str] = []
 
     async def save(self, entity: Exam) -> None:
-        self.events.append(f"save_exam:{entity.generation_status.value if entity.generation_status else 'none'}")
+        status = (
+            entity.generation_status.value
+            if entity.generation_status
+            else "none"
+        )
+        self.events.append(f"save_exam:{status}")
         self.exams[entity.id] = entity
 
     async def get_by_id(self, entity_id: UUID) -> Exam | None:
@@ -253,7 +283,11 @@ class InMemoryExamRepository(ExamRepository):
         return list(self.exams.values())
 
     async def list_by_classroom(self, classroom_id: UUID):
-        return [exam for exam in self.exams.values() if exam.classroom_id == classroom_id]
+        return [
+            exam
+            for exam in self.exams.values()
+            if exam.classroom_id == classroom_id
+        ]
 
 
 class FakeExamQuestionGenerationPort(ExamQuestionGenerationPort):
@@ -297,7 +331,11 @@ class InMemoryExamSessionRepository(ExamSessionRepository):
         exam_id: UUID,
         student_id: UUID,
     ):
-        return [session for session in self.sessions.values() if session.exam_id == exam_id and session.student_id == student_id]
+        return [
+            session
+            for session in self.sessions.values()
+            if session.exam_id == exam_id and session.student_id == student_id
+        ]
 
     async def list_by_exam_and_student_for_update(
         self,
@@ -330,7 +368,11 @@ class InMemoryExamResultRepository(ExamResultRepository):
         exam_id: UUID,
         student_id: UUID,
     ):
-        return [result for result in self.results.values() if result.exam_id == exam_id and result.student_id == student_id]
+        return [
+            result
+            for result in self.results.values()
+            if result.exam_id == exam_id and result.student_id == student_id
+        ]
 
     async def list_by_exam_and_student_for_update(
         self,
@@ -344,7 +386,9 @@ class InMemoryExamResultRepository(ExamResultRepository):
         )
 
 
-class CompletedResultAppearsDuringResultLockRepository(InMemoryExamResultRepository):
+class CompletedResultAppearsDuringResultLockRepository(
+    InMemoryExamResultRepository
+):
     def __init__(self, results: list[ExamResult] | None = None):
         super().__init__(results)
         self.completed_result_injected = False
@@ -358,7 +402,9 @@ class CompletedResultAppearsDuringResultLockRepository(InMemoryExamResultReposit
         if not self.completed_result_injected:
             current_result = self.results[RESULT_ID]
             current_result.status = ExamResultStatus.COMPLETED
-            current_result.submitted_at = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
+            current_result.submitted_at = datetime(
+                2026, 4, 1, 10, 0, tzinfo=UTC
+            )
             self.completed_result_injected = True
         return await super().list_by_exam_and_student_for_update(
             exam_id=exam_id,
@@ -366,7 +412,9 @@ class CompletedResultAppearsDuringResultLockRepository(InMemoryExamResultReposit
         )
 
 
-class CompletedResultAppearsAfterEvaluationRepository(InMemoryExamResultRepository):
+class CompletedResultAppearsAfterEvaluationRepository(
+    InMemoryExamResultRepository
+):
     def __init__(self, results: list[ExamResult] | None = None):
         super().__init__(results)
         self.lock_call_count = 0
@@ -384,7 +432,9 @@ class CompletedResultAppearsAfterEvaluationRepository(InMemoryExamResultReposito
         if self.lock_call_count == 2 and not self.completed_result_injected:
             current_result = self.results[RESULT_ID]
             current_result.status = ExamResultStatus.COMPLETED
-            current_result.submitted_at = datetime(2026, 4, 1, 10, 5, tzinfo=UTC)
+            current_result.submitted_at = datetime(
+                2026, 4, 1, 10, 5, tzinfo=UTC
+            )
             self.completed_result_injected = True
         return await super().list_by_exam_and_student_for_update(
             exam_id=exam_id,
@@ -406,7 +456,13 @@ class InMemoryExamTurnRepository(ExamTurnRepository):
         return list(self.turns.values())
 
     async def list_by_session(self, *, session_id: UUID):
-        return [turn for turn in sorted(self.turns.values(), key=lambda item: item.sequence) if turn.session_id == session_id]
+        return [
+            turn
+            for turn in sorted(
+                self.turns.values(), key=lambda item: item.sequence
+            )
+            if turn.session_id == session_id
+        ]
 
 
 class FakeExamResultEvaluationPort(ExamResultEvaluationPort):
@@ -761,7 +817,7 @@ async def test_enqueue_returns_existing_active_job_when_dedupe_key_matches():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_does_not_create_duplicate_active_jobs_when_requests_race():
+async def test_enqueue_dedupes_active_jobs_when_requests_race():
     from app.async_job.application.service import AsyncJobService
 
     repository = InMemoryAsyncJobRepository()
@@ -842,7 +898,11 @@ async def test_run_next_queued_job_marks_material_ingest_job_failed():
         classroom_repository=InMemoryClassroomRepository([make_classroom()]),
         material_repository=InMemoryClassroomMaterialRepository([material]),
         file_usecase=FakeFileUseCase(files={FILE_ID: file}),
-        material_ingest_port=FakeMaterialIngestPort(error=ClassroomMaterialIngestDomainException(message="qdrant unavailable")),
+        material_ingest_port=FakeMaterialIngestPort(
+            error=ClassroomMaterialIngestDomainException(
+                message="qdrant unavailable"
+            )
+        ),
         exam_repository=InMemoryExamRepository([]),
         question_generation_port=None,
     )
@@ -858,7 +918,9 @@ async def test_run_next_queued_job_marks_material_ingest_job_failed():
 
 @pytest.mark.asyncio
 async def test_build_material_ingest_request_allows_public_https_link():
-    material = make_link_material(source_url="https://example.com/lecture/week1")
+    material = make_link_material(
+        source_url="https://example.com/lecture/week1"
+    )
     worker = AsyncJobWorker(
         repository=InMemoryAsyncJobRepository([]),
         classroom_repository=InMemoryClassroomRepository([]),
@@ -918,7 +980,7 @@ async def test_run_next_queued_job_fails_link_ingest_for_blocked_source_url(
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_persists_material_state_before_external_call():
+async def test_run_next_queued_job_persists_material_before_external_call():
     events: list[str] = []
     job = make_material_ingest_job()
     material = make_material()
@@ -957,14 +1019,22 @@ async def test_run_next_queued_job_persists_material_state_before_external_call(
 
     await worker.run_next_queued_job()
 
-    assert events.index("save_job:running") < events.index(f"get_file:{FILE_ID}")
-    assert events.index(f"get_file:{FILE_ID}") < events.index("save_material:pending")
-    assert events.index("save_material:pending") < events.index(f"get_file_download:{FILE_ID}")
-    assert events.index(f"get_file_download:{FILE_ID}") < events.index("ingest_material")
+    assert events.index("save_job:running") < events.index(
+        f"get_file:{FILE_ID}"
+    )
+    assert events.index(f"get_file:{FILE_ID}") < events.index(
+        "save_material:pending"
+    )
+    assert events.index("save_material:pending") < events.index(
+        f"get_file_download:{FILE_ID}"
+    )
+    assert events.index(f"get_file_download:{FILE_ID}") < events.index(
+        "ingest_material"
+    )
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_marks_material_failed_when_file_lookup_fails_before_pending():
+async def test_run_next_queued_job_fails_material_on_file_error():
     job = make_material_ingest_job()
     material = make_material()
     worker = AsyncJobWorker(
@@ -1000,8 +1070,13 @@ async def test_run_next_queued_job_completes_exam_generation_job():
                 bloom_level=BloomLevel.APPLY,
                 difficulty=ExamDifficulty.MEDIUM,
                 question_text="회귀와 분류의 차이를 설명하세요.",
-                intent_text="1주차 머신러닝 기초 범위에서 지도학습 구분 이해를 확인하는 문항",
-                rubric_text="출력 형태와 목적 차이를 설명하고 핵심 개념을 포함하면 정답",
+                intent_text=(
+                    "1주차 머신러닝 기초 범위에서 지도학습 구분 이해를 "
+                    "확인하는 문항"
+                ),
+                rubric_text=(
+                    "출력 형태와 목적 차이를 설명하고 핵심 개념을 포함하면 정답"
+                ),
                 source_material_ids=[MATERIAL_ID],
             )
         ]
@@ -1026,8 +1101,13 @@ async def test_run_next_queued_job_completes_exam_generation_job():
     assert len(exam.questions) == 1
     assert exam.questions[0].question_type is ExamQuestionType.ORAL
     assert len(generation_port.requests) == 1
-    assert generation_port.requests[0].source_materials[0].file_name == "week1.pdf"
-    assert generation_port.requests[0].question_type_counts[0].question_type is ExamQuestionType.ORAL
+    assert (
+        generation_port.requests[0].source_materials[0].file_name == "week1.pdf"
+    )
+    assert (
+        generation_port.requests[0].question_type_counts[0].question_type
+        is ExamQuestionType.ORAL
+    )
     assert generation_port.requests[0].question_type_counts[0].count == 1
 
 
@@ -1044,20 +1124,25 @@ async def test_run_next_queued_job_marks_exam_generation_job_failed():
         file_usecase=FakeFileUseCase(files={FILE_ID: file}),
         material_ingest_port=None,
         exam_repository=InMemoryExamRepository([exam]),
-        question_generation_port=FakeExamQuestionGenerationPort(error=ExamQuestionGenerationFailedException()),
+        question_generation_port=FakeExamQuestionGenerationPort(
+            error=ExamQuestionGenerationFailedException()
+        ),
     )
 
     handled = await worker.run_next_queued_job()
 
     assert handled is True
     assert job.status is AsyncJobStatus.FAILED
-    assert job.error_message == "AI가 유효한 문항을 생성하지 못했습니다. 다시 시도해주세요."
+    assert (
+        job.error_message
+        == "AI가 유효한 문항을 생성하지 못했습니다. 다시 시도해주세요."
+    )
     assert exam.generation_status is ExamGenerationStatus.FAILED
     assert exam.generation_error == job.error_message
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_sanitizes_long_unexpected_exam_generation_errors():
+async def test_run_next_queued_job_sanitizes_long_generation_errors():
     long_error_message = "x" * 1500
     job = make_exam_generation_job()
     exam = make_exam()
@@ -1070,7 +1155,9 @@ async def test_run_next_queued_job_sanitizes_long_unexpected_exam_generation_err
         file_usecase=FakeFileUseCase(files={FILE_ID: file}),
         material_ingest_port=None,
         exam_repository=InMemoryExamRepository([exam]),
-        question_generation_port=FakeExamQuestionGenerationPort(error=RuntimeError(long_error_message)),
+        question_generation_port=FakeExamQuestionGenerationPort(
+            error=RuntimeError(long_error_message)
+        ),
     )
 
     handled = await worker.run_next_queued_job()
@@ -1083,7 +1170,7 @@ async def test_run_next_queued_job_sanitizes_long_unexpected_exam_generation_err
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_sanitizes_unexpected_exam_generation_errors():
+async def test_run_next_queued_job_sanitizes_generation_errors():
     job = make_exam_generation_job()
     exam = make_exam()
     material = make_completed_material()
@@ -1095,7 +1182,9 @@ async def test_run_next_queued_job_sanitizes_unexpected_exam_generation_errors()
         file_usecase=FakeFileUseCase(files={FILE_ID: file}),
         material_ingest_port=None,
         exam_repository=InMemoryExamRepository([exam]),
-        question_generation_port=FakeExamQuestionGenerationPort(error=RuntimeError("database password leaked")),
+        question_generation_port=FakeExamQuestionGenerationPort(
+            error=RuntimeError("database password leaked")
+        ),
     )
 
     handled = await worker.run_next_queued_job()
@@ -1107,7 +1196,7 @@ async def test_run_next_queued_job_sanitizes_unexpected_exam_generation_errors()
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_persists_exam_running_before_generation_call():
+async def test_run_next_queued_job_persists_exam_running_before_generation():
     events: list[str] = []
     job = make_exam_generation_job()
     exam = make_exam()
@@ -1137,7 +1226,9 @@ async def test_run_next_queued_job_persists_exam_running_before_generation_call(
     await worker.run_next_queued_job()
 
     assert events.index("save_job:running") < events.index("save_exam:running")
-    assert events.index("save_exam:running") < events.index("generate_questions")
+    assert events.index("save_exam:running") < events.index(
+        "generate_questions"
+    )
 
 
 @pytest.mark.asyncio
@@ -1157,7 +1248,10 @@ async def test_run_next_queued_job_completes_exam_result_evaluation_job():
                 ExamResultEvaluationCriterionScore(
                     criterion_id=CRITERION_ID,
                     score=87.5,
-                    feedback="핵심 개념 설명은 정확하지만 적용 예시가 다소 부족합니다.",
+                    feedback=(
+                        "핵심 개념 설명은 정확하지만 적용 예시가 다소 "
+                        "부족합니다."
+                    ),
                 )
             ],
         )
@@ -1186,10 +1280,15 @@ async def test_run_next_queued_job_completes_exam_result_evaluation_job():
     assert job.result["status"] == ExamResultStatus.COMPLETED.value
     assert result.status is ExamResultStatus.COMPLETED
     assert result.overall_score == 87.5
-    assert result.summary == "핵심 개념은 이해했지만 예시 설명은 보완이 필요합니다."
+    assert (
+        result.summary
+        == "핵심 개념은 이해했지만 예시 설명은 보완이 필요합니다."
+    )
     assert result.strengths == ["지도학습의 정의를 정확히 설명했습니다."]
     assert result.weaknesses == ["대표 알고리즘 예시가 부족했습니다."]
-    assert result.improvement_suggestions == ["분류와 회귀 예시를 함께 연습하세요."]
+    assert result.improvement_suggestions == [
+        "분류와 회귀 예시를 함께 연습하세요."
+    ]
     assert len(result.criteria_results) == 1
     assert result.criteria_results[0].criterion_id == CRITERION_ID
     assert result.criteria_results[0].score == 87.5
@@ -1205,21 +1304,28 @@ async def test_run_next_queued_job_completes_exam_result_evaluation_job():
     assert len(request.questions) == 1
     assert request.questions[0].max_score == exam.questions[0].max_score
     assert request.questions[0].intent_text == exam.questions[0].intent_text
-    assert request.questions[0].answer_options == exam.questions[0].answer_options
-    assert request.questions[0].correct_answer_text == exam.questions[0].correct_answer_text
+    assert (
+        request.questions[0].answer_options == exam.questions[0].answer_options
+    )
+    assert (
+        request.questions[0].correct_answer_text
+        == exam.questions[0].correct_answer_text
+    )
     assert len(request.turns) == 1
     assert request.turns[0].content == turn.content
     assert request.turns[0].metadata == turn.metadata
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_skips_exam_result_evaluation_when_completed_result_appears_during_result_lock():
+async def test_run_next_queued_job_skips_evaluation_when_result_completed():
     job = make_exam_result_evaluation_job()
     exam = make_exam_for_evaluation()
     session = make_completed_session()
     result = make_pending_result()
     turn = make_turn()
-    result_repository = CompletedResultAppearsDuringResultLockRepository([result])
+    result_repository = CompletedResultAppearsDuringResultLockRepository([
+        result
+    ])
     evaluation_port = FakeExamResultEvaluationPort()
     worker = AsyncJobWorker(
         repository=InMemoryAsyncJobRepository([job]),
@@ -1247,13 +1353,15 @@ async def test_run_next_queued_job_skips_exam_result_evaluation_when_completed_r
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_skips_exam_result_evaluation_when_result_completes_after_evaluation():
+async def test_run_next_queued_job_skips_save_after_result_completes():
     job = make_exam_result_evaluation_job()
     exam = make_exam_for_evaluation()
     session = make_completed_session()
     result = make_pending_result()
     turn = make_turn()
-    result_repository = CompletedResultAppearsAfterEvaluationRepository([result])
+    result_repository = CompletedResultAppearsAfterEvaluationRepository([
+        result
+    ])
     evaluation_port = FakeExamResultEvaluationPort()
     worker = AsyncJobWorker(
         repository=InMemoryAsyncJobRepository([job]),
@@ -1286,7 +1394,7 @@ async def test_run_next_queued_job_skips_exam_result_evaluation_when_result_comp
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_uses_payload_student_id_for_completion_reload():
+async def test_run_next_queued_job_uses_payload_student_id_on_reload():
     requested_by = JOB_REQUESTED_BY
     payload_student_id = STUDENT_ID
     job = make_exam_result_evaluation_job(requested_by=requested_by)
@@ -1294,7 +1402,9 @@ async def test_run_next_queued_job_uses_payload_student_id_for_completion_reload
     session = make_completed_session()
     result = make_pending_result()
     turn = make_turn()
-    result_repository = CompletedResultAppearsAfterEvaluationRepository([result])
+    result_repository = CompletedResultAppearsAfterEvaluationRepository([
+        result
+    ])
     evaluation_port = FakeExamResultEvaluationPort()
     worker = AsyncJobWorker(
         repository=InMemoryAsyncJobRepository([job]),
@@ -1382,7 +1492,7 @@ async def test_run_next_queued_job_computes_weighted_exam_result_score():
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_marks_exam_result_evaluation_failed_for_missing_criterion_scores():
+async def test_run_next_queued_job_fails_evaluation_for_missing_scores():
     job = make_exam_result_evaluation_job()
     exam = make_exam_for_evaluation()
     exam.criteria[0].weight = 70
@@ -1438,7 +1548,7 @@ async def test_run_next_queued_job_marks_exam_result_evaluation_failed_for_missi
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_completes_exam_result_evaluation_with_quantitative_multiple_choice_full_credit():
+async def test_run_next_queued_job_scores_multiple_choice_full_credit():
     job = make_exam_result_evaluation_job()
     exam = make_multiple_choice_exam_for_evaluation()
     session = make_completed_session()
@@ -1468,7 +1578,10 @@ async def test_run_next_queued_job_completes_exam_result_evaluation_with_quantit
     assert job.status is AsyncJobStatus.COMPLETED
     assert result.status is ExamResultStatus.COMPLETED
     assert result.overall_score == 100
-    assert result.summary == "객관식/주관식 1문항 중 1문항을 맞혀 일반 정량 점수로 반영했습니다."
+    assert (
+        result.summary == "객관식/주관식 1문항 중 1문항을 맞혀 "
+        "일반 정량 점수로 반영했습니다."
+    )
     assert len(result.criteria_results) == 1
     assert result.criteria_results[0].criterion_id == CRITERION_ID
     assert result.criteria_results[0].score == 100
@@ -1476,7 +1589,7 @@ async def test_run_next_queued_job_completes_exam_result_evaluation_with_quantit
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_completes_exam_result_evaluation_with_quantitative_subjective_full_credit():
+async def test_run_next_queued_job_scores_subjective_full_credit():
     job = make_exam_result_evaluation_job()
     exam = make_subjective_exam_for_evaluation()
     session = make_completed_session()
@@ -1512,7 +1625,7 @@ async def test_run_next_queued_job_completes_exam_result_evaluation_with_quantit
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_scores_subjective_with_exact_answer_without_llm_evaluation():
+async def test_run_next_queued_job_scores_subjective_without_llm():
     job = make_exam_result_evaluation_job()
     exam = make_subjective_exam_for_evaluation()
     session = make_completed_session()
@@ -1545,7 +1658,7 @@ async def test_run_next_queued_job_scores_subjective_with_exact_answer_without_l
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_keeps_objective_only_criteria_when_merging_results():
+async def test_run_next_queued_job_keeps_objective_only_criteria():
     job = make_exam_result_evaluation_job()
     exam = make_mixed_exam_for_evaluation()
     session = make_completed_session()
@@ -1617,7 +1730,7 @@ async def test_run_next_queued_job_keeps_objective_only_criteria_when_merging_re
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_scores_zero_without_llm_when_objective_metadata_missing():
+async def test_run_next_queued_job_scores_zero_without_objective_metadata():
     job = make_exam_result_evaluation_job()
     exam = make_multiple_choice_exam_for_evaluation()
     session = make_completed_session()
@@ -1644,12 +1757,15 @@ async def test_run_next_queued_job_scores_zero_without_llm_when_objective_metada
     assert job.status is AsyncJobStatus.COMPLETED
     assert result.status is ExamResultStatus.COMPLETED
     assert result.overall_score == 0
-    assert result.summary == "객관식/주관식 1문항 중 0문항을 맞혀 일반 정량 점수로 반영했습니다."
+    assert (
+        result.summary == "객관식/주관식 1문항 중 0문항을 맞혀 "
+        "일반 정량 점수로 반영했습니다."
+    )
     assert len(evaluation_port.requests) == 0
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_scores_objective_wrong_answer_without_llm_fallback():
+async def test_run_next_queued_job_scores_wrong_objective_without_llm():
     job = make_exam_result_evaluation_job()
     exam = make_subjective_exam_for_evaluation()
     session = make_completed_session()
@@ -1683,7 +1799,7 @@ async def test_run_next_queued_job_scores_objective_wrong_answer_without_llm_fal
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_combines_objective_quantitative_and_oral_rubric_scores():
+async def test_run_next_queued_job_combines_objective_and_oral_scores():
     job = make_exam_result_evaluation_job()
     exam = make_mixed_exam_for_evaluation()
     session = make_completed_session()
@@ -1698,7 +1814,10 @@ async def test_run_next_queued_job_combines_objective_quantitative_and_oral_rubr
             sequence=2,
             role=ExamTurnRole.STUDENT,
             event_type=ExamTurnEventType.ANSWER,
-            content="장점은 정확한 지도 신호를 활용하는 것이고 단점은 레이블 비용이 큽니다.",
+            content=(
+                "장점은 정확한 지도 신호를 활용하는 것이고 "
+                "단점은 레이블 비용이 큽니다."
+            ),
             created_at=datetime(2026, 4, 1, 9, 40, tzinfo=UTC),
             metadata={"question_number": "2"},
         ),
@@ -1739,14 +1858,21 @@ async def test_run_next_queued_job_combines_objective_quantitative_and_oral_rubr
     assert job.status is AsyncJobStatus.COMPLETED
     assert result.status is ExamResultStatus.COMPLETED
     assert result.overall_score == 90
-    assert result.summary == "객관식/주관식 1문항 중 1문항을 맞혀 일반 정량 점수로 반영했습니다. 구술형 문항은 루브릭 평가를 함께 반영했습니다."
+    assert (
+        result.summary == "객관식/주관식 1문항 중 1문항을 맞혀 "
+        "일반 정량 점수로 반영했습니다. 구술형 문항은 루브릭 평가를 "
+        "함께 반영했습니다."
+    )
     assert len(evaluation_port.requests) == 1
     assert len(evaluation_port.requests[0].questions) == 1
-    assert evaluation_port.requests[0].questions[0].question_type is ExamQuestionType.ORAL
+    assert (
+        evaluation_port.requests[0].questions[0].question_type
+        is ExamQuestionType.ORAL
+    )
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_marks_exam_result_evaluation_failed_for_invalid_payload():
+async def test_run_next_queued_job_fails_evaluation_for_invalid_payload():
     job = make_exam_result_evaluation_job(payload={"exam_id": str(EXAM_ID)})
     evaluation_port = FakeExamResultEvaluationPort()
     worker = AsyncJobWorker(
@@ -1757,8 +1883,12 @@ async def test_run_next_queued_job_marks_exam_result_evaluation_failed_for_inval
         material_ingest_port=None,
         exam_repository=InMemoryExamRepository([make_exam_for_evaluation()]),
         question_generation_port=None,
-        exam_session_repository=InMemoryExamSessionRepository([make_completed_session()]),
-        exam_result_repository=InMemoryExamResultRepository([make_pending_result()]),
+        exam_session_repository=InMemoryExamSessionRepository([
+            make_completed_session()
+        ]),
+        exam_result_repository=InMemoryExamResultRepository([
+            make_pending_result()
+        ]),
         exam_turn_repository=InMemoryExamTurnRepository([make_turn()]),
         result_evaluation_port=evaluation_port,
     )
@@ -1772,7 +1902,7 @@ async def test_run_next_queued_job_marks_exam_result_evaluation_failed_for_inval
 
 
 @pytest.mark.asyncio
-async def test_run_next_queued_job_marks_exam_result_evaluation_failed_when_port_errors():
+async def test_run_next_queued_job_fails_evaluation_when_port_errors():
     class EvaluationFailedException(CustomException):
         code = 502
         error_code = "EXAM_RESULT_EVALUATION__FAILED"
@@ -1794,7 +1924,9 @@ async def test_run_next_queued_job_marks_exam_result_evaluation_failed_when_port
         exam_session_repository=InMemoryExamSessionRepository([session]),
         exam_result_repository=InMemoryExamResultRepository([result]),
         exam_turn_repository=InMemoryExamTurnRepository([turn]),
-        result_evaluation_port=FakeExamResultEvaluationPort(error=EvaluationFailedException()),
+        result_evaluation_port=FakeExamResultEvaluationPort(
+            error=EvaluationFailedException()
+        ),
     )
 
     handled = await worker.run_next_queued_job()

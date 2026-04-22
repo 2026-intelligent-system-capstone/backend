@@ -6,7 +6,9 @@ from app.auth.domain.entity import CurrentUser
 from app.classroom.domain.entity import (
     Classroom,
     ClassroomMaterial,
+    ClassroomMaterialIngestCapability,
     ClassroomMaterialIngestStatus,
+    ClassroomMaterialOriginalFile,
 )
 from app.classroom.domain.exception import (
     ClassroomInvalidProfessorRoleDomainException,
@@ -106,9 +108,10 @@ def test_update_details_normalizes_student_ids_and_updates_fields():
 def test_invited_student_ids_deduplicates_new_students():
     classroom = make_classroom()
 
-    invited_student_ids = classroom.invited_student_ids(
-        [SECOND_STUDENT_ID, SECOND_STUDENT_ID]
-    )
+    invited_student_ids = classroom.invited_student_ids([
+        SECOND_STUDENT_ID,
+        SECOND_STUDENT_ID,
+    ])
 
     assert invited_student_ids == [STUDENT_ID, SECOND_STUDENT_ID]
 
@@ -169,13 +172,24 @@ def test_create_classroom_factory_normalizes_professors_and_students():
 
 
 def test_classroom_material_factory_and_update_rules():
-    material = ClassroomMaterial.create(
+    material = ClassroomMaterial.create_file(
         classroom_id=uuid4(),
         file_id=uuid4(),
         title="1주차 자료",
         week=1,
         description="소개 자료",
         uploaded_by=PROFESSOR_ID,
+        original_file=ClassroomMaterialOriginalFile(
+            file_name="week1.pdf",
+            file_path="classrooms/materials/week1.pdf",
+            file_extension="pdf",
+            file_size=10,
+            mime_type="application/pdf",
+        ),
+        ingest_capability=ClassroomMaterialIngestCapability(
+            supported=True,
+            reason=None,
+        ),
     )
     replacement_file_id = uuid4()
 
@@ -185,7 +199,20 @@ def test_classroom_material_factory_and_update_rules():
         description=None,
         replace_description=True,
     )
-    old_file_id = material.replace_file(replacement_file_id)
+    old_file_id = material.replace_file(
+        file_id=replacement_file_id,
+        original_file=ClassroomMaterialOriginalFile(
+            file_name="week2.pdf",
+            file_path="classrooms/materials/week2.pdf",
+            file_extension="pdf",
+            file_size=20,
+            mime_type="application/pdf",
+        ),
+        ingest_capability=ClassroomMaterialIngestCapability(
+            supported=True,
+            reason=None,
+        ),
+    )
 
     assert material.title == "수정 자료"
     assert material.week == 2

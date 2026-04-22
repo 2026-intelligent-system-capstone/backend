@@ -13,8 +13,6 @@ from app.classroom.domain.usecase import ClassroomUseCase
 from app.exam.application.exception import (
     ExamNotFoundException,
     ExamQuestionGenerationAlreadyInProgressException,
-    ExamQuestionGenerationContextUnavailableException,
-    ExamQuestionGenerationFailedException,
     ExamQuestionGenerationMaterialIngestFailedException,
     ExamQuestionGenerationMaterialNotFoundException,
     ExamQuestionGenerationMaterialNotReadyException,
@@ -38,7 +36,6 @@ from app.exam.domain.entity import (
     Exam,
     ExamGenerationStatus,
     ExamQuestion,
-    ExamQuestionStatus,
     ExamQuestionType,
     ExamQuestionTypeStrategy,
     ExamResult,
@@ -75,7 +72,6 @@ from app.user.domain.entity import UserRole
 from core.db.session import session
 from core.db.transactional import transactional
 
-
 UNIQUE_ATTEMPT_CONSTRAINT_NAME = "uq_t_exam_session_exam_student_attempt"
 SINGLE_IN_PROGRESS_INDEX_NAME = "ix_t_exam_session_single_in_progress"
 
@@ -88,7 +84,7 @@ class ExamService(ExamUseCase):
         strategy: ExamQuestionTypeStrategy,
     ) -> list[ExamQuestionGenerationTypeCount]:
         ordered_types = strategy.ordered_question_types()
-        counts = {question_type: 0 for question_type in ordered_types}
+        counts = dict.fromkeys(ordered_types, 0)
 
         seeded_types = ordered_types[:total_question_count]
         for question_type in seeded_types:
@@ -113,7 +109,9 @@ class ExamService(ExamUseCase):
         ]
 
     def _map_exam_session_integrity_error(self, error: IntegrityError) -> None:
-        awaitable_message = str(error.orig) if error.orig is not None else str(error)
+        awaitable_message = (
+            str(error.orig) if error.orig is not None else str(error)
+        )
         if SINGLE_IN_PROGRESS_INDEX_NAME in awaitable_message:
             raise ExamSessionAlreadyInProgressException() from error
         if UNIQUE_ATTEMPT_CONSTRAINT_NAME in awaitable_message:
@@ -396,7 +394,10 @@ class ExamService(ExamUseCase):
                     or "rubric_text" in command.model_fields_set
                 )
             )
-            if should_validate_oral and not (effective_rubric_text or "").strip():
+            if (
+                should_validate_oral
+                and not (effective_rubric_text or "").strip()
+            ):
                 raise ExamQuestionInvalidPayloadException()
             should_validate_subjective = (
                 effective_question_type is ExamQuestionType.SUBJECTIVE
@@ -405,9 +406,10 @@ class ExamService(ExamUseCase):
                     or "correct_answer_text" in command.model_fields_set
                 )
             )
-            if should_validate_subjective and not (
-                effective_correct_answer_text or ""
-            ).strip():
+            if (
+                should_validate_subjective
+                and not (effective_correct_answer_text or "").strip()
+            ):
                 raise ExamQuestionInvalidPayloadException()
             should_validate_multiple_choice = (
                 effective_question_type is ExamQuestionType.MULTIPLE_CHOICE
@@ -422,7 +424,10 @@ class ExamService(ExamUseCase):
                     raise ExamQuestionInvalidPayloadException()
                 if effective_correct_answer_text is None:
                     raise ExamQuestionInvalidPayloadException()
-                if effective_correct_answer_text not in effective_answer_options:
+                if (
+                    effective_correct_answer_text
+                    not in effective_answer_options
+                ):
                     raise ExamQuestionInvalidPayloadException()
             question = exam.update_question(
                 question_id=question_id,
@@ -484,7 +489,10 @@ class ExamService(ExamUseCase):
         )
         if current_user.role not in {UserRole.PROFESSOR, UserRole.ADMIN}:
             raise AuthForbiddenException()
-        if self.question_generation_port is None or self.async_job_service is None:
+        if (
+            self.question_generation_port is None
+            or self.async_job_service is None
+        ):
             raise ExamQuestionGenerationUnavailableException()
         if exam.generation_status in {
             ExamGenerationStatus.QUEUED,
@@ -650,18 +658,20 @@ class ExamService(ExamUseCase):
             now=datetime.now(UTC),
         ):
             raise ExamSessionUnavailableException()
-        existing_results = await self.result_repository.list_by_exam_and_student(
-            exam_id=exam.id,
-            student_id=current_user.id,
-        )
-        if self._has_completed_exam_result(results=existing_results):
-            raise ExamSessionUnavailableException()
         existing_sessions = (
             await self.session_repository.list_by_exam_and_student_for_update(
                 exam_id=exam.id,
                 student_id=current_user.id,
             )
         )
+        existing_results = (
+            await self.result_repository.list_by_exam_and_student_for_update(
+                exam_id=exam.id,
+                student_id=current_user.id,
+            )
+        )
+        if self._has_completed_exam_result(results=existing_results):
+            raise ExamSessionUnavailableException()
         try:
             attempt_number = exam.resolve_next_attempt_number(
                 sessions=existing_sessions,
@@ -689,8 +699,6 @@ class ExamService(ExamUseCase):
         )
         session_entity.expires_at = secret.expires_at
         session_entity.provider_session_id = secret.provider_session_id
-        await self.session_repository.save(session_entity)
-        await session.flush()
         return StartedExamSession(
             session=session_entity,
             client_secret=secret.value,
@@ -817,9 +825,12 @@ class ExamService(ExamUseCase):
         session = await self.session_repository.get_by_id(session_id)
         if session is None:
             raise AuthForbiddenException()
-        results = await self.result_repository.list_by_exam_and_student(
-            exam_id=exam_id,
-            student_id=current_user.id,
+        _ = command.occurred_at
+        results = (
+            await self.result_repository.list_by_exam_and_student_for_update(
+                exam_id=exam_id,
+                student_id=current_user.id,
+            )
         )
         result = exam.finalize_result(
             session=session,

@@ -22,7 +22,8 @@ UNIQUE_ATTEMPT_CONSTRAINT_NAME = "uq_t_exam_session_exam_student_attempt"
 SINGLE_IN_PROGRESS_INDEX_NAME = "ix_t_exam_session_single_in_progress"
 DUPLICATE_ATTEMPT_ERROR_MESSAGE = (
     "Cannot add unique attempt constraint: duplicate "
-    "(exam_id, student_id, attempt_number) rows already exist in t_exam_session"
+    "(exam_id, student_id, attempt_number) rows already exist in "
+    "t_exam_session"
 )
 DUPLICATE_IN_PROGRESS_ERROR_MESSAGE = (
     "Cannot add single in-progress constraint: multiple in_progress sessions "

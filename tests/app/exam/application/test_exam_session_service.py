@@ -3,8 +3,13 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
-from app.async_job.domain.entity import AsyncJob, AsyncJobTargetType, AsyncJobType
+from app.async_job.domain.entity import (
+    AsyncJob,
+    AsyncJobTargetType,
+    AsyncJobType,
+)
 from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
 from app.classroom.domain.entity import Classroom
@@ -39,7 +44,6 @@ from app.exam.domain.exception import (
     ExamSessionNotCompletedDomainException,
     ExamSessionOwnershipForbiddenDomainException,
 )
-from sqlalchemy.exc import IntegrityError
 from app.exam.domain.repository import (
     ExamRepository,
     ExamResultRepository,
@@ -147,6 +151,17 @@ class InMemoryExamResultRepository(ExamResultRepository):
             if result.exam_id == exam_id and result.student_id == student_id
         ]
 
+    async def list_by_exam_and_student_for_update(
+        self,
+        *,
+        exam_id: UUID,
+        student_id: UUID,
+    ) -> Sequence[ExamResult]:
+        return await self.list_by_exam_and_student(
+            exam_id=exam_id,
+            student_id=student_id,
+        )
+
 
 class InMemoryExamTurnRepository(ExamTurnRepository):
     def __init__(self):
@@ -192,11 +207,83 @@ class FailIfSecretCreatedRealtimeSessionPort(RealtimeSessionPort):
     async def create_client_secret(
         self,
         *,
-        instructions: str,
+        _instructions: str,
     ) -> RealtimeClientSecret:
         raise AssertionError(
-            "create_client_secret must not be called before session persistence succeeds"
+            "create_client_secret must not be called before session "
+            "persistence succeeds"
         )
+
+
+class CompletedResultAppearsAfterLockSessionRepository(
+    InMemoryExamSessionRepository
+):
+    def __init__(self, *, result_repository: InMemoryExamResultRepository):
+        super().__init__()
+        self.result_repository = result_repository
+        self.completed_result_injected = False
+
+    async def list_by_exam_and_student_for_update(
+        self,
+        *,
+        exam_id: UUID,
+        student_id: UUID,
+    ) -> Sequence[ExamSession]:
+        if not self.completed_result_injected:
+            completed_result = ExamResult(
+                exam_id=exam_id,
+                session_id=UUID("77777777-7777-7777-7777-777777777777"),
+                student_id=student_id,
+                status=ExamResultStatus.COMPLETED,
+                submitted_at=ENDS_AT,
+            )
+            await self.result_repository.save(completed_result)
+            self.completed_result_injected = True
+        return await super().list_by_exam_and_student_for_update(
+            exam_id=exam_id,
+            student_id=student_id,
+        )
+
+
+class CompletedResultAppearsDuringResultLockRepository(
+    InMemoryExamResultRepository
+):
+    def __init__(self):
+        super().__init__()
+        self.completed_result_injected = False
+
+    async def list_by_exam_and_student_for_update(
+        self,
+        *,
+        exam_id: UUID,
+        student_id: UUID,
+    ) -> Sequence[ExamResult]:
+        if not self.completed_result_injected:
+            completed_result = ExamResult(
+                exam_id=exam_id,
+                session_id=UUID("88888888-8888-8888-8888-888888888888"),
+                student_id=student_id,
+                status=ExamResultStatus.COMPLETED,
+                submitted_at=ENDS_AT,
+            )
+            await self.save(completed_result)
+            self.completed_result_injected = True
+        return await super().list_by_exam_and_student_for_update(
+            exam_id=exam_id,
+            student_id=student_id,
+        )
+
+
+class FailOnSecondSessionSaveRepository(InMemoryExamSessionRepository):
+    def __init__(self):
+        super().__init__()
+        self.save_calls = 0
+
+    async def save(self, entity: ExamSession) -> None:
+        self.save_calls += 1
+        if self.save_calls == 2:
+            raise AssertionError("session must not be persisted twice")
+        await super().save(entity)
 
 
 class FakeAsyncJobService:
@@ -214,16 +301,14 @@ class FakeAsyncJobService:
         payload: dict[str, object],
         dedupe_key: str | None = None,
     ) -> AsyncJob:
-        self.enqueue_calls.append(
-            {
-                "job_type": job_type,
-                "target_type": target_type,
-                "target_id": target_id,
-                "requested_by": requested_by,
-                "payload": payload,
-                "dedupe_key": dedupe_key,
-            }
-        )
+        self.enqueue_calls.append({
+            "job_type": job_type,
+            "target_type": target_type,
+            "target_id": target_id,
+            "requested_by": requested_by,
+            "payload": payload,
+            "dedupe_key": dedupe_key,
+        })
         job = AsyncJob.enqueue(
             job_type=job_type,
             target_type=target_type,
@@ -520,7 +605,6 @@ def test_exam_result_finalize_from_evaluation_uses_weighted_score():
     assert result.summary == "가중치 기준 평가 완료"
 
 
-
 def test_exam_result_finalize_from_evaluation_rejects_missing_criteria():
     result = ExamResult.pending(
         exam_id=EXAM_ID,
@@ -546,7 +630,9 @@ def test_exam_result_finalize_from_evaluation_rejects_missing_criteria():
     criteria[0].id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     criteria[1].id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
-    with pytest.raises(ValueError, match="criterion 결과가 시험 기준과 일치하지 않습니다"):
+    with pytest.raises(
+        ValueError, match="criterion 결과가 시험 기준과 일치하지 않습니다"
+    ):
         result.finalize_from_evaluation(
             summary="부분 평가",
             strengths=[],
@@ -605,10 +691,13 @@ def test_exam_aggregate_session_and_result_rules():
     assert turn.sequence == 1
     assert turn.session_id == session.id
     assert session.last_activity_at == ENDS_AT
-    assert exam.find_result_for_session(
-        results=[result],
-        session_id=session.id,
-    ) is result
+    assert (
+        exam.find_result_for_session(
+            results=[result],
+            session_id=session.id,
+        )
+        is result
+    )
 
 
 def test_exam_aggregate_validates_ownership_and_finalize_rules():
@@ -742,7 +831,7 @@ async def test_start_exam_session_blocks_when_session_already_in_progress():
 
 
 @pytest.mark.asyncio
-async def test_start_exam_session_assigns_second_attempt_when_one_completed_exists():
+async def test_start_exam_session_assigns_second_attempt_after_completion():
     completed_session = ExamSession(
         exam_id=EXAM_ID,
         student_id=STUDENT_ID,
@@ -809,7 +898,7 @@ async def test_start_exam_session_blocks_when_max_attempts_exceeded():
 
 
 @pytest.mark.asyncio
-async def test_start_exam_session_blocks_when_student_already_has_completed_result():
+async def test_start_exam_session_blocks_when_result_completed():
     session_repository = InMemoryExamSessionRepository()
     result_repository = InMemoryExamResultRepository()
     completed_result = ExamResult(
@@ -844,6 +933,91 @@ async def test_start_exam_session_blocks_when_student_already_has_completed_resu
 
 
 @pytest.mark.asyncio
+async def test_start_exam_session_blocks_after_session_lock_race():
+    result_repository = InMemoryExamResultRepository()
+    session_repository = CompletedResultAppearsAfterLockSessionRepository(
+        result_repository=result_repository,
+    )
+    realtime_port = FakeRealtimeSessionPort()
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam(max_attempts=2)]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=realtime_port,
+    )
+
+    with pytest.raises(ExamSessionUnavailableException):
+        await service.start_exam_session(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+    assert session_repository.sessions == {}
+    assert realtime_port.calls == []
+
+
+@pytest.mark.asyncio
+async def test_start_exam_session_blocks_during_result_lock_race():
+    result_repository = CompletedResultAppearsDuringResultLockRepository()
+    realtime_port = FakeRealtimeSessionPort()
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam(max_attempts=2)]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=InMemoryExamSessionRepository(),
+        result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=realtime_port,
+    )
+
+    with pytest.raises(ExamSessionUnavailableException):
+        await service.start_exam_session(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+    assert result_repository.completed_result_injected is True
+    assert realtime_port.calls == []
+
+
+@pytest.mark.asyncio
+async def test_start_exam_session_does_not_persist_twice_after_secret():
+    session_repository = FailOnSecondSessionSaveRepository()
+    result_repository = InMemoryExamResultRepository()
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam(max_attempts=2)]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    result = await service.start_exam_session(
+        exam_id=EXAM_ID,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+    )
+
+    assert result.client_secret == "ek_test_secret"
+    assert result.session.provider_session_id == "sess_test_123"
+    assert result.session.expires_at == SECRET_EXPIRES_AT
+    assert session_repository.save_calls == 1
+    assert session_repository.sessions[
+        result.session.id
+    ].provider_session_id == ("sess_test_123")
+
+
+@pytest.mark.asyncio
 async def test_start_exam_session_maps_in_progress_integrity_error():
     session_repository = InMemoryExamSessionRepository()
     session_repository.raise_on_save = IntegrityError(
@@ -871,7 +1045,7 @@ async def test_start_exam_session_maps_in_progress_integrity_error():
 
 
 @pytest.mark.asyncio
-async def test_start_exam_session_does_not_create_secret_when_session_save_fails():
+async def test_start_exam_session_skips_secret_when_save_fails():
     session_repository = InMemoryExamSessionRepository()
     session_repository.raise_on_save = IntegrityError(
         statement=None,
@@ -1097,7 +1271,7 @@ async def test_record_exam_turn_rejects_other_students_session():
 
 
 @pytest.mark.asyncio
-async def test_complete_exam_session_marks_session_completed_and_enqueues_evaluation_job():
+async def test_complete_exam_session_enqueues_evaluation_job():
     now = datetime(2026, 4, 1, 10, 0, tzinfo=UTC)
     session_repository = InMemoryExamSessionRepository()
     session = ExamSession(

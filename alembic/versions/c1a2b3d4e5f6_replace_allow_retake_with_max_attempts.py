@@ -5,9 +5,10 @@ Revises: b7d5e6a1c2f4
 Create Date: 2026-04-07 14:30:00.000000
 
 NOTE:
-- allow_retake=true legacy data is backfilled to max_attempts=2 by policy decision.
-- This migration is intentionally not reversible because boolean allow_retake cannot
-  faithfully restore max_attempts values greater than 2.
+- allow_retake=true legacy data is backfilled to max_attempts=2 by policy
+  decision.
+- This migration is intentionally not reversible because boolean allow_retake
+  cannot faithfully restore max_attempts values greater than 2.
 """
 
 from __future__ import annotations
@@ -66,7 +67,9 @@ def upgrade() -> None:
     else:
         op.execute(
             sa.text(
-                "UPDATE t_exam SET max_attempts = :value WHERE max_attempts IS NULL"
+                "UPDATE t_exam "
+                "SET max_attempts = :value "
+                "WHERE max_attempts IS NULL"
             ).bindparams(value=TEMPORARY_MAX_ATTEMPTS_DEFAULT)
         )
 

@@ -55,6 +55,20 @@ class ExamQuestionGenerationFailedException(CustomException):
     message = "AI가 유효한 문항을 생성하지 못했습니다. 다시 시도해주세요."
 
 
+class ExamQuestionGenerationAlreadyInProgressException(CustomException):
+    code = 409
+    error_code = "EXAM_QUESTION_GENERATION__ALREADY_IN_PROGRESS"
+    message = "이미 AI 문항 생성이 진행 중입니다. 완료 후 다시 시도해주세요."
+
+
+class ExamQuestionInvalidPayloadException(CustomException):
+    code = 422
+    error_code = "EXAM_QUESTION__INVALID_PAYLOAD"
+    message = (
+        "문항 입력 값이 유효하지 않습니다. 객관식 보기와 정답을 확인해주세요."
+    )
+
+
 class ExamSessionAlreadyInProgressException(CustomException):
     code = 409
     error_code = "EXAM_SESSION__ALREADY_IN_PROGRESS"
@@ -65,3 +79,9 @@ class ExamSessionMaxAttemptsExceededException(CustomException):
     code = 409
     error_code = "EXAM_SESSION__MAX_ATTEMPTS_EXCEEDED"
     message = "허용된 평가 진행 횟수를 초과했습니다."
+
+
+class ExamSessionUnavailableException(CustomException):
+    code = 409
+    error_code = "EXAM_SESSION__UNAVAILABLE"
+    message = "현재 이 평가에 입장할 수 없습니다."

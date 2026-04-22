@@ -79,9 +79,7 @@ def _build_exam_question_payload(
         question_text=question.question_text if expose_rubric else "",
         intent_text=question.intent_text,
         rubric_text=question.rubric_text if expose_rubric else "",
-        answer_options=(
-            list(question.answer_options) if expose_answer else []
-        ),
+        answer_options=(list(question.answer_options) if expose_answer else []),
         correct_answer_text=(
             question.correct_answer_text if expose_answer else None
         ),
@@ -201,12 +199,14 @@ def _build_exam_result_payload(result) -> ExamResultPayload:
 
 
 def _build_student_exam_payload(student_exam) -> StudentExamPayload:
+    exam_payload = _build_exam_payload(
+        student_exam.exam,
+        expose_answer=False,
+        expose_rubric=False,
+    ).model_dump()
+    exam_payload["questions"] = []
     return StudentExamPayload(
-        **_build_exam_payload(
-            student_exam.exam,
-            expose_answer=False,
-            expose_rubric=False,
-        ).model_dump(),
+        **exam_payload,
         is_completed=student_exam.is_completed,
         can_enter=student_exam.can_enter,
         latest_result=(
@@ -296,6 +296,12 @@ async def list_exams(
                 exam,
                 expose_answer=_should_expose_question_answer(current_user),
                 expose_rubric=_should_expose_question_answer(current_user),
+            ).model_copy(update={"questions": []})
+            if current_user.role == UserRole.STUDENT
+            else _build_exam_payload(
+                exam,
+                expose_answer=_should_expose_question_answer(current_user),
+                expose_rubric=_should_expose_question_answer(current_user),
             )
             for exam in exams
         ]
@@ -319,13 +325,14 @@ async def get_exam(
         exam_id=exam_id,
         current_user=current_user,
     )
-    return ExamResponse(
-        data=_build_exam_payload(
-            exam,
-            expose_answer=_should_expose_question_answer(current_user),
-            expose_rubric=_should_expose_question_answer(current_user),
-        )
+    exam_payload = _build_exam_payload(
+        exam,
+        expose_answer=_should_expose_question_answer(current_user),
+        expose_rubric=_should_expose_question_answer(current_user),
     )
+    if current_user.role == UserRole.STUDENT:
+        exam_payload = exam_payload.model_copy(update={"questions": []})
+    return ExamResponse(data=exam_payload)
 
 
 @router.post(

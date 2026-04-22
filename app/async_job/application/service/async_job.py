@@ -24,7 +24,9 @@ class AsyncJobService:
     ) -> AsyncJob:
         if dedupe_key is not None:
             async with self.repository.dedupe_key_lock(dedupe_key=dedupe_key):
-                existing_job = await self.repository.get_active_by_dedupe_key(dedupe_key=dedupe_key)
+                existing_job = await self.repository.get_active_by_dedupe_key(
+                    dedupe_key=dedupe_key
+                )
                 if existing_job is not None:
                     return existing_job
 

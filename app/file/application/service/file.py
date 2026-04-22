@@ -1,5 +1,5 @@
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.file.application.exception import (
     FileDeleteFailedException,
@@ -21,6 +21,20 @@ class FileService(FileUseCase):
         self.repository = repository
         self.storage = storage
 
+    @staticmethod
+    def _sanitize_display_file_name(file_name: str) -> str:
+        normalized_name = file_name.replace("\\", "/")
+        sanitized_name = Path(normalized_name).name.strip()
+        if sanitized_name in {"", ".", ".."}:
+            return "upload"
+        return sanitized_name
+
+    @classmethod
+    def _build_storage_file_name(cls, file_name: str) -> str:
+        sanitized_name = cls._sanitize_display_file_name(file_name)
+        suffix = Path(sanitized_name).suffix.lower()
+        return f"{uuid4().hex}{suffix}"
+
     @transactional
     async def create_file(self, command: CreateFileCommand) -> File:
         file = File(
@@ -41,17 +55,25 @@ class FileService(FileUseCase):
         directory: str,
         status: FileStatus = FileStatus.PENDING,
     ) -> File:
+        display_file_name = self._sanitize_display_file_name(
+            file_upload.file_name
+        )
+        storage_file_name = self._build_storage_file_name(file_upload.file_name)
         try:
             stored_file = await self.storage.upload(
-                file_upload=file_upload,
+                file_upload=FileUploadData(
+                    file_name=storage_file_name,
+                    mime_type=file_upload.mime_type,
+                    content=file_upload.content,
+                ),
                 directory=directory,
             )
         except Exception as exc:
             raise FileUploadFailedException() from exc
 
-        file_extension = Path(file_upload.file_name).suffix.lstrip(".").lower()
+        file_extension = Path(display_file_name).suffix.lstrip(".").lower()
         file = File(
-            file_name=file_upload.file_name,
+            file_name=display_file_name,
             file_path=stored_file.path,
             file_extension=file_extension,
             file_size=stored_file.size,
@@ -87,14 +109,10 @@ class FileService(FileUseCase):
 
         file.update(
             file_name=(
-                command.file_name
-                if "file_name" in delivered_fields
-                else None
+                command.file_name if "file_name" in delivered_fields else None
             ),
             file_path=(
-                command.file_path
-                if "file_path" in delivered_fields
-                else None
+                command.file_path if "file_path" in delivered_fields else None
             ),
             file_extension=(
                 command.file_extension
@@ -102,18 +120,12 @@ class FileService(FileUseCase):
                 else None
             ),
             file_size=(
-                command.file_size
-                if "file_size" in delivered_fields
-                else None
+                command.file_size if "file_size" in delivered_fields else None
             ),
             mime_type=(
-                command.mime_type
-                if "mime_type" in delivered_fields
-                else None
+                command.mime_type if "mime_type" in delivered_fields else None
             ),
-            status=(
-                command.status if "status" in delivered_fields else None
-            ),
+            status=(command.status if "status" in delivered_fields else None),
         )
 
         await self.repository.save(file)
