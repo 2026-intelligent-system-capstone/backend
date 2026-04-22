@@ -1,7 +1,9 @@
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.file.application.exception import (
+    FileDeleteFailedException,
+    FileDownloadFailedException,
     FileNotFoundException,
     FileUploadFailedException,
 )
@@ -18,6 +20,20 @@ class FileService(FileUseCase):
     def __init__(self, *, repository: FileRepository, storage: FileStorage):
         self.repository = repository
         self.storage = storage
+
+    @staticmethod
+    def _sanitize_display_file_name(file_name: str) -> str:
+        normalized_name = file_name.replace("\\", "/")
+        sanitized_name = Path(normalized_name).name.strip()
+        if sanitized_name in {"", ".", ".."}:
+            return "upload"
+        return sanitized_name
+
+    @classmethod
+    def _build_storage_file_name(cls, file_name: str) -> str:
+        sanitized_name = cls._sanitize_display_file_name(file_name)
+        suffix = Path(sanitized_name).suffix.lower()
+        return f"{uuid4().hex}{suffix}"
 
     @transactional
     async def create_file(self, command: CreateFileCommand) -> File:
@@ -39,17 +55,25 @@ class FileService(FileUseCase):
         directory: str,
         status: FileStatus = FileStatus.PENDING,
     ) -> File:
+        display_file_name = self._sanitize_display_file_name(
+            file_upload.file_name
+        )
+        storage_file_name = self._build_storage_file_name(file_upload.file_name)
         try:
             stored_file = await self.storage.upload(
-                file_upload=file_upload,
+                file_upload=FileUploadData(
+                    file_name=storage_file_name,
+                    mime_type=file_upload.mime_type,
+                    content=file_upload.content,
+                ),
                 directory=directory,
             )
         except Exception as exc:
             raise FileUploadFailedException() from exc
 
-        file_extension = Path(file_upload.file_name).suffix.lstrip(".").lower()
+        file_extension = Path(display_file_name).suffix.lstrip(".").lower()
         file = File(
-            file_name=file_upload.file_name,
+            file_name=display_file_name,
             file_path=stored_file.path,
             file_extension=file_extension,
             file_size=stored_file.size,
@@ -70,7 +94,10 @@ class FileService(FileUseCase):
 
     async def get_file_download(self, file_id: UUID) -> FileDownload:
         file = await self.get_file(file_id)
-        stored_file = await self.storage.open(path=file.file_path)
+        try:
+            stored_file = await self.storage.open(path=file.file_path)
+        except Exception as exc:
+            raise FileDownloadFailedException() from exc
         return FileDownload(file=file, content=stored_file.content)
 
     @transactional
@@ -80,21 +107,26 @@ class FileService(FileUseCase):
         file = await self.get_file(file_id)
         delivered_fields = command.model_fields_set
 
-        if "file_name" in delivered_fields and command.file_name is not None:
-            file.file_name = command.file_name
-        if "file_path" in delivered_fields and command.file_path is not None:
-            file.file_path = command.file_path
-        if (
-            "file_extension" in delivered_fields
-            and command.file_extension is not None
-        ):
-            file.file_extension = command.file_extension
-        if "file_size" in delivered_fields and command.file_size is not None:
-            file.file_size = command.file_size
-        if "mime_type" in delivered_fields and command.mime_type is not None:
-            file.mime_type = command.mime_type
-        if "status" in delivered_fields and command.status is not None:
-            file.status = command.status
+        file.update(
+            file_name=(
+                command.file_name if "file_name" in delivered_fields else None
+            ),
+            file_path=(
+                command.file_path if "file_path" in delivered_fields else None
+            ),
+            file_extension=(
+                command.file_extension
+                if "file_extension" in delivered_fields
+                else None
+            ),
+            file_size=(
+                command.file_size if "file_size" in delivered_fields else None
+            ),
+            mime_type=(
+                command.mime_type if "mime_type" in delivered_fields else None
+            ),
+            status=(command.status if "status" in delivered_fields else None),
+        )
 
         await self.repository.save(file)
         return file
@@ -102,8 +134,11 @@ class FileService(FileUseCase):
     @transactional
     async def delete_file(self, file_id: UUID) -> File:
         file = await self.get_file(file_id)
-        if file.status != FileStatus.DELETED:
-            await self.storage.delete(path=file.file_path)
-        file.delete()
+        should_remove_from_storage = file.delete()
+        if should_remove_from_storage:
+            try:
+                await self.storage.delete(path=file.file_path)
+            except Exception as exc:
+                raise FileDeleteFailedException() from exc
         await self.repository.save(file)
         return file

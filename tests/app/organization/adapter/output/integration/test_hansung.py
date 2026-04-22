@@ -295,8 +295,7 @@ async def test_authenticate_rejects_wrong_redirect_target(monkeypatch):
             status_code=302,
             headers={
                 "location": (
-                    "https://info.hansung.ac.kr/jsp/sugang/"
-                    "h_sugang_sincheong_main.jsp"
+                    "https://info.hansung.ac.kr/jsp/sugang/h_sugang_sincheong_main.jsp"
                 )
             },
         ),

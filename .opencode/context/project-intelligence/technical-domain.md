@@ -1,4 +1,4 @@
-<!-- Context: project-intelligence/technical | Priority: critical | Version: 1.4 | Updated: 2026-03-25 -->
+<!-- Context: project-intelligence/technical | Priority: critical | Version: 1.5 | Updated: 2026-03-25 -->
 
 # Technical Domain
 
@@ -41,6 +41,8 @@
 - 인증은 쿠키 기반 흐름만 사용한다
 - 라우터 helper 함수 추가를 최소화한다
 - 라우터에는 비즈니스/도메인 로직을 두지 않는다
+- 교수자 관리 API와 학생 응시 API의 경로 책임을 분리한다.
+- 시험 관리 API는 `classroom` 스코프를 유지해도, 학생 응시 API는 `/api/exams/{exam_id}/sessions/...`처럼 classroom을 노출하지 않는다.
 
 ```python
 @router.post("", response_model=UserResponse)

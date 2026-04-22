@@ -1,4 +1,4 @@
-<!-- Context: project-intelligence/decisions | Priority: high | Version: 1.3 | Updated: 2026-03-25 -->
+<!-- Context: project-intelligence/decisions | Priority: high | Version: 1.4 | Updated: 2026-03-25 -->
 
 # Decisions Log
 
@@ -102,12 +102,28 @@
 
 **Trade-off**: 초기 구현 속도는 다소 느려질 수 있고 테스트 설계 비용이 먼저 든다. 대신 장기적으로 회귀 탐지와 리팩터링 안정성이 높아진다.
 
+## Decision: 학생 시험 API는 classroom 경로를 노출하지 않는다
+**Date**: 2026-03-25
+**Status**: Decided
+
+**Context**: 시험은 교수자 관점에서 강의실에 속하지만, 학생 관점에서는 "내가 응시하는 시험 세션"이 핵심이다. 학생 API에 `classroom_id`를 계속 노출하면 관리 경계와 응시 경계가 섞이고, 프론트엔드도 시험 응시를 강의실 하위 자원처럼 다루게 된다.
+
+**Decision**: 교수자/관리자용 시험 생성·목록·상세는 계속 classroom 스코프를 사용한다. 대신 학생용 세션 시작, 턴 기록, 세션 종료, 결과 확정/조회는 `/api/exams/{exam_id}/sessions/...`와 `/api/exams/{exam_id}/results/...` 경로를 사용한다.
+
+**Rationale**:
+- 학생 응시 흐름을 강의실 관리 흐름과 분리할 수 있다.
+- 세션/결과 API가 `exam_id`, `session_id`, 학생 본인 소유권 중심으로 단순해진다.
+- 이후 GPT Realtime 기반 세션 흐름을 확장할 때 프론트엔드 계약이 더 자연스럽다.
+
+**Trade-off**: 교수자 API와 학생 API 경로 체계가 달라져 초기에 학습 비용이 생긴다. 대신 역할별 책임과 리소스 경계가 훨씬 명확해진다.
+
 ## Current Watch Items
 - AI 심층 평가 엔진이 추가될 때도 현재 도메인 경계를 유지할 수 있는지 검토 필요
 - 한성대 연동 외 다른 학교 시스템 확장 시 인증 추상화 수준 재검토 필요
 - 시험/리포트 도메인 추가 시 유스케이스 수 증가에 따른 탐색성 유지 필요
 - migration 생성 시 autogenerate 결과를 어디까지 수동 보정할지 기준을 더 명확히 정리할 필요가 있음
 - 테스트 보강 작업도 기존 테스트 수정 최소화 원칙 안에서 진행되도록 계속 점검 필요
+- 시험 응시 정책 변경 시 교수자 경로와 학생 경로가 다시 섞이지 않도록 계속 점검 필요
 
 ## 📂 Codebase References
 - `main.py` - 앱 조립과 현재 아키텍처 진입점

@@ -1,3 +1,4 @@
+from .mapping.async_job import init_async_job_mappers
 from .mapping.classroom import init_classroom_mappers
 from .mapping.classroom_material import init_classroom_material_mappers
 from .mapping.exam import init_exam_mappers
@@ -14,6 +15,7 @@ def init_orm_mappers():
     if _mappers_initialized:
         return
 
+    init_async_job_mappers()
     init_classroom_mappers()
     init_classroom_material_mappers()
     init_exam_mappers()

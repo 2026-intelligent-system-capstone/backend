@@ -4,6 +4,8 @@ from uuid import UUID
 import pytest
 
 from app.file.application.exception import (
+    FileDeleteFailedException,
+    FileDownloadFailedException,
     FileNotFoundException,
     FileUploadFailedException,
 )
@@ -108,13 +110,17 @@ async def test_upload_file_success():
     )
 
     assert file.file_name == "week1.pdf"
-    assert file.file_path == "classrooms/materials/week1.pdf"
+    assert file.file_path.startswith("classrooms/materials/")
+    assert file.file_path.endswith(".pdf")
     assert file.file_extension == "pdf"
     assert file.file_size == 11
     assert file.status == FileStatus.ACTIVE
-    assert storage.upload_calls == [
-        ("classrooms/materials", "week1.pdf", b"pdf-content")
-    ]
+    assert len(storage.upload_calls) == 1
+    upload_directory, upload_file_name, upload_content = storage.upload_calls[0]
+    assert upload_directory == "classrooms/materials"
+    assert upload_file_name.endswith(".pdf")
+    assert upload_file_name != "week1.pdf"
+    assert upload_content == b"pdf-content"
 
 
 @pytest.mark.asyncio
@@ -136,6 +142,32 @@ async def test_upload_file_failure_raises():
             ),
             directory="classrooms/materials",
         )
+
+
+@pytest.mark.asyncio
+async def test_upload_file_sanitizes_display_name_and_storage_name():
+    repo = InMemoryFileRepository()
+    storage = FakeFileStorage()
+    service = FileService(repository=repo, storage=storage)
+
+    file = await service.upload_file(
+        file_upload=FileUploadData(
+            file_name="../../evil.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"pdf-content"),
+        ),
+        directory="classrooms/materials",
+        status=FileStatus.ACTIVE,
+    )
+
+    assert file.file_name == "evil.pdf"
+    assert file.file_path.startswith("classrooms/materials/")
+    assert ".." not in file.file_path
+    assert len(storage.upload_calls) == 1
+    _, stored_name, _ = storage.upload_calls[0]
+    assert stored_name.endswith(".pdf")
+    assert stored_name != "../../evil.pdf"
+    assert stored_name != "evil.pdf"
 
 
 @pytest.mark.asyncio
@@ -261,4 +293,44 @@ async def test_get_file_download_returns_stream_and_metadata():
     assert download.file_name == "week1.pdf"
     assert download.mime_type == "application/pdf"
     assert download.content.read() == b"pdf-content"
-    assert storage.open_calls == ["classrooms/materials/week1.pdf"]
+    assert storage.open_calls == [created_file.file_path]
+
+
+@pytest.mark.asyncio
+async def test_get_file_download_failure_raises():
+    class FailingOpenStorage(FakeFileStorage):
+        async def open(self, *, path: str):
+            self.open_calls.append(path)
+            raise RuntimeError("open failed")
+
+    repo = InMemoryFileRepository()
+    storage = FailingOpenStorage()
+    service = FileService(repository=repo, storage=storage)
+    created_file = await service.upload_file(
+        file_upload=FileUploadData(
+            file_name="week1.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"pdf-content"),
+        ),
+        directory="classrooms/materials",
+        status=FileStatus.ACTIVE,
+    )
+
+    with pytest.raises(FileDownloadFailedException):
+        await service.get_file_download(created_file.id)
+
+
+@pytest.mark.asyncio
+async def test_delete_file_storage_failure_raises():
+    class FailingDeleteStorage(FakeFileStorage):
+        async def delete(self, *, path: str) -> None:
+            self.delete_calls.append(path)
+            raise RuntimeError("delete failed")
+
+    repo = InMemoryFileRepository()
+    storage = FailingDeleteStorage()
+    service = FileService(repository=repo, storage=storage)
+    created_file = await service.create_file(make_create_command())
+
+    with pytest.raises(FileDeleteFailedException):
+        await service.delete_file(created_file.id)

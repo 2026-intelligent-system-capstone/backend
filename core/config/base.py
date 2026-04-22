@@ -59,6 +59,13 @@ class CommonSettings(BaseSettings):
     OPENAI_REALTIME_MODEL: str = "gpt-realtime"
     OPENAI_REALTIME_VOICE: str = "alloy"
     OPENAI_REALTIME_SECRET_EXPIRE_SECONDS: int = 600
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    OPENAI_EXAM_GENERATION_MODEL: str = "gpt-4.1-mini"
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_COLLECTION_NAME: str = "lecture_materials"
+
+    ASYNC_JOB_WORKER_ENABLED: bool = True
+    ASYNC_JOB_WORKER_POLL_INTERVAL_SECONDS: float = 2.0
 
     LOG_LEVEL: LogLevel = "INFO"
     LOG_FORMAT: LogFormat = "plain"

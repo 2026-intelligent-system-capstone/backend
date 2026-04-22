@@ -1,4 +1,4 @@
-<!-- Context: project-intelligence/bridge | Priority: high | Version: 1.1 | Updated: 2026-03-25 -->
+<!-- Context: project-intelligence/bridge | Priority: high | Version: 1.2 | Updated: 2026-03-25 -->
 
 # Business ↔ Tech Bridge
 
@@ -41,6 +41,11 @@
 - **Tech**: 현재 백엔드는 유스케이스 중심 서비스와 도메인 분리 구조를 채택해 평가 엔진, 리포트, 분석 도메인을 추가하기 쉽게 만든다.
 - **Connection**: 운영 기반과 평가 엔진을 분리하면 AI 기능이 커져도 인증/강의실/자료 규칙을 흔들지 않고 확장할 수 있다.
 
+**Feature: 학생 시험 응시는 classroom 비노출 경로로 제공**
+- **Business**: 학생은 강의실 관리가 아니라 "내가 응시하는 시험" 흐름으로 서비스를 인식해야 한다.
+- **Tech**: 교수자 관리 API는 `/api/classrooms/{classroom_id}/exams`를 유지하되, 학생 세션/결과 API는 `/api/exams/{exam_id}/sessions/...`와 `/api/exams/{exam_id}/results/...`로 분리한다.
+- **Connection**: 시험이 내부적으로는 classroom에 속하더라도, 학생 경험은 exam/session 중심으로 노출해야 GPT Realtime 응시 흐름과 결과 조회가 자연스럽다.
+
 ## Trade-offs
 | Situation | Decision Made | Why |
 |-----------|---------------|-----|
@@ -52,6 +57,7 @@
 - **평가 기능만 먼저 구현**: 운영 맥락 없이 시험만 만들면 대상/범위/권한이 불안정해진다.
 - **공통화 과도**: 교육 도메인 규칙을 `core/`로 밀어 넣으면 정책 변경 추적이 어려워진다.
 - **권한 체크를 라우터에만 배치**: 서비스 재검증이 없으면 조직 간 접근 누수가 생길 수 있다.
+- **학생 응시 API에 classroom 경로를 계속 노출**: 관리 경계와 응시 경계가 섞여 프론트엔드 계약이 불필요하게 복잡해진다.
 
 ## 📂 Codebase References
 - `app/auth/application/service/auth.py` - 학교 단위 로그인과 토큰 발급/회전

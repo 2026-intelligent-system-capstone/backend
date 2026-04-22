@@ -28,6 +28,8 @@ from core.domain.types import TokenType
 from core.helpers.token import TokenHelper
 
 ORGANIZATION_ID = UUID("11111111-1111-1111-1111-111111111111")
+TEST_PROFESSOR_LOGIN_ID = "90000001"
+TEST_STUDENT_LOGIN_ID = "90000002"
 
 
 class InMemoryOrganizationRepository(OrganizationRepository):
@@ -126,6 +128,7 @@ class FakeOrganizationAuthService(OrganizationAuthService):
             name="김테스트",
             email="student@example.com",
         )
+        self.called = False
 
     async def authenticate(
         self,
@@ -136,6 +139,7 @@ class FakeOrganizationAuthService(OrganizationAuthService):
     ) -> OrganizationIdentity:
         del organization
         del password
+        self.called = True
         return OrganizationIdentity(
             login_id=login_id,
             role=self.identity.role,
@@ -232,6 +236,57 @@ async def test_login_updates_existing_user_role():
 
 
 @pytest.mark.asyncio
+async def test_login_bypasses_provider_for_test_professor_id():
+    existing_user = make_user(login_id=TEST_PROFESSOR_LOGIN_ID)
+    existing_user.role = UserRole.PROFESSOR
+    fake_auth_service = FakeOrganizationAuthService()
+    service = AuthService(
+        organization_repository=InMemoryOrganizationRepository([
+            make_organization()
+        ]),
+        user_repository=InMemoryUserRepository([existing_user]),
+        auth_token_repository=InMemoryAuthTokenRepository(),
+        organization_auth_service=fake_auth_service,
+    )
+
+    tokens = await service.login(
+        LoginCommand(
+            organization_code="univ_hansung",
+            login_id=TEST_PROFESSOR_LOGIN_ID,
+            password="whatever123",
+        )
+    )
+
+    assert tokens.role == "professor"
+    assert fake_auth_service.called is False
+
+
+@pytest.mark.asyncio
+async def test_login_bypasses_provider_for_test_student_id():
+    existing_user = make_user(login_id=TEST_STUDENT_LOGIN_ID)
+    fake_auth_service = FakeOrganizationAuthService()
+    service = AuthService(
+        organization_repository=InMemoryOrganizationRepository([
+            make_organization()
+        ]),
+        user_repository=InMemoryUserRepository([existing_user]),
+        auth_token_repository=InMemoryAuthTokenRepository(),
+        organization_auth_service=fake_auth_service,
+    )
+
+    tokens = await service.login(
+        LoginCommand(
+            organization_code="univ_hansung",
+            login_id=TEST_STUDENT_LOGIN_ID,
+            password="whatever123",
+        )
+    )
+
+    assert tokens.role == "student"
+    assert fake_auth_service.called is False
+
+
+@pytest.mark.asyncio
 async def test_login_invalid_organization_raises():
     service = AuthService(
         organization_repository=InMemoryOrganizationRepository(),
@@ -280,7 +335,7 @@ async def test_login_invalid_credentials_does_not_create_user():
 
 
 @pytest.mark.asyncio
-async def test_login_converts_provider_error_to_invalid_credentials():
+async def test_login_unexpected_provider_error_raises_invalid_credentials():
     class FailingService(OrganizationAuthService):
         async def authenticate(self, **kwargs):
             del kwargs

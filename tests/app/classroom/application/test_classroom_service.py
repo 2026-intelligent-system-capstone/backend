@@ -7,8 +7,6 @@ from app.auth.application.exception import AuthForbiddenException
 from app.auth.domain.entity import CurrentUser
 from app.classroom.application.exception import (
     ClassroomAlreadyExistsException,
-    ClassroomInvalidProfessorRoleException,
-    ClassroomInvalidStudentRoleException,
     ClassroomNotFoundException,
     ClassroomStudentAlreadyInvitedException,
     ClassroomStudentNotEnrolledException,
@@ -21,7 +19,18 @@ from app.classroom.domain.command import (
     UpdateClassroomCommand,
 )
 from app.classroom.domain.entity import Classroom
-from app.classroom.domain.repository import ClassroomRepository
+from app.classroom.domain.exception import (
+    ClassroomInvalidProfessorRoleDomainException,
+    ClassroomInvalidStudentRoleDomainException,
+)
+from app.classroom.domain.repository import (
+    ClassroomMaterialRepository,
+    ClassroomRepository,
+)
+from app.file.domain.entity.file import File, FileStatus
+from app.file.domain.entity.file_download import FileDownload
+from app.file.domain.service import FileUploadData
+from app.file.domain.usecase.file import FileUseCase
 from app.user.domain.entity import User, UserRole
 from app.user.domain.repository import UserRepository
 
@@ -121,6 +130,60 @@ class InMemoryUserRepository(UserRepository):
         )
 
 
+class InMemoryClassroomMaterialRepository(ClassroomMaterialRepository):
+    async def save(self, entity) -> None:
+        del entity
+
+    async def get_by_id(self, entity_id: UUID):
+        del entity_id
+        return None
+
+    async def list(self) -> list:
+        return []
+
+    async def list_by_classroom(self, classroom_id: UUID) -> Sequence:
+        del classroom_id
+        return []
+
+    async def delete(self, entity) -> None:
+        del entity
+
+
+class DummyFileUseCase(FileUseCase):
+    async def create_file(self, command):
+        del command
+        raise NotImplementedError
+
+    async def upload_file(
+        self,
+        *,
+        file_upload: FileUploadData,
+        directory: str,
+        status: FileStatus = FileStatus.PENDING,
+    ) -> File:
+        del file_upload, directory, status
+        raise NotImplementedError
+
+    async def get_file(self, file_id: UUID) -> File:
+        del file_id
+        raise NotImplementedError
+
+    async def get_file_download(self, file_id: UUID) -> FileDownload:
+        del file_id
+        raise NotImplementedError
+
+    async def list_files(self) -> list[File]:
+        return []
+
+    async def update_file(self, file_id: UUID, command) -> File:
+        del file_id, command
+        raise NotImplementedError
+
+    async def delete_file(self, file_id: UUID) -> File:
+        del file_id
+        raise NotImplementedError
+
+
 def make_user(user_id: UUID, role: UserRole) -> User:
     user = User(
         organization_id=ORG_ID,
@@ -164,6 +227,8 @@ def make_service(
                 make_user(SECOND_STUDENT_ID, UserRole.STUDENT),
             ]
         ),
+        material_repository=InMemoryClassroomMaterialRepository(),
+        file_usecase=DummyFileUseCase(),
     )
 
 
@@ -238,7 +303,7 @@ async def test_create_classroom_invalid_professor_role_raises():
         ]
     )
 
-    with pytest.raises(ClassroomInvalidProfessorRoleException):
+    with pytest.raises(ClassroomInvalidProfessorRoleDomainException):
         await service.create_classroom(
             current_user=make_current_user(
                 role=UserRole.PROFESSOR,
@@ -264,7 +329,7 @@ async def test_create_classroom_invalid_student_role_raises():
         ]
     )
 
-    with pytest.raises(ClassroomInvalidStudentRoleException):
+    with pytest.raises(ClassroomInvalidStudentRoleDomainException):
         await service.create_classroom(
             current_user=make_current_user(
                 role=UserRole.PROFESSOR,
@@ -475,6 +540,8 @@ async def test_delete_classroom_success():
             make_user(STUDENT_ID, UserRole.STUDENT),
             make_user(SECOND_STUDENT_ID, UserRole.STUDENT),
         ]),
+        material_repository=InMemoryClassroomMaterialRepository(),
+        file_usecase=DummyFileUseCase(),
     )
 
     deleted_classroom = await service.delete_classroom(

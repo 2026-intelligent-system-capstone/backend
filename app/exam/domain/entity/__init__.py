@@ -1,6 +1,13 @@
 from app.exam.domain.entity.exam import (
+    BloomLevel,
     Exam,
     ExamCriterion,
+    ExamDifficulty,
+    ExamGenerationStatus,
+    ExamQuestion,
+    ExamQuestionStatus,
+    ExamQuestionType,
+    ExamQuestionTypeStrategy,
     ExamResult,
     ExamResultCriterion,
     ExamResultStatus,
@@ -13,11 +20,19 @@ from app.exam.domain.entity.exam import (
     ExamType,
     RealtimeClientSecret,
     StartedExamSession,
+    StudentExam,
 )
 
 __all__ = [
+    "BloomLevel",
     "Exam",
     "ExamCriterion",
+    "ExamDifficulty",
+    "ExamGenerationStatus",
+    "ExamQuestion",
+    "ExamQuestionStatus",
+    "ExamQuestionType",
+    "ExamQuestionTypeStrategy",
     "ExamResult",
     "ExamResultCriterion",
     "ExamResultStatus",
@@ -30,4 +45,5 @@ __all__ = [
     "ExamType",
     "RealtimeClientSecret",
     "StartedExamSession",
+    "StudentExam",
 ]

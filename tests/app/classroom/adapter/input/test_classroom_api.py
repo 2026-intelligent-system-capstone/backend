@@ -13,7 +13,10 @@ from app.classroom.application.exception import (
     ClassroomStudentNotEnrolledException,
 )
 from app.classroom.application.service import ClassroomService
-from app.classroom.domain.entity import Classroom
+from app.classroom.domain.entity import (
+    Classroom,
+    ClassroomMaterialIngestStatus,
+)
 from app.user.adapter.output.persistence.sqlalchemy import (
     UserSQLAlchemyRepository,
 )
@@ -68,6 +71,22 @@ def make_classroom_material_result():
             description="소개 자료",
             uploaded_by=PROFESSOR_ID,
             created_at=None,
+            source_kind=SimpleNamespace(value="file"),
+            source_url=None,
+            ingest_status=ClassroomMaterialIngestStatus.PENDING,
+            ingest_error=None,
+            ingest_metadata={"mime_type": "application/pdf"},
+            get_scope_candidates=lambda: [],
+            get_original_file=lambda: SimpleNamespace(
+                file_name="week1.pdf",
+                file_path="classrooms/materials/week1.pdf",
+                file_extension="pdf",
+                file_size=10,
+                mime_type="application/pdf",
+            ),
+            get_ingest_capability=lambda: SimpleNamespace(
+                supported=True, reason=None
+            ),
         ),
         file=SimpleNamespace(
             id=UUID("88888888-8888-8888-8888-888888888888"),
