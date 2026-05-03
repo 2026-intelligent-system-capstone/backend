@@ -61,6 +61,21 @@ def _build_uploaded_at(value: datetime | None) -> datetime | None:
     return value.astimezone(UTC)
 
 
+def _resolve_create_material_title(
+    *,
+    title: str | None,
+    source_kind: ClassroomMaterialSourceKind,
+    uploaded_file: UploadFile | None,
+) -> str | None:
+    if (
+        source_kind is ClassroomMaterialSourceKind.FILE
+        and uploaded_file is not None
+        and (title is None or not title.strip())
+    ):
+        return uploaded_file.filename or "uploaded-file"
+    return title
+
+
 def _build_classroom_material_payload(result) -> ClassroomMaterialPayload:
     original_file = result.material.get_original_file()
     ingest_capability = result.material.get_ingest_capability()
@@ -125,7 +140,7 @@ def _build_classroom_material_payload(result) -> ClassroomMaterialPayload:
 @inject
 async def create_classroom_material(
     classroom_id: UUID,
-    title: str = Form(...),
+    title: str | None = Form(None),
     week: int = Form(...),
     description: str | None = Form(None),
     source_kind: ClassroomMaterialSourceKind = Form(
@@ -142,9 +157,14 @@ async def create_classroom_material(
     normalized_source_url = (
         source_url.strip() or None if source_url is not None else None
     )
+    resolved_title = _resolve_create_material_title(
+        title=title,
+        source_kind=source_kind,
+        uploaded_file=uploaded_file,
+    )
     try:
         request = CreateClassroomMaterialRequest(
-            title=title,
+            title=resolved_title,
             week=week,
             description=normalized_description,
             source_kind=source_kind,

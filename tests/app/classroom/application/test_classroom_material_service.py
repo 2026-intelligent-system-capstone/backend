@@ -415,6 +415,7 @@ async def test_create_classroom_material_success():
     )
 
     assert result.material.title == "1주차 자료"
+    assert result.material.description is None
     assert result.material.file_id == FILE_ID
     assert (
         result.material.ingest_status is ClassroomMaterialIngestStatus.PENDING

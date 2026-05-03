@@ -191,6 +191,91 @@ def test_create_classroom_material_returns_200_for_professor(
     assert body["data"]["ingest_error"] is None
 
 
+def test_create_file_material_uses_uploaded_filename_when_title_missing(
+    client,
+    monkeypatch,
+):
+    captured_command = {}
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    async def create_stub(*_args, **kwargs):
+        captured_command["command"] = kwargs["command"]
+        result = make_result()
+        result.material.title = kwargs["command"].title
+        result.material.description = kwargs["command"].description
+        return result
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "create_classroom_material",
+        create_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/materials",
+        data={"week": "1"},
+        files={
+            "uploaded_file": (
+                "week1.pdf",
+                BytesIO(b"pdf-content"),
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_command["command"].title == "week1.pdf"
+    assert captured_command["command"].description is None
+    assert response.json()["data"]["title"] == "week1.pdf"
+    assert response.json()["data"]["description"] is None
+
+
+def test_create_file_material_uses_uploaded_filename_when_title_blank(
+    client,
+    monkeypatch,
+):
+    captured_command = {}
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    async def create_stub(*_args, **kwargs):
+        captured_command["command"] = kwargs["command"]
+        result = make_result()
+        result.material.title = kwargs["command"].title
+        return result
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "create_classroom_material",
+        create_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/materials",
+        data={"title": "   ", "week": "1"},
+        files={
+            "uploaded_file": (
+                "week1.pdf",
+                BytesIO(b"pdf-content"),
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_command["command"].title == "week1.pdf"
+    assert response.json()["data"]["title"] == "week1.pdf"
+
+
 def test_create_classroom_material_accepts_link_payload_without_uploaded_file(
     client,
     monkeypatch,
