@@ -20,6 +20,13 @@ from core.common.request.base import BaseRequest
 
 
 class ExamCriterionRequest(BaseRequest):
+    null_fields = {
+        "description",
+        "excellent_definition",
+        "average_definition",
+        "poor_definition",
+    }
+
     title: str = Field(..., min_length=1, max_length=100)
     description: str | None = Field(None, max_length=1000)
     weight: int = Field(..., ge=1, le=100)
@@ -30,6 +37,8 @@ class ExamCriterionRequest(BaseRequest):
 
 
 class CreateExamRequest(BaseRequest):
+    null_fields = {"description"}
+
     title: str = Field(..., min_length=2, max_length=100)
     description: str | None = Field(None, max_length=1000)
     exam_type: ExamType

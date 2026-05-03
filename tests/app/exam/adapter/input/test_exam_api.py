@@ -195,6 +195,102 @@ def test_create_exam_returns_200_for_professor(client, monkeypatch):
     assert response.json()["data"]["criteria"][0]["title"] == "개념 이해"
 
 
+def test_create_exam_succeeds_when_description_omitted(client, monkeypatch):
+    captured = {}
+
+    async def create_stub_exam(*_args, **kwargs):
+        captured["command"] = kwargs["command"]
+        return make_exam()
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(ExamService, "create_exam", create_stub_exam)
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams",
+        json={
+            "title": "중간 평가",
+            "exam_type": "midterm",
+            "duration_minutes": 60,
+            "starts_at": STARTS_AT.isoformat(),
+            "ends_at": ENDS_AT.isoformat(),
+            "max_attempts": 1,
+            "week": WEEK,
+            "criteria": [
+                {
+                    "title": "개념 이해",
+                    "description": "핵심 개념을 설명하는지 평가",
+                    "weight": 100,
+                    "sort_order": 1,
+                    "excellent_definition": "핵심 개념을 정확히 설명한다.",
+                    "average_definition": (
+                        "핵심 개념 설명은 가능하나 연결이 약하다."
+                    ),
+                    "poor_definition": "핵심 개념 이해가 부족하다.",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["command"].description is None
+
+
+def test_create_exam_succeeds_when_description_is_null(client, monkeypatch):
+    captured = {}
+
+    async def create_stub_exam(*_args, **kwargs):
+        captured["command"] = kwargs["command"]
+        return make_exam()
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(ExamService, "create_exam", create_stub_exam)
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/exams",
+        json={
+            "title": "중간 평가",
+            "description": None,
+            "exam_type": "midterm",
+            "duration_minutes": 60,
+            "starts_at": STARTS_AT.isoformat(),
+            "ends_at": ENDS_AT.isoformat(),
+            "max_attempts": 1,
+            "week": WEEK,
+            "criteria": [
+                {
+                    "title": "개념 이해",
+                    "description": None,
+                    "weight": 100,
+                    "sort_order": 1,
+                    "excellent_definition": None,
+                    "average_definition": None,
+                    "poor_definition": None,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["command"].description is None
+    criterion = captured["command"].criteria[0]
+    assert criterion.description is None
+    assert criterion.excellent_definition is None
+    assert criterion.average_definition is None
+    assert criterion.poor_definition is None
+
+
 def test_create_exam_accepts_weekly_and_project_types(client, monkeypatch):
     captured_commands = []
 
