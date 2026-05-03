@@ -242,6 +242,13 @@ class RecordExamTurnRequest(BaseRequest):
     occurred_at: datetime
 
 
+class GenerateExamFollowUpRequest(BaseRequest):
+    question_id: UUID
+    answer_content: str = Field(..., min_length=1, max_length=10000)
+    metadata: dict[str, str] = Field(default_factory=dict)
+    occurred_at: datetime
+
+
 class CompleteExamSessionRequest(BaseRequest):
     occurred_at: datetime
 

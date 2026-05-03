@@ -1584,12 +1584,15 @@ def test_list_student_exams_returns_200_for_student(client, monkeypatch):
                 correct_answer_text="분류",
             )
         ]
+        latest_result = SimpleNamespace(
+            id=UUID("77777777-7777-7777-7777-777777777777")
+        )
         return [
             SimpleNamespace(
                 exam=exam,
                 is_completed=True,
                 can_enter=False,
-                latest_result=None,
+                latest_result=latest_result,
             )
         ]
 
@@ -1617,7 +1620,8 @@ def test_list_student_exams_returns_200_for_student(client, monkeypatch):
     assert response.json()["data"][0]["week"] == WEEK
     assert response.json()["data"][0]["is_completed"] is True
     assert response.json()["data"][0]["can_enter"] is False
-    assert response.json()["data"][0]["latest_result"] is None
+    assert response.json()["data"][0]["has_result"] is True
+    assert "latest_result" not in response.json()["data"][0]
     assert response.json()["data"][0]["questions"] == []
 
 
@@ -1661,7 +1665,8 @@ def test_get_student_exam_returns_200_for_student(client, monkeypatch):
     assert response.json()["data"]["week"] == WEEK
     assert response.json()["data"]["is_completed"] is True
     assert response.json()["data"]["can_enter"] is False
-    assert response.json()["data"]["latest_result"] is None
+    assert response.json()["data"]["has_result"] is False
+    assert "latest_result" not in response.json()["data"]
     assert response.json()["data"]["questions"] == []
 
 
@@ -1985,3 +1990,137 @@ def test_finalize_exam_result_rejects_client_score_fields(client, monkeypatch):
     )
 
     assert response.status_code == 422
+
+
+def test_get_student_exam_session_sheet_returns_safe_questions(
+    client, monkeypatch
+):
+    async def get_session_sheet_stub(*_args, **_kwargs):
+        exam = make_exam()
+        exam.questions = [
+            make_question(
+                question_type=ExamQuestionType.MULTIPLE_CHOICE,
+                answer_options=["회귀", "분류"],
+                correct_answer_text="분류",
+            )
+        ]
+        return exam
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "get_student_exam_session_sheet",
+        get_session_sheet_stub,
+        raising=False,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.get(f"/api/exams/{EXAM_ID}/session-sheet")
+
+    assert response.status_code == 200
+    question = response.json()["data"]["questions"][0]
+    assert question["question_text"] == "회귀와 분류의 차이를 설명하세요."
+    assert question["answer_options"] == ["회귀", "분류"]
+    assert "correct_answer_text" not in question
+    assert "rubric_text" not in question
+    assert "intent_text" not in question
+
+
+def test_generate_exam_follow_up_returns_assistant_turn(client, monkeypatch):
+    captured_command: dict[str, object] = {}
+
+    async def generate_follow_up_stub(*_args, **kwargs):
+        captured_command["command"] = kwargs["command"]
+
+        class Turn:
+            id = UUID("88888888-8888-8888-8888-888888888888")
+            session_id = UUID("66666666-6666-6666-6666-666666666666")
+            sequence = 2
+            role = type("Role", (), {"value": "assistant"})()
+            event_type = type("EventType", (), {"value": "follow_up"})()
+            content = "왜 그런 차이가 생기는지 예시로 설명해볼까요?"
+            created_at = STARTS_AT
+            metadata = {"question_id": "88888888-8888-8888-8888-888888888888"}
+
+        return Turn()
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "generate_exam_follow_up",
+        generate_follow_up_stub,
+        raising=False,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.post(
+        f"/api/exams/{EXAM_ID}/sessions/66666666-6666-6666-6666-666666666666/follow-ups",
+        json={
+            "question_id": "88888888-8888-8888-8888-888888888888",
+            "answer_content": "분류는 범주를 예측하고 회귀는 값을 예측합니다.",
+            "metadata": {
+                "answer_turn_id": "77777777-7777-7777-7777-777777777777"
+            },
+            "occurred_at": STARTS_AT.isoformat(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["role"] == "assistant"
+    assert response.json()["data"]["event_type"] == "follow_up"
+    assert captured_command["command"].answer_content == (
+        "분류는 범주를 예측하고 회귀는 값을 예측합니다."
+    )
+
+
+def test_get_my_exam_session_result_returns_one_result(client, monkeypatch):
+    async def get_session_result_stub(*_args, **_kwargs):
+        class Result:
+            id = UUID("77777777-7777-7777-7777-777777777777")
+            exam_id = EXAM_ID
+            session_id = UUID("66666666-6666-6666-6666-666666666666")
+            student_id = STUDENT_ID
+            status = type("Status", (), {"value": "pending"})()
+            submitted_at = None
+            overall_score = None
+            summary = None
+            strengths = []
+            weaknesses = []
+            improvement_suggestions = []
+            criteria_results = []
+
+        return Result()
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ExamService,
+        "get_my_exam_session_result",
+        get_session_result_stub,
+        raising=False,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.get(
+        f"/api/exams/{EXAM_ID}/sessions/66666666-6666-6666-6666-666666666666/result"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["session_id"] == (
+        "66666666-6666-6666-6666-666666666666"
+    )
+    assert response.json()["data"]["status"] == "pending"

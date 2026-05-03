@@ -96,6 +96,38 @@ class ExamSessionResponse(BaseResponse):
     data: ExamSessionPayload = Field(default=...)
 
 
+class StudentExamSessionQuestionPayload(BaseModel):
+    id: str
+    exam_id: str
+    question_number: int
+    max_score: float
+    question_type: str
+    bloom_level: str
+    difficulty: str
+    question_text: str
+    answer_options: list[str] = Field(default_factory=list)
+    status: str
+
+
+class StudentExamSessionSheetPayload(BaseModel):
+    id: str
+    classroom_id: str
+    title: str
+    description: str | None = None
+    exam_type: str
+    status: str
+    duration_minutes: int
+    starts_at: str
+    ends_at: str
+    max_attempts: int
+    week: int
+    questions: list[StudentExamSessionQuestionPayload]
+
+
+class StudentExamSessionSheetResponse(BaseResponse):
+    data: StudentExamSessionSheetPayload = Field(default=...)
+
+
 class ExamResultCriterionPayload(BaseModel):
     criterion_id: str
     score: float | None = None
@@ -130,7 +162,7 @@ class ExamResultResponse(BaseResponse):
 class StudentExamPayload(ExamPayload):
     is_completed: bool
     can_enter: bool
-    latest_result: ExamResultPayload | None = None
+    has_result: bool
 
 
 class StudentExamResponse(BaseResponse):

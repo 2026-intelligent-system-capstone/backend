@@ -8,6 +8,7 @@ from app.exam.domain.command import (
     CreateExamCommand,
     CreateExamQuestionCommand,
     FinalizeExamResultCommand,
+    GenerateExamFollowUpCommand,
     GenerateExamQuestionsCommand,
     RecordExamTurnCommand,
     UpdateExamQuestionCommand,
@@ -117,6 +118,15 @@ class ExamUseCase(ABC):
         """Get one current student's accessible exam with completion state."""
 
     @abstractmethod
+    async def get_student_exam_session_sheet(
+        self,
+        *,
+        exam_id: UUID,
+        current_user: CurrentUser,
+    ) -> Exam:
+        """Get current student's exam sheet with safe question fields."""
+
+    @abstractmethod
     async def start_exam_session(
         self,
         *,
@@ -144,6 +154,27 @@ class ExamUseCase(ABC):
         command: RecordExamTurnCommand,
     ) -> ExamTurn:
         """Persist one exam conversation turn."""
+
+    @abstractmethod
+    async def generate_exam_follow_up(
+        self,
+        *,
+        exam_id: UUID,
+        session_id: UUID,
+        current_user: CurrentUser,
+        command: GenerateExamFollowUpCommand,
+    ) -> ExamTurn:
+        """Generate and persist one assistant follow-up turn."""
+
+    @abstractmethod
+    async def get_my_exam_session_result(
+        self,
+        *,
+        exam_id: UUID,
+        session_id: UUID,
+        current_user: CurrentUser,
+    ) -> ExamResult:
+        """Get current student's result for one exam session."""
 
     @abstractmethod
     async def complete_exam_session(

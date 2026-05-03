@@ -28,6 +28,7 @@ from app.exam.domain.command import (
     CreateExamCommand,
     CreateExamQuestionCommand,
     FinalizeExamResultCommand,
+    GenerateExamFollowUpCommand,
     GenerateExamQuestionsCommand,
     RecordExamTurnCommand,
     UpdateExamQuestionCommand,
@@ -36,13 +37,17 @@ from app.exam.domain.entity import (
     Exam,
     ExamGenerationStatus,
     ExamQuestion,
+    ExamQuestionStatus,
     ExamQuestionType,
     ExamQuestionTypeStrategy,
     ExamResult,
     ExamResultStatus,
     ExamSession,
+    ExamSessionStatus,
     ExamStatus,
     ExamTurn,
+    ExamTurnEventType,
+    ExamTurnRole,
     StartedExamSession,
     StudentExam,
 )
@@ -58,6 +63,10 @@ from app.exam.domain.repository import (
     ExamTurnRepository,
 )
 from app.exam.domain.service import (
+    ExamFollowUpGenerationPort,
+    ExamFollowUpGenerationQuestion,
+    ExamFollowUpGenerationRequest,
+    ExamFollowUpGenerationTurn,
     ExamQuestionGenerationCriterion,
     ExamQuestionGenerationLevelCount,
     ExamQuestionGenerationPort,
@@ -128,6 +137,7 @@ class ExamService(ExamUseCase):
         turn_repository: ExamTurnRepository,
         realtime_session_port: RealtimeSessionPort,
         question_generation_port: ExamQuestionGenerationPort | None = None,
+        follow_up_generation_port: ExamFollowUpGenerationPort | None = None,
         async_job_service: AsyncJobService | None = None,
     ):
         self.repository = repository
@@ -137,6 +147,7 @@ class ExamService(ExamUseCase):
         self.turn_repository = turn_repository
         self.realtime_session_port = realtime_session_port
         self.question_generation_port = question_generation_port
+        self.follow_up_generation_port = follow_up_generation_port
         self.async_job_service = async_job_service
 
     @transactional
@@ -298,6 +309,34 @@ class ExamService(ExamUseCase):
             exam=exam,
             student_id=current_user.id,
         )
+
+    async def get_student_exam_session_sheet(
+        self,
+        *,
+        exam_id: UUID,
+        current_user: CurrentUser,
+    ) -> Exam:
+        if current_user.role != UserRole.STUDENT:
+            raise AuthForbiddenException()
+        exam = await self.repository.get_by_id(exam_id)
+        if exam is None:
+            raise ExamNotFoundException()
+        await self.classroom_usecase.get_classroom(
+            classroom_id=exam.classroom_id,
+            current_user=current_user,
+        )
+        if not self._is_exam_session_available(
+            exam=exam,
+            now=datetime.now(UTC),
+        ):
+            raise ExamSessionUnavailableException()
+        results = await self.result_repository.list_by_exam_and_student(
+            exam_id=exam.id,
+            student_id=current_user.id,
+        )
+        if self._has_completed_exam_result(results=results):
+            raise ExamSessionUnavailableException()
+        return exam
 
     async def get_exam(
         self,
@@ -761,6 +800,117 @@ class ExamService(ExamUseCase):
         await self.turn_repository.save(turn)
         await self.session_repository.save(session)
         return turn
+
+    @transactional
+    async def generate_exam_follow_up(
+        self,
+        *,
+        exam_id: UUID,
+        session_id: UUID,
+        current_user: CurrentUser,
+        command: GenerateExamFollowUpCommand,
+    ) -> ExamTurn:
+        if current_user.role != UserRole.STUDENT:
+            raise AuthForbiddenException()
+        if self.follow_up_generation_port is None:
+            raise ExamSessionUnavailableException()
+        exam = await self.repository.get_by_id(exam_id)
+        if exam is None:
+            raise ExamNotFoundException()
+        await self.classroom_usecase.get_classroom(
+            classroom_id=exam.classroom_id,
+            current_user=current_user,
+        )
+        session = await self.session_repository.get_by_id(session_id)
+        if session is None:
+            raise AuthForbiddenException()
+        session.assert_owned_by(exam_id=exam.id, student_id=current_user.id)
+        if session.status is not ExamSessionStatus.IN_PROGRESS:
+            raise ExamSessionUnavailableException()
+        if not self._is_exam_session_available(
+            exam=exam,
+            now=datetime.now(UTC),
+        ):
+            raise ExamSessionUnavailableException()
+        question = exam.find_question(command.question_id)
+        if question.status is ExamQuestionStatus.DELETED:
+            raise ExamQuestionNotFoundDomainException(
+                message="exam question not found"
+            )
+        existing_turns = await self.turn_repository.list_by_session(
+            session_id=session_id,
+        )
+        result = await self.follow_up_generation_port.generate_follow_up(
+            request=ExamFollowUpGenerationRequest(
+                exam_id=exam.id,
+                session_id=session.id,
+                student_id=current_user.id,
+                exam_title=exam.title,
+                question=ExamFollowUpGenerationQuestion(
+                    question_id=question.id,
+                    question_number=question.question_number,
+                    question_type=question.question_type,
+                    difficulty=question.difficulty,
+                    question_text=question.question_text,
+                    intent_text=question.intent_text,
+                    rubric_text=question.rubric_text,
+                ),
+                answer_content=command.answer_content,
+                turns=[
+                    ExamFollowUpGenerationTurn(
+                        sequence=turn.sequence,
+                        role=turn.role,
+                        event_type=turn.event_type,
+                        content=turn.content,
+                        metadata=turn.metadata,
+                    )
+                    for turn in existing_turns
+                ],
+                metadata=command.metadata,
+            )
+        )
+        turn = exam.record_turn(
+            session=session,
+            student_id=current_user.id,
+            role=ExamTurnRole.ASSISTANT,
+            event_type=ExamTurnEventType.FOLLOW_UP,
+            content=result.content,
+            created_at=command.occurred_at,
+            metadata={**command.metadata, **result.metadata},
+            existing_turns=existing_turns,
+        )
+        await self.turn_repository.save(turn)
+        await self.session_repository.save(session)
+        return turn
+
+    async def get_my_exam_session_result(
+        self,
+        *,
+        exam_id: UUID,
+        session_id: UUID,
+        current_user: CurrentUser,
+    ) -> ExamResult:
+        if current_user.role != UserRole.STUDENT:
+            raise AuthForbiddenException()
+        exam = await self.repository.get_by_id(exam_id)
+        if exam is None:
+            raise ExamNotFoundException()
+        await self.classroom_usecase.get_classroom(
+            classroom_id=exam.classroom_id,
+            current_user=current_user,
+        )
+        session = await self.session_repository.get_by_id(session_id)
+        if session is None:
+            raise AuthForbiddenException()
+        session.assert_owned_by(exam_id=exam.id, student_id=current_user.id)
+        results = await self.result_repository.list_by_exam_and_student(
+            exam_id=exam_id,
+            student_id=current_user.id,
+        )
+        return exam.find_result_for_session(
+            results=results,
+            session_id=session_id,
+        )
 
     @transactional
     async def complete_exam_session(

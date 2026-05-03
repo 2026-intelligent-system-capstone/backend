@@ -235,6 +235,13 @@ class RecordExamTurnCommand(BaseModel):
     occurred_at: datetime
 
 
+class GenerateExamFollowUpCommand(BaseModel):
+    question_id: UUID
+    answer_content: str = Field(..., min_length=1, max_length=10000)
+    metadata: dict[str, str] = Field(default_factory=dict)
+    occurred_at: datetime
+
+
 class CompleteExamSessionCommand(BaseModel):
     occurred_at: datetime
 

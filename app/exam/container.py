@@ -3,6 +3,7 @@ from dependency_injector import containers, providers
 from app.async_job.container import AsyncJobContainer
 from app.classroom.container import ClassroomContainer
 from app.exam.adapter.output.integration import (
+    LLMExamFollowUpGenerationAdapter,
     LLMExamQuestionGenerationAdapter,
     LLMExamResultEvaluationAdapter,
     OpenAIRealtimeSessionAdapter,
@@ -30,6 +31,9 @@ class ExamContainer(containers.DeclarativeContainer):
         LLMExamQuestionGenerationAdapter
     )
     result_evaluation_port = providers.Singleton(LLMExamResultEvaluationAdapter)
+    follow_up_generation_port = providers.Singleton(
+        LLMExamFollowUpGenerationAdapter
+    )
     service = providers.Factory(
         ExamService,
         repository=repository,
@@ -39,5 +43,6 @@ class ExamContainer(containers.DeclarativeContainer):
         turn_repository=turn_repository,
         realtime_session_port=realtime_session_port,
         question_generation_port=question_generation_port,
+        follow_up_generation_port=follow_up_generation_port,
         async_job_service=AsyncJobContainer.service,
     )

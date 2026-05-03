@@ -23,11 +23,17 @@ from app.exam.application.service import ExamService
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
     FinalizeExamResultCommand,
+    GenerateExamFollowUpCommand,
     RecordExamTurnCommand,
 )
 from app.exam.domain.entity import (
+    BloomLevel,
     Exam,
     ExamCriterion,
+    ExamDifficulty,
+    ExamQuestion,
+    ExamQuestionStatus,
+    ExamQuestionType,
     ExamResult,
     ExamResultCriterion,
     ExamResultStatus,
@@ -41,6 +47,7 @@ from app.exam.domain.entity import (
     RealtimeClientSecret,
 )
 from app.exam.domain.exception import (
+    ExamQuestionNotFoundDomainException,
     ExamSessionNotCompletedDomainException,
     ExamSessionOwnershipForbiddenDomainException,
 )
@@ -50,7 +57,12 @@ from app.exam.domain.repository import (
     ExamSessionRepository,
     ExamTurnRepository,
 )
-from app.exam.domain.service import RealtimeSessionPort
+from app.exam.domain.service import (
+    ExamFollowUpGenerationPort,
+    ExamFollowUpGenerationRequest,
+    ExamFollowUpGenerationResult,
+    RealtimeSessionPort,
+)
 from app.user.domain.entity import UserRole
 
 ORG_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -286,6 +298,22 @@ class FailOnSecondSessionSaveRepository(InMemoryExamSessionRepository):
         await super().save(entity)
 
 
+class FakeExamFollowUpGenerationPort(ExamFollowUpGenerationPort):
+    def __init__(self):
+        self.requests: list[ExamFollowUpGenerationRequest] = []
+
+    async def generate_follow_up(
+        self,
+        *,
+        request: ExamFollowUpGenerationRequest,
+    ) -> ExamFollowUpGenerationResult:
+        self.requests.append(request)
+        return ExamFollowUpGenerationResult(
+            content="왜 그런 차이가 생기는지 예시로 설명해볼까요?",
+            metadata={"augmentation_used": "false"},
+        )
+
+
 class FakeAsyncJobService:
     def __init__(self):
         self.jobs: list[AsyncJob] = []
@@ -489,6 +517,26 @@ def make_exam(*, max_attempts: int = 1) -> Exam:
     )
     exam.id = EXAM_ID
     return exam
+
+
+def make_question() -> ExamQuestion:
+    question = ExamQuestion(
+        exam_id=EXAM_ID,
+        question_number=1,
+        max_score=10.0,
+        question_type=ExamQuestionType.ORAL,
+        bloom_level=BloomLevel.UNDERSTAND,
+        difficulty=ExamDifficulty.MEDIUM,
+        question_text="분류와 회귀의 차이를 설명하세요.",
+        intent_text="지도학습 문제 유형 이해를 평가",
+        rubric_text="분류와 회귀의 출력 차이를 설명한다.",
+        answer_options=[],
+        correct_answer_text=None,
+        source_material_ids=[],
+        status=ExamQuestionStatus.GENERATED,
+    )
+    question.id = UUID("88888888-8888-8888-8888-888888888888")
+    return question
 
 
 def make_current_user(*, role: UserRole, user_id: UUID) -> CurrentUser:
@@ -1372,3 +1420,418 @@ async def test_finalize_exam_result_updates_pending_result():
     assert result.overall_score is None
     assert result.submitted_at is None
     assert result.summary is None
+
+
+@pytest.mark.asyncio
+async def test_get_student_exam_session_sheet_returns_exam_with_questions():
+    exam = make_exam()
+    exam.questions = [make_question()]
+    service = ExamService(
+        repository=InMemoryExamRepository([exam]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=InMemoryExamSessionRepository(),
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    session_sheet = await service.get_student_exam_session_sheet(
+        exam_id=EXAM_ID,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+    )
+
+    assert session_sheet.id == EXAM_ID
+    assert len(session_sheet.questions) == 1
+    assert session_sheet.questions[0].question_text == (
+        "분류와 회귀의 차이를 설명하세요."
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_student_exam_session_sheet_blocks_unavailable_exam():
+    exam = make_exam()
+    exam.questions = [make_question()]
+    exam.starts_at = NOW + timedelta(days=1)
+    exam.ends_at = NOW + timedelta(days=2)
+    service = ExamService(
+        repository=InMemoryExamRepository([exam]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=InMemoryExamSessionRepository(),
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    with pytest.raises(ExamSessionUnavailableException):
+        await service.get_student_exam_session_sheet(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_student_exam_session_sheet_blocks_completed_exam_result():
+    exam = make_exam()
+    exam.questions = [make_question()]
+    result_repository = InMemoryExamResultRepository()
+    completed_result = ExamResult(
+        exam_id=EXAM_ID,
+        session_id=UUID("66666666-6666-6666-6666-666666666666"),
+        student_id=STUDENT_ID,
+        status=ExamResultStatus.COMPLETED,
+        submitted_at=ENDS_AT,
+    )
+    await result_repository.save(completed_result)
+    service = ExamService(
+        repository=InMemoryExamRepository([exam]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=InMemoryExamSessionRepository(),
+        result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    with pytest.raises(ExamSessionUnavailableException):
+        await service.get_student_exam_session_sheet(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_follow_up_persists_assistant_turn():
+    exam = make_exam()
+    exam.questions = [make_question()]
+    session_repository = InMemoryExamSessionRepository()
+    turn_repository = InMemoryExamTurnRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.IN_PROGRESS,
+        started_at=STARTS_AT,
+        last_activity_at=STARTS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+    await turn_repository.save(
+        ExamTurn.create(
+            session_id=session.id,
+            sequence=1,
+            role=ExamTurnRole.STUDENT,
+            event_type=ExamTurnEventType.ANSWER,
+            content="분류는 범주, 회귀는 값을 예측합니다.",
+            created_at=STARTS_AT,
+            metadata={"question_id": str(exam.questions[0].id)},
+        )
+    )
+    follow_up_port = FakeExamFollowUpGenerationPort()
+    service = ExamService(
+        repository=InMemoryExamRepository([exam]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=turn_repository,
+        realtime_session_port=FakeRealtimeSessionPort(),
+        follow_up_generation_port=follow_up_port,
+    )
+
+    follow_up = await service.generate_exam_follow_up(
+        exam_id=EXAM_ID,
+        session_id=session.id,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+        command=GenerateExamFollowUpCommand(
+            question_id=exam.questions[0].id,
+            answer_content="분류는 범주, 회귀는 값을 예측합니다.",
+            metadata={"answer_turn_id": "77777777-7777-7777-7777-777777777777"},
+            occurred_at=ENDS_AT,
+        ),
+    )
+
+    assert follow_up.role is ExamTurnRole.ASSISTANT
+    assert follow_up.event_type is ExamTurnEventType.FOLLOW_UP
+    assert follow_up.sequence == 2
+    assert follow_up.content == "왜 그런 차이가 생기는지 예시로 설명해볼까요?"
+    assert follow_up_port.requests[0].answer_content == (
+        "분류는 범주, 회귀는 값을 예측합니다."
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_follow_up_rejects_unavailable_exam_before_port():
+    exam = make_exam()
+    exam.questions = [make_question()]
+    exam.starts_at = NOW + timedelta(days=1)
+    exam.ends_at = NOW + timedelta(days=2)
+    session_repository = InMemoryExamSessionRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.IN_PROGRESS,
+        started_at=STARTS_AT,
+        last_activity_at=STARTS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+    follow_up_port = FakeExamFollowUpGenerationPort()
+    service = ExamService(
+        repository=InMemoryExamRepository([exam]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+        follow_up_generation_port=follow_up_port,
+    )
+
+    with pytest.raises(ExamSessionUnavailableException):
+        await service.generate_exam_follow_up(
+            exam_id=EXAM_ID,
+            session_id=session.id,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+            command=GenerateExamFollowUpCommand(
+                question_id=exam.questions[0].id,
+                answer_content="분류는 범주, 회귀는 값을 예측합니다.",
+                metadata={},
+                occurred_at=ENDS_AT,
+            ),
+        )
+    assert follow_up_port.requests == []
+
+
+@pytest.mark.asyncio
+async def test_generate_follow_up_rejects_other_student_session_before_port():
+    exam = make_exam()
+    exam.questions = [make_question()]
+    session_repository = InMemoryExamSessionRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        status=ExamSessionStatus.IN_PROGRESS,
+        started_at=STARTS_AT,
+        last_activity_at=STARTS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+    follow_up_port = FakeExamFollowUpGenerationPort()
+    service = ExamService(
+        repository=InMemoryExamRepository([exam]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+        follow_up_generation_port=follow_up_port,
+    )
+
+    with pytest.raises(ExamSessionOwnershipForbiddenDomainException):
+        await service.generate_exam_follow_up(
+            exam_id=EXAM_ID,
+            session_id=session.id,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+            command=GenerateExamFollowUpCommand(
+                question_id=exam.questions[0].id,
+                answer_content="분류는 범주, 회귀는 값을 예측합니다.",
+                metadata={},
+                occurred_at=ENDS_AT,
+            ),
+        )
+    assert follow_up_port.requests == []
+
+
+@pytest.mark.asyncio
+async def test_generate_follow_up_rejects_completed_session_before_port():
+    exam = make_exam()
+    exam.questions = [make_question()]
+    session_repository = InMemoryExamSessionRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.COMPLETED,
+        started_at=STARTS_AT,
+        last_activity_at=ENDS_AT,
+        ended_at=ENDS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+    follow_up_port = FakeExamFollowUpGenerationPort()
+    service = ExamService(
+        repository=InMemoryExamRepository([exam]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+        follow_up_generation_port=follow_up_port,
+    )
+
+    with pytest.raises(ExamSessionUnavailableException):
+        await service.generate_exam_follow_up(
+            exam_id=EXAM_ID,
+            session_id=session.id,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+            command=GenerateExamFollowUpCommand(
+                question_id=exam.questions[0].id,
+                answer_content="분류는 범주, 회귀는 값을 예측합니다.",
+                metadata={},
+                occurred_at=ENDS_AT,
+            ),
+        )
+    assert follow_up_port.requests == []
+
+
+@pytest.mark.asyncio
+async def test_get_my_exam_session_result_returns_owned_session_result():
+    session_repository = InMemoryExamSessionRepository()
+    result_repository = InMemoryExamResultRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.COMPLETED,
+        started_at=STARTS_AT,
+        last_activity_at=ENDS_AT,
+        ended_at=ENDS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+    pending_result = ExamResult(
+        exam_id=EXAM_ID,
+        session_id=session.id,
+        student_id=STUDENT_ID,
+        status=ExamResultStatus.PENDING,
+    )
+    await result_repository.save(pending_result)
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam()]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    result = await service.get_my_exam_session_result(
+        exam_id=EXAM_ID,
+        session_id=session.id,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+    )
+
+    assert result is pending_result
+    assert result.status is ExamResultStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_generate_follow_up_rejects_deleted_question_before_port():
+    exam = make_exam()
+    question = make_question()
+    question.status = ExamQuestionStatus.DELETED
+    exam.questions = [question]
+    session_repository = InMemoryExamSessionRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.IN_PROGRESS,
+        started_at=STARTS_AT,
+        last_activity_at=STARTS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+    follow_up_port = FakeExamFollowUpGenerationPort()
+    service = ExamService(
+        repository=InMemoryExamRepository([exam]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+        follow_up_generation_port=follow_up_port,
+    )
+
+    with pytest.raises(ExamQuestionNotFoundDomainException):
+        await service.generate_exam_follow_up(
+            exam_id=EXAM_ID,
+            session_id=session.id,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+            command=GenerateExamFollowUpCommand(
+                question_id=question.id,
+                answer_content="분류는 범주, 회귀는 값을 예측합니다.",
+                metadata={},
+                occurred_at=ENDS_AT,
+            ),
+        )
+    assert follow_up_port.requests == []
+
+
+@pytest.mark.asyncio
+async def test_get_my_exam_session_result_rejects_other_student_session():
+    session_repository = InMemoryExamSessionRepository()
+    result_repository = InMemoryExamResultRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        status=ExamSessionStatus.COMPLETED,
+        started_at=STARTS_AT,
+        last_activity_at=ENDS_AT,
+        ended_at=ENDS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+    await result_repository.save(
+        ExamResult(
+            exam_id=EXAM_ID,
+            session_id=session.id,
+            student_id=STUDENT_ID,
+            status=ExamResultStatus.PENDING,
+        )
+    )
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam()]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FakeRealtimeSessionPort(),
+    )
+
+    with pytest.raises(ExamSessionOwnershipForbiddenDomainException):
+        await service.get_my_exam_session_result(
+            exam_id=EXAM_ID,
+            session_id=session.id,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )

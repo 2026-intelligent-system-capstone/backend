@@ -7,6 +7,13 @@ from app.exam.domain.service.evaluator import (
     ExamResultEvaluationQuestion,
     ExamResultEvaluationTurn,
 )
+from app.exam.domain.service.follow_up import (
+    ExamFollowUpGenerationPort,
+    ExamFollowUpGenerationQuestion,
+    ExamFollowUpGenerationRequest,
+    ExamFollowUpGenerationResult,
+    ExamFollowUpGenerationTurn,
+)
 from app.exam.domain.service.generator import (
     ExamQuestionGenerationCriterion,
     ExamQuestionGenerationLevelCount,
@@ -27,6 +34,11 @@ __all__ = [
     "ExamResultEvaluationPort",
     "ExamResultEvaluationQuestion",
     "ExamResultEvaluationTurn",
+    "ExamFollowUpGenerationPort",
+    "ExamFollowUpGenerationQuestion",
+    "ExamFollowUpGenerationRequest",
+    "ExamFollowUpGenerationResult",
+    "ExamFollowUpGenerationTurn",
     "ExamQuestionGenerationCriterion",
     "ExamQuestionGenerationPort",
     "ExamQuestionGenerationLevelCount",

@@ -9,6 +9,7 @@ from app.exam.adapter.input.api.v1.request import (
     CreateExamQuestionRequest,
     CreateExamRequest,
     FinalizeExamResultRequest,
+    GenerateExamFollowUpRequest,
     GenerateExamQuestionsRequest,
     RecordExamTurnRequest,
     UpdateExamQuestionRequest,
@@ -33,6 +34,9 @@ from app.exam.adapter.input.api.v1.response import (
     StudentExamListResponse,
     StudentExamPayload,
     StudentExamResponse,
+    StudentExamSessionQuestionPayload,
+    StudentExamSessionSheetPayload,
+    StudentExamSessionSheetResponse,
 )
 from app.exam.container import ExamContainer
 from app.exam.domain.command import (
@@ -40,6 +44,7 @@ from app.exam.domain.command import (
     CreateExamCommand,
     CreateExamQuestionCommand,
     FinalizeExamResultCommand,
+    GenerateExamFollowUpCommand,
     GenerateExamQuestionsCommand,
     RecordExamTurnCommand,
     UpdateExamQuestionCommand,
@@ -209,11 +214,41 @@ def _build_student_exam_payload(student_exam) -> StudentExamPayload:
         **exam_payload,
         is_completed=student_exam.is_completed,
         can_enter=student_exam.can_enter,
-        latest_result=(
-            _build_exam_result_payload(student_exam.latest_result)
-            if student_exam.latest_result is not None
-            else None
-        ),
+        has_result=student_exam.latest_result is not None,
+    )
+
+
+def _build_student_exam_session_sheet_payload(
+    exam,
+) -> StudentExamSessionSheetPayload:
+    return StudentExamSessionSheetPayload(
+        id=str(exam.id),
+        classroom_id=str(exam.classroom_id),
+        title=exam.title,
+        description=exam.description,
+        exam_type=exam.exam_type.value,
+        status=exam.status.value,
+        duration_minutes=exam.duration_minutes,
+        starts_at=exam.starts_at.isoformat(),
+        ends_at=exam.ends_at.isoformat(),
+        max_attempts=exam.max_attempts,
+        week=exam.week,
+        questions=[
+            StudentExamSessionQuestionPayload(
+                id=str(question.id),
+                exam_id=str(question.exam_id),
+                question_number=question.question_number,
+                max_score=question.max_score,
+                question_type=question.question_type.value,
+                bloom_level=question.bloom_level.value,
+                difficulty=question.difficulty.value,
+                question_text=question.question_text,
+                answer_options=list(question.answer_options),
+                status=question.status.value,
+            )
+            for question in exam.questions
+            if question.status is not ExamQuestionStatus.DELETED
+        ],
     )
 
 
@@ -482,6 +517,26 @@ async def get_student_exam(
     return StudentExamResponse(data=_build_student_exam_payload(exam))
 
 
+@student_router.get(
+    "/{exam_id}/session-sheet",
+    response_model=StudentExamSessionSheetResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def get_student_exam_session_sheet(
+    exam_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    exam = await usecase.get_student_exam_session_sheet(
+        exam_id=exam_id,
+        current_user=current_user,
+    )
+    return StudentExamSessionSheetResponse(
+        data=_build_student_exam_session_sheet_payload(exam)
+    )
+
+
 @student_router.post(
     "/{exam_id}/sessions",
     response_model=ExamSessionResponse,
@@ -545,6 +600,48 @@ async def record_exam_turn(
         command=RecordExamTurnCommand(**request.model_dump()),
     )
     return ExamTurnResponse(data=_build_exam_turn_payload(turn))
+
+
+@student_router.post(
+    "/{exam_id}/sessions/{session_id}/follow-ups",
+    response_model=ExamTurnResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def generate_exam_follow_up(
+    exam_id: UUID,
+    session_id: UUID,
+    request: GenerateExamFollowUpRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    turn = await usecase.generate_exam_follow_up(
+        exam_id=exam_id,
+        session_id=session_id,
+        current_user=current_user,
+        command=GenerateExamFollowUpCommand(**request.model_dump()),
+    )
+    return ExamTurnResponse(data=_build_exam_turn_payload(turn))
+
+
+@student_router.get(
+    "/{exam_id}/sessions/{session_id}/result",
+    response_model=ExamResultResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def get_my_exam_session_result(
+    exam_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    result = await usecase.get_my_exam_session_result(
+        exam_id=exam_id,
+        session_id=session_id,
+        current_user=current_user,
+    )
+    return ExamResultResponse(data=_build_exam_result_payload(result))
 
 
 @student_router.post(
