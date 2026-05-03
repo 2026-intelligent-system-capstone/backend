@@ -1,15 +1,71 @@
+from uuid import UUID
+
 from sqlalchemy import (
     JSON,
-    Boolean,
+    CheckConstraint,
     Column,
     DateTime,
+    Enum,
+    Float,
     ForeignKey,
+    Index,
     Integer,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.types import TypeDecorator
 
+from app.exam.domain.entity import (
+    BloomLevel,
+    ExamDifficulty,
+    ExamGenerationStatus,
+    ExamQuestionStatus,
+    ExamQuestionType,
+    ExamResultStatus,
+    ExamSessionStatus,
+    ExamStatus,
+    ExamTurnEventType,
+    ExamTurnRole,
+    ExamType,
+)
 from core.db.sqlalchemy.models.base import BaseTable, metadata
+
+
+class UUIDListJSON(TypeDecorator):
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        del dialect
+        if value is None:
+            raise TypeError("source_material_ids cannot be null")
+        serialized = []
+        for item in value:
+            if isinstance(item, UUID):
+                serialized.append(str(item))
+                continue
+            if isinstance(item, str):
+                serialized.append(str(UUID(item)))
+                continue
+            raise TypeError("source_material_ids must contain UUID values")
+        return serialized
+
+    def process_result_value(self, value, dialect):
+        del dialect
+        if value is None:
+            raise ValueError("source_material_ids cannot be null")
+        deserialized = []
+        for item in value:
+            if isinstance(item, UUID):
+                deserialized.append(item)
+                continue
+            if isinstance(item, str):
+                deserialized.append(UUID(item))
+                continue
+            raise TypeError("source_material_ids must contain UUID strings")
+        return deserialized
+
 
 exam_table = BaseTable(
     "t_exam",
@@ -23,12 +79,55 @@ exam_table = BaseTable(
     ),
     Column("title", String(100), nullable=False),
     Column("description", String(1000), nullable=True),
-    Column("exam_type", String(50), nullable=False),
-    Column("status", String(50), nullable=False),
+    Column(
+        "exam_type",
+        Enum(
+            ExamType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
+    Column(
+        "status",
+        Enum(
+            ExamStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
     Column("duration_minutes", Integer, nullable=False),
+    Column("week", Integer, nullable=False),
     Column("starts_at", DateTime(timezone=True), nullable=False),
     Column("ends_at", DateTime(timezone=True), nullable=False),
-    Column("allow_retake", Boolean, nullable=False, default=False),
+    Column("max_attempts", Integer, nullable=False, default=1),
+    Column(
+        "generation_status",
+        Enum(
+            ExamGenerationStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+        default=ExamGenerationStatus.IDLE.value,
+    ),
+    Column("generation_error", String(1000), nullable=True),
+    Column("generation_job_id", PG_UUID(as_uuid=True), nullable=True),
+    Column("generation_requested_at", DateTime(timezone=True), nullable=True),
+    Column("generation_completed_at", DateTime(timezone=True), nullable=True),
 )
 
 exam_criterion_table = BaseTable(
@@ -50,6 +149,86 @@ exam_criterion_table = BaseTable(
     Column("poor_definition", String(1000), nullable=True),
 )
 
+exam_question_table = BaseTable(
+    "t_exam_question",
+    metadata,
+    Column("id", PG_UUID(as_uuid=True), primary_key=True),
+    Column(
+        "exam_id",
+        PG_UUID(as_uuid=True),
+        ForeignKey("t_exam.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("question_number", Integer, nullable=False),
+    Column("max_score", Float(), nullable=False, default=1.0),
+    Column(
+        "question_type",
+        Enum(
+            ExamQuestionType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
+    Column(
+        "bloom_level",
+        Enum(
+            BloomLevel,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
+    Column(
+        "difficulty",
+        Enum(
+            ExamDifficulty,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
+    Column("question_text", String(5000), nullable=False),
+    Column("intent_text", String(5000), nullable=False),
+    Column("rubric_text", String(12000), nullable=False),
+    Column("answer_options", JSON(), nullable=False, default=list),
+    Column("correct_answer_text", String(2000), nullable=True),
+    Column("scope_text", String(1000), nullable=True),
+    Column("evaluation_objective", String(2000), nullable=True),
+    Column("answer_key", String(5000), nullable=True),
+    Column("scoring_criteria", String(5000), nullable=True),
+    Column("source_material_ids", UUIDListJSON(), nullable=False, default=list),
+    Column(
+        "status",
+        Enum(
+            ExamQuestionStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
+    CheckConstraint(
+        "max_score > 0",
+        name="ck_t_exam_question_max_score_positive",
+    ),
+)
+
 exam_session_table = BaseTable(
     "t_exam_session",
     metadata,
@@ -66,13 +245,36 @@ exam_session_table = BaseTable(
         ForeignKey("t_user.id", ondelete="RESTRICT"),
         nullable=False,
     ),
-    Column("status", String(50), nullable=False),
+    Column(
+        "status",
+        Enum(
+            ExamSessionStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
     Column("started_at", DateTime(timezone=True), nullable=False),
     Column("ended_at", DateTime(timezone=True), nullable=True),
     Column("last_activity_at", DateTime(timezone=True), nullable=False),
     Column("expires_at", DateTime(timezone=True), nullable=True),
     Column("attempt_number", Integer(), nullable=False),
     Column("provider_session_id", String(255), nullable=True),
+    UniqueConstraint("exam_id", "student_id", "attempt_number"),
+)
+
+Index(
+    "ix_t_exam_session_single_in_progress",
+    exam_session_table.c.exam_id,
+    exam_session_table.c.student_id,
+    unique=True,
+    postgresql_where=(
+        exam_session_table.c.status == ExamSessionStatus.IN_PROGRESS.value
+    ),
 )
 
 exam_result_table = BaseTable(
@@ -97,10 +299,45 @@ exam_result_table = BaseTable(
         ForeignKey("t_user.id", ondelete="RESTRICT"),
         nullable=False,
     ),
-    Column("status", String(50), nullable=False),
+    Column(
+        "status",
+        Enum(
+            ExamResultStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
     Column("submitted_at", DateTime(timezone=True), nullable=True),
-    Column("overall_score", Integer(), nullable=True),
+    Column("overall_score", Float(), nullable=True),
     Column("summary", String(2000), nullable=True),
+    Column("strengths", JSON(), nullable=False, default=list),
+    Column("weaknesses", JSON(), nullable=False, default=list),
+    Column("improvement_suggestions", JSON(), nullable=False, default=list),
+)
+
+exam_result_criterion_table = BaseTable(
+    "t_exam_result_criterion",
+    metadata,
+    Column("id", PG_UUID(as_uuid=True), primary_key=True),
+    Column(
+        "result_id",
+        PG_UUID(as_uuid=True),
+        ForeignKey("t_exam_result.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "criterion_id",
+        PG_UUID(as_uuid=True),
+        ForeignKey("t_exam_criterion.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("score", Float(), nullable=True),
+    Column("feedback", String(2000), nullable=True),
 )
 
 exam_turn_table = BaseTable(
@@ -114,8 +351,32 @@ exam_turn_table = BaseTable(
         nullable=False,
     ),
     Column("sequence", Integer(), nullable=False),
-    Column("role", String(50), nullable=False),
-    Column("event_type", String(50), nullable=False),
+    Column(
+        "role",
+        Enum(
+            ExamTurnRole,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
+    Column(
+        "event_type",
+        Enum(
+            ExamTurnEventType,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+    ),
     Column("content", String(10000), nullable=False),
     Column("metadata", JSON(), nullable=False, default=dict),
     Column("created_at", DateTime(timezone=True), nullable=False),

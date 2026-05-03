@@ -97,7 +97,7 @@ class ClassroomUseCase(ABC):
         classroom_id: UUID,
         current_user: CurrentUser,
         command: CreateClassroomMaterialCommand,
-        file_upload: FileUploadData,
+        file_upload: FileUploadData | None = None,
     ) -> ClassroomMaterialDetail:
         """Create classroom material."""
 
@@ -141,6 +141,16 @@ class ClassroomUseCase(ABC):
         file_upload: FileUploadData | None = None,
     ) -> ClassroomMaterialDetail:
         """Update classroom material."""
+
+    @abstractmethod
+    async def reingest_classroom_material(
+        self,
+        *,
+        classroom_id: UUID,
+        material_id: UUID,
+        current_user: CurrentUser,
+    ) -> ClassroomMaterialDetail:
+        """Re-ingest classroom material."""
 
     @abstractmethod
     async def delete_classroom_material(

@@ -183,7 +183,7 @@ async def test_update_organization_changes_code_and_auth_provider():
     )
 
     assert organization.code == "univ_hansung_new"
-    assert organization.auth_provider == (OrganizationAuthProvider.HANSUNG_SIS)
+    assert organization.auth_provider == OrganizationAuthProvider.HANSUNG_SIS
 
 
 @pytest.mark.asyncio
@@ -203,7 +203,7 @@ async def test_update_organization_keeps_omitted_fields_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_delete_organization_sets_inactive():
+async def test_delete_organization_sets_deleted_state():
     service = OrganizationService(
         repository=InMemoryOrganizationRepository([make_organization()])
     )
@@ -211,6 +211,7 @@ async def test_delete_organization_sets_inactive():
     organization = await service.delete_organization(HANSUNG_ID)
 
     assert organization.is_active is False
+    assert organization.is_deleted is True
 
 
 @pytest.mark.asyncio

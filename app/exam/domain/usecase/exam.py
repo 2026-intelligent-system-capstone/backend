@@ -6,16 +6,23 @@ from app.auth.domain.entity import CurrentUser
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
     CreateExamCommand,
+    CreateExamQuestionCommand,
     FinalizeExamResultCommand,
+    GenerateExamFollowUpCommand,
+    GenerateExamQuestionsCommand,
     RecordExamTurnCommand,
+    UpdateExamQuestionCommand,
 )
 from app.exam.domain.entity import (
     Exam,
+    ExamQuestion,
     ExamResult,
     ExamSession,
     ExamTurn,
     StartedExamSession,
+    StudentExam,
 )
+from app.exam.domain.service import ExamQuestionGenerationSubmitResult
 
 
 class ExamUseCase(ABC):
@@ -49,10 +56,80 @@ class ExamUseCase(ABC):
         """Get exam."""
 
     @abstractmethod
-    async def start_exam_session(
+    async def create_exam_question(
         self,
         *,
         classroom_id: UUID,
+        exam_id: UUID,
+        current_user: CurrentUser,
+        command: CreateExamQuestionCommand,
+    ) -> ExamQuestion:
+        """Create exam question."""
+
+    @abstractmethod
+    async def update_exam_question(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        question_id: UUID,
+        current_user: CurrentUser,
+        command: UpdateExamQuestionCommand,
+    ) -> ExamQuestion:
+        """Update exam question."""
+
+    @abstractmethod
+    async def delete_exam_question(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        question_id: UUID,
+        current_user: CurrentUser,
+    ) -> ExamQuestion:
+        """Delete exam question."""
+
+    @abstractmethod
+    async def generate_exam_questions(
+        self,
+        *,
+        classroom_id: UUID,
+        exam_id: UUID,
+        current_user: CurrentUser,
+        command: GenerateExamQuestionsCommand,
+    ) -> ExamQuestionGenerationSubmitResult:
+        """Submit async exam question generation job."""
+
+    @abstractmethod
+    async def list_student_exams(
+        self,
+        *,
+        current_user: CurrentUser,
+    ) -> Sequence[StudentExam]:
+        """List current student's accessible exams with completion state."""
+
+    @abstractmethod
+    async def get_student_exam(
+        self,
+        *,
+        exam_id: UUID,
+        current_user: CurrentUser,
+    ) -> StudentExam:
+        """Get one current student's accessible exam with completion state."""
+
+    @abstractmethod
+    async def get_student_exam_session_sheet(
+        self,
+        *,
+        exam_id: UUID,
+        current_user: CurrentUser,
+    ) -> Exam:
+        """Get current student's exam sheet with safe question fields."""
+
+    @abstractmethod
+    async def start_exam_session(
+        self,
+        *,
         exam_id: UUID,
         current_user: CurrentUser,
     ) -> StartedExamSession:
@@ -62,7 +139,6 @@ class ExamUseCase(ABC):
     async def list_my_exam_results(
         self,
         *,
-        classroom_id: UUID,
         exam_id: UUID,
         current_user: CurrentUser,
     ) -> Sequence[ExamResult]:
@@ -72,7 +148,6 @@ class ExamUseCase(ABC):
     async def record_exam_turn(
         self,
         *,
-        classroom_id: UUID,
         exam_id: UUID,
         session_id: UUID,
         current_user: CurrentUser,
@@ -81,10 +156,30 @@ class ExamUseCase(ABC):
         """Persist one exam conversation turn."""
 
     @abstractmethod
+    async def generate_exam_follow_up(
+        self,
+        *,
+        exam_id: UUID,
+        session_id: UUID,
+        current_user: CurrentUser,
+        command: GenerateExamFollowUpCommand,
+    ) -> ExamTurn:
+        """Generate and persist one assistant follow-up turn."""
+
+    @abstractmethod
+    async def get_my_exam_session_result(
+        self,
+        *,
+        exam_id: UUID,
+        session_id: UUID,
+        current_user: CurrentUser,
+    ) -> ExamResult:
+        """Get current student's result for one exam session."""
+
+    @abstractmethod
     async def complete_exam_session(
         self,
         *,
-        classroom_id: UUID,
         exam_id: UUID,
         session_id: UUID,
         current_user: CurrentUser,
@@ -96,7 +191,6 @@ class ExamUseCase(ABC):
     async def finalize_exam_result(
         self,
         *,
-        classroom_id: UUID,
         exam_id: UUID,
         session_id: UUID,
         current_user: CurrentUser,

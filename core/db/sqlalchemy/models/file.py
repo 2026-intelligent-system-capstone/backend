@@ -14,6 +14,17 @@ file_table = BaseTable(
     Column("file_size", BigInteger, nullable=False),
     Column("mime_type", String(100), nullable=False),
     Column(
-        "status", Enum(FileStatus), nullable=False, default=FileStatus.PENDING
+        "status",
+        Enum(
+            FileStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+        default=FileStatus.PENDING,
     ),
 )

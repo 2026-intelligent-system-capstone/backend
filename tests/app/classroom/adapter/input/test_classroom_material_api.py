@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 from uuid import UUID
@@ -53,16 +54,47 @@ def set_access_token_cookie(client: TestClient, user: User) -> None:
     client.cookies.set(config.ACCESS_TOKEN_COOKIE_NAME, access_token)
 
 
-def make_result():
-    file = File(
-        file_name="week1.pdf",
-        file_path="classrooms/week1.pdf",
-        file_extension="pdf",
-        file_size=10,
-        mime_type="application/pdf",
-        status=FileStatus.ACTIVE,
-    )
-    file.id = FILE_ID
+def make_result(*, source_kind: str = "file", source_url: str | None = None):
+    file = None
+    if source_kind == "file":
+        file = File(
+            file_name="week1.pdf",
+            file_path="classrooms/week1.pdf",
+            file_extension="pdf",
+            file_size=10,
+            mime_type="application/pdf",
+            status=FileStatus.ACTIVE,
+        )
+        file.id = FILE_ID
+
+    class ScopeCandidate:
+        def __init__(
+            self,
+            *,
+            label,
+            scope_text,
+            keywords,
+            week_range,
+            confidence,
+        ):
+            self.label = label
+            self.scope_text = scope_text
+            self.keywords = keywords
+            self.week_range = week_range
+            self.confidence = confidence
+
+    @dataclass
+    class IngestCapability:
+        supported: bool
+        reason: str | None = None
+
+    class OriginalFile:
+        def __init__(self):
+            self.file_name = "week1.pdf"
+            self.file_path = "classrooms/week1.pdf"
+            self.file_extension = "pdf"
+            self.file_size = 10
+            self.mime_type = "application/pdf"
 
     material = type("Material", (), {})()
     material.id = MATERIAL_ID
@@ -72,6 +104,31 @@ def make_result():
     material.description = "소개 자료"
     material.uploaded_by = PROFESSOR_ID
     material.created_at = datetime(2026, 1, 1, 9, 0, 0)
+    material.source_kind = type("SourceKind", (), {"value": source_kind})()
+    material.source_url = source_url
+    material.ingest_status = type("IngestStatus", (), {"value": "completed"})()
+    material.ingest_error = None
+    material.ingest_metadata = (
+        {"mime_type": "application/pdf"}
+        if source_kind == "file"
+        else {"source_url": source_url}
+    )
+    material.get_scope_candidates = lambda: [
+        ScopeCandidate(
+            label="기초 개념",
+            scope_text="머신러닝 개요와 지도학습",
+            keywords=["머신러닝", "지도학습"],
+            week_range="1주차",
+            confidence=0.92,
+        )
+    ]
+    material.get_ingest_capability = lambda: IngestCapability(
+        supported=True,
+        reason=None,
+    )
+    material.get_original_file = (
+        (lambda: OriginalFile()) if source_kind == "file" else (lambda: None)
+    )
 
     result = type("Result", (), {})()
     result.material = material
@@ -84,7 +141,15 @@ def test_create_classroom_material_returns_200_for_professor(
     monkeypatch,
 ):
     async def create_stub(*_args, **_kwargs):
-        return make_result()
+        result = make_result()
+        result.material.ingest_status = type(
+            "IngestStatus",
+            (),
+            {"value": "pending"},
+        )()
+        result.material.ingest_error = None
+        result.material.get_scope_candidates = lambda: []
+        return result
 
     professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
 
@@ -115,9 +180,76 @@ def test_create_classroom_material_returns_200_for_professor(
         },
     )
 
+    body = response.json()
+
     assert response.status_code == 200
-    assert response.json()["data"]["title"] == "1주차 자료"
-    assert response.json()["data"]["file"]["file_name"] == "week1.pdf"
+    assert body["data"]["title"] == "1주차 자료"
+    assert body["data"]["file"]["file_name"] == "week1.pdf"
+    assert body["data"]["uploaded_at"] == "2026-01-01T09:00:00Z"
+    assert body["data"]["ingest_status"] == "pending"
+    assert body["data"]["scope_candidates"] == []
+    assert body["data"]["ingest_error"] is None
+
+
+def test_create_classroom_material_accepts_link_payload_without_uploaded_file(
+    client,
+    monkeypatch,
+):
+    captured = {}
+
+    async def create_stub(*_args, **kwargs):
+        captured["command"] = kwargs["command"]
+        captured["file_upload"] = kwargs["file_upload"]
+        result = make_result(
+            source_kind="link",
+            source_url="https://youtu.be/demo",
+        )
+        result.material.ingest_status = type(
+            "IngestStatus",
+            (),
+            {"value": "pending"},
+        )()
+        result.material.ingest_error = None
+        result.material.get_scope_candidates = lambda: []
+        return result
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "create_classroom_material",
+        create_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/materials",
+        data={
+            "title": "유튜브 자료",
+            "week": "2",
+            "description": "강의 링크",
+            "source_kind": "link",
+            "source_url": "https://youtu.be/demo",
+        },
+    )
+
+    body = response.json()
+
+    assert response.status_code == 200
+    assert captured["command"].source_kind.value == "link"
+    assert str(captured["command"].source_url) == "https://youtu.be/demo"
+    assert captured["file_upload"] is None
+    assert body["data"]["source_kind"] == "link"
+    assert body["data"]["source_url"] == "https://youtu.be/demo"
+    assert body["data"]["ingest_status"] == "pending"
+    assert body["data"]["scope_candidates"] == []
+    assert body["data"]["ingest_error"] is None
+    assert body["data"]["file"] is None
+    assert body["data"]["original_file"] is None
 
 
 def test_create_classroom_material_returns_403_for_student(
@@ -173,6 +305,85 @@ def test_list_classroom_materials_returns_200_for_student(
     assert response.status_code == 200
     assert len(response.json()["data"]) == 1
     assert response.json()["data"][0]["week"] == 1
+    assert response.json()["data"][0]["uploaded_at"] == "2026-01-01T09:00:00Z"
+
+
+def test_list_classroom_materials_includes_failed_ingest_error(
+    client,
+    monkeypatch,
+):
+    ingest_error = "PDF에서 추출할 수 있는 텍스트가 없습니다..."
+
+    async def list_stub(*_args, **_kwargs):
+        result = make_result()
+        result.material.ingest_status = type(
+            "IngestStatus",
+            (),
+            {"value": "failed"},
+        )()
+        result.material.ingest_error = ingest_error
+        return [result]
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "list_classroom_materials",
+        list_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.get(f"/api/classrooms/{CLASSROOM_ID}/materials")
+
+    material = response.json()["data"][0]
+
+    assert response.status_code == 200
+    assert material["ingest_status"] == "failed"
+    assert material["ingest_error"] == ingest_error
+
+
+def test_get_classroom_material_includes_failed_ingest_error(
+    client,
+    monkeypatch,
+):
+    ingest_error = "PDF에서 추출할 수 있는 텍스트가 없습니다..."
+
+    async def get_stub(*_args, **_kwargs):
+        result = make_result()
+        result.material.ingest_status = type(
+            "IngestStatus",
+            (),
+            {"value": "failed"},
+        )()
+        result.material.ingest_error = ingest_error
+        return result
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "get_classroom_material",
+        get_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.get(
+        f"/api/classrooms/{CLASSROOM_ID}/materials/{MATERIAL_ID}"
+    )
+
+    material = response.json()["data"]
+
+    assert response.status_code == 200
+    assert material["ingest_status"] == "failed"
+    assert material["ingest_error"] == ingest_error
 
 
 def test_get_classroom_material_returns_403_when_forbidden(
@@ -210,6 +421,13 @@ def test_update_classroom_material_returns_200_for_professor(
     async def update_stub(*_args, **_kwargs):
         result = make_result()
         result.material.title = "수정 자료"
+        result.material.ingest_status = type(
+            "IngestStatus",
+            (),
+            {"value": "pending"},
+        )()
+        result.material.ingest_error = None
+        result.material.get_scope_candidates = lambda: []
         return result
 
     professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
@@ -230,8 +448,74 @@ def test_update_classroom_material_returns_200_for_professor(
         data={"title": "수정 자료"},
     )
 
+    body = response.json()
+
     assert response.status_code == 200
-    assert response.json()["data"]["title"] == "수정 자료"
+    assert body["data"]["title"] == "수정 자료"
+    assert body["data"]["ingest_status"] == "pending"
+    assert body["data"]["scope_candidates"] == []
+    assert body["data"]["ingest_error"] is None
+
+
+def test_reingest_classroom_material_returns_200_for_professor(
+    client,
+    monkeypatch,
+):
+    async def reingest_stub(*_args, **_kwargs):
+        result = make_result()
+        result.material.ingest_status = type(
+            "IngestStatus",
+            (),
+            {"value": "pending"},
+        )()
+        result.material.ingest_error = None
+        result.material.get_scope_candidates = lambda: []
+        return result
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "reingest_classroom_material",
+        reingest_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/materials/{MATERIAL_ID}/reingest"
+    )
+
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["data"]["id"] == str(MATERIAL_ID)
+    assert body["data"]["ingest_status"] == "pending"
+    assert body["data"]["scope_candidates"] == []
+    assert body["data"]["ingest_error"] is None
+
+
+def test_reingest_classroom_material_returns_403_for_student(
+    client,
+    monkeypatch,
+):
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/materials/{MATERIAL_ID}/reingest"
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "AUTH__FORBIDDEN"
 
 
 def test_delete_classroom_material_returns_200_for_professor(
@@ -315,6 +599,51 @@ def test_create_classroom_material_invalid_payload_returns_422(
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
+def test_create_classroom_material_allows_blank_description(
+    client,
+    monkeypatch,
+):
+    captured_command = {}
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    async def create_stub(*_args, **kwargs):
+        captured_command["command"] = kwargs["command"]
+        result = make_result()
+        result.material.description = kwargs["command"].description
+        return result
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "create_classroom_material",
+        create_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        f"/api/classrooms/{CLASSROOM_ID}/materials",
+        data={
+            "title": "1주차 자료",
+            "week": "1",
+            "description": "",
+        },
+        files={
+            "uploaded_file": (
+                "week1.pdf",
+                BytesIO(b"pdf-content"),
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_command["command"].description is None
+    assert response.json()["data"]["description"] is None
+
+
 def test_update_classroom_material_empty_patch_returns_422(
     client,
     monkeypatch,
@@ -330,6 +659,34 @@ def test_update_classroom_material_empty_patch_returns_422(
     response = client.patch(
         f"/api/classrooms/{CLASSROOM_ID}/materials/{MATERIAL_ID}",
         data={},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
+
+
+def test_update_classroom_material_rejects_uploaded_file_without_source_kind(
+    client,
+    monkeypatch,
+):
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.patch(
+        f"/api/classrooms/{CLASSROOM_ID}/materials/{MATERIAL_ID}",
+        data={"title": "수정 자료"},
+        files={
+            "uploaded_file": (
+                "week1-v2.pdf",
+                BytesIO(b"pdf-content"),
+                "application/pdf",
+            )
+        },
     )
 
     assert response.status_code == 422

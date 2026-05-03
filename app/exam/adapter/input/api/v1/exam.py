@@ -6,15 +6,24 @@ from fastapi import APIRouter, Depends
 from app.auth.domain.entity import CurrentUser
 from app.exam.adapter.input.api.v1.request import (
     CompleteExamSessionRequest,
+    CreateExamQuestionRequest,
     CreateExamRequest,
     FinalizeExamResultRequest,
+    GenerateExamFollowUpRequest,
+    GenerateExamQuestionsRequest,
     RecordExamTurnRequest,
+    UpdateExamQuestionRequest,
 )
 from app.exam.adapter.input.api.v1.response import (
     ExamCriterionPayload,
     ExamListResponse,
     ExamPayload,
+    ExamQuestionGenerationSubmitPayload,
+    ExamQuestionGenerationSubmitResponse,
+    ExamQuestionPayload,
+    ExamQuestionResponse,
     ExamResponse,
+    ExamResultCriterionPayload,
     ExamResultListResponse,
     ExamResultPayload,
     ExamResultResponse,
@@ -22,15 +31,27 @@ from app.exam.adapter.input.api.v1.response import (
     ExamSessionResponse,
     ExamTurnPayload,
     ExamTurnResponse,
+    StudentExamListResponse,
+    StudentExamPayload,
+    StudentExamResponse,
+    StudentExamSessionQuestionPayload,
+    StudentExamSessionSheetPayload,
+    StudentExamSessionSheetResponse,
 )
 from app.exam.container import ExamContainer
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
     CreateExamCommand,
+    CreateExamQuestionCommand,
     FinalizeExamResultCommand,
+    GenerateExamFollowUpCommand,
+    GenerateExamQuestionsCommand,
     RecordExamTurnCommand,
+    UpdateExamQuestionCommand,
 )
+from app.exam.domain.entity import ExamQuestionStatus
 from app.exam.domain.usecase import ExamUseCase
+from app.user.domain.entity import UserRole
 from core.fastapi.dependencies.permission import (
     IsAuthenticated,
     IsProfessorOrAdmin,
@@ -39,9 +60,48 @@ from core.fastapi.dependencies.permission import (
 )
 
 router = APIRouter(prefix="/classrooms/{classroom_id}/exams", tags=["exams"])
+student_router = APIRouter(prefix="/exams", tags=["exams"])
 
 
-def _build_exam_payload(exam) -> ExamPayload:
+def _should_expose_question_answer(current_user: CurrentUser) -> bool:
+    return current_user.role in {UserRole.PROFESSOR, UserRole.ADMIN}
+
+
+def _build_exam_question_payload(
+    question,
+    *,
+    expose_answer: bool,
+    expose_rubric: bool,
+) -> ExamQuestionPayload:
+    return ExamQuestionPayload(
+        id=str(question.id),
+        exam_id=str(question.exam_id),
+        question_number=question.question_number,
+        max_score=question.max_score,
+        question_type=question.question_type.value,
+        bloom_level=question.bloom_level.value,
+        difficulty=question.difficulty.value,
+        question_text=question.question_text if expose_rubric else "",
+        intent_text=question.intent_text,
+        rubric_text=question.rubric_text if expose_rubric else "",
+        answer_options=(list(question.answer_options) if expose_answer else []),
+        correct_answer_text=(
+            question.correct_answer_text if expose_answer else None
+        ),
+        source_material_ids=[
+            str(source_material_id)
+            for source_material_id in question.source_material_ids
+        ],
+        status=question.status.value,
+    )
+
+
+def _build_exam_payload(
+    exam,
+    *,
+    expose_answer: bool,
+    expose_rubric: bool,
+) -> ExamPayload:
     return ExamPayload(
         id=str(exam.id),
         classroom_id=str(exam.classroom_id),
@@ -49,10 +109,28 @@ def _build_exam_payload(exam) -> ExamPayload:
         description=exam.description,
         exam_type=exam.exam_type.value,
         status=exam.status.value,
+        generation_status=exam.generation_status.value,
+        generation_error=exam.generation_error,
+        generation_job_id=(
+            str(exam.generation_job_id)
+            if exam.generation_job_id is not None
+            else None
+        ),
+        generation_requested_at=(
+            exam.generation_requested_at.isoformat()
+            if exam.generation_requested_at is not None
+            else None
+        ),
+        generation_completed_at=(
+            exam.generation_completed_at.isoformat()
+            if exam.generation_completed_at is not None
+            else None
+        ),
         duration_minutes=exam.duration_minutes,
         starts_at=exam.starts_at.isoformat(),
         ends_at=exam.ends_at.isoformat(),
-        allow_retake=exam.allow_retake,
+        max_attempts=exam.max_attempts,
+        week=exam.week,
         criteria=[
             ExamCriterionPayload(
                 id=str(criterion.id),
@@ -66,6 +144,32 @@ def _build_exam_payload(exam) -> ExamPayload:
             )
             for criterion in exam.criteria
         ],
+        questions=[
+            _build_exam_question_payload(
+                question,
+                expose_answer=expose_answer,
+                expose_rubric=expose_rubric,
+            )
+            for question in exam.questions
+            if question.status is not ExamQuestionStatus.DELETED
+        ],
+    )
+
+
+def _build_exam_question_generation_submit_payload(
+    result,
+) -> ExamQuestionGenerationSubmitPayload:
+    return ExamQuestionGenerationSubmitPayload(
+        exam_id=str(result.exam_id),
+        generation_status=result.generation_status.value,
+        job_id=str(result.job.job_id),
+        job_status=result.job.status.value,
+        generation_requested_at=(
+            result.generation_requested_at.isoformat()
+            if result.generation_requested_at is not None
+            else None
+        ),
+        generation_error=result.generation_error,
     )
 
 
@@ -83,6 +187,68 @@ def _build_exam_result_payload(result) -> ExamResultPayload:
         ),
         overall_score=result.overall_score,
         summary=result.summary,
+        strengths=list(getattr(result, "strengths", [])),
+        weaknesses=list(getattr(result, "weaknesses", [])),
+        improvement_suggestions=list(
+            getattr(result, "improvement_suggestions", [])
+        ),
+        criteria_results=[
+            ExamResultCriterionPayload(
+                criterion_id=str(item.criterion_id),
+                score=item.score,
+                feedback=item.feedback,
+            )
+            for item in getattr(result, "criteria_results", [])
+        ],
+    )
+
+
+def _build_student_exam_payload(student_exam) -> StudentExamPayload:
+    exam_payload = _build_exam_payload(
+        student_exam.exam,
+        expose_answer=False,
+        expose_rubric=False,
+    ).model_dump()
+    exam_payload["questions"] = []
+    return StudentExamPayload(
+        **exam_payload,
+        is_completed=student_exam.is_completed,
+        can_enter=student_exam.can_enter,
+        has_result=student_exam.latest_result is not None,
+    )
+
+
+def _build_student_exam_session_sheet_payload(
+    exam,
+) -> StudentExamSessionSheetPayload:
+    return StudentExamSessionSheetPayload(
+        id=str(exam.id),
+        classroom_id=str(exam.classroom_id),
+        title=exam.title,
+        description=exam.description,
+        exam_type=exam.exam_type.value,
+        status=exam.status.value,
+        duration_minutes=exam.duration_minutes,
+        starts_at=exam.starts_at.isoformat(),
+        ends_at=exam.ends_at.isoformat(),
+        max_attempts=exam.max_attempts,
+        week=exam.week,
+        questions=[
+            StudentExamSessionQuestionPayload(
+                id=str(question.id),
+                exam_id=str(question.exam_id),
+                question_number=question.question_number,
+                max_score=question.max_score,
+                question_type=question.question_type.value,
+                bloom_level=question.bloom_level.value,
+                difficulty=question.difficulty.value,
+                question_text=question.question_text,
+                answer_options=list(question.answer_options),
+                status=question.status.value,
+            )
+            for question in exam.questions
+            if question.status is not ExamQuestionStatus.DELETED
+        ],
     )
 
 
@@ -135,7 +301,13 @@ async def create_exam(
         current_user=current_user,
         command=CreateExamCommand(**request.model_dump()),
     )
-    return ExamResponse(data=_build_exam_payload(exam))
+    return ExamResponse(
+        data=_build_exam_payload(
+            exam,
+            expose_answer=_should_expose_question_answer(current_user),
+            expose_rubric=_should_expose_question_answer(current_user),
+        )
+    )
 
 
 @router.get(
@@ -153,7 +325,22 @@ async def list_exams(
         classroom_id=classroom_id,
         current_user=current_user,
     )
-    return ExamListResponse(data=[_build_exam_payload(exam) for exam in exams])
+    return ExamListResponse(
+        data=[
+            _build_exam_payload(
+                exam,
+                expose_answer=_should_expose_question_answer(current_user),
+                expose_rubric=_should_expose_question_answer(current_user),
+            ).model_copy(update={"questions": []})
+            if current_user.role == UserRole.STUDENT
+            else _build_exam_payload(
+                exam,
+                expose_answer=_should_expose_question_answer(current_user),
+                expose_rubric=_should_expose_question_answer(current_user),
+            )
+            for exam in exams
+        ]
+    )
 
 
 @router.get(
@@ -173,23 +360,195 @@ async def get_exam(
         exam_id=exam_id,
         current_user=current_user,
     )
-    return ExamResponse(data=_build_exam_payload(exam))
+    exam_payload = _build_exam_payload(
+        exam,
+        expose_answer=_should_expose_question_answer(current_user),
+        expose_rubric=_should_expose_question_answer(current_user),
+    )
+    if current_user.role == UserRole.STUDENT:
+        exam_payload = exam_payload.model_copy(update={"questions": []})
+    return ExamResponse(data=exam_payload)
 
 
 @router.post(
+    "/{exam_id}/questions",
+    response_model=ExamQuestionResponse,
+    dependencies=[Depends(PermissionDependency([IsProfessorOrAdmin]))],
+)
+@inject
+async def create_exam_question(
+    classroom_id: UUID,
+    exam_id: UUID,
+    request: CreateExamQuestionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    question = await usecase.create_exam_question(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        current_user=current_user,
+        command=CreateExamQuestionCommand(**request.model_dump()),
+    )
+    return ExamQuestionResponse(
+        data=_build_exam_question_payload(
+            question,
+            expose_answer=True,
+            expose_rubric=True,
+        )
+    )
+
+
+@router.patch(
+    "/{exam_id}/questions/{question_id}",
+    response_model=ExamQuestionResponse,
+    dependencies=[Depends(PermissionDependency([IsProfessorOrAdmin]))],
+)
+@inject
+async def update_exam_question(
+    classroom_id: UUID,
+    exam_id: UUID,
+    question_id: UUID,
+    request: UpdateExamQuestionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    question = await usecase.update_exam_question(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        question_id=question_id,
+        current_user=current_user,
+        command=UpdateExamQuestionCommand(
+            **request.model_dump(exclude_unset=True)
+        ),
+    )
+    return ExamQuestionResponse(
+        data=_build_exam_question_payload(
+            question,
+            expose_answer=True,
+            expose_rubric=True,
+        )
+    )
+
+
+@router.delete(
+    "/{exam_id}/questions/{question_id}",
+    response_model=ExamQuestionResponse,
+    dependencies=[Depends(PermissionDependency([IsProfessorOrAdmin]))],
+)
+@inject
+async def delete_exam_question(
+    classroom_id: UUID,
+    exam_id: UUID,
+    question_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    question = await usecase.delete_exam_question(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        question_id=question_id,
+        current_user=current_user,
+    )
+    return ExamQuestionResponse(
+        data=_build_exam_question_payload(
+            question,
+            expose_answer=True,
+            expose_rubric=True,
+        )
+    )
+
+
+@router.post(
+    "/{exam_id}/questions/generate",
+    response_model=ExamQuestionGenerationSubmitResponse,
+    status_code=202,
+    dependencies=[Depends(PermissionDependency([IsProfessorOrAdmin]))],
+)
+@inject
+async def generate_exam_questions(
+    classroom_id: UUID,
+    exam_id: UUID,
+    request: GenerateExamQuestionsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    result = await usecase.generate_exam_questions(
+        classroom_id=classroom_id,
+        exam_id=exam_id,
+        current_user=current_user,
+        command=GenerateExamQuestionsCommand(**request.model_dump()),
+    )
+    return ExamQuestionGenerationSubmitResponse(
+        data=_build_exam_question_generation_submit_payload(result)
+    )
+
+
+@student_router.get(
+    "",
+    response_model=StudentExamListResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def list_student_exams(
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    exams = await usecase.list_student_exams(current_user=current_user)
+    return StudentExamListResponse(
+        data=[_build_student_exam_payload(exam) for exam in exams]
+    )
+
+
+@student_router.get(
+    "/{exam_id}",
+    response_model=StudentExamResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def get_student_exam(
+    exam_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    exam = await usecase.get_student_exam(
+        exam_id=exam_id,
+        current_user=current_user,
+    )
+    return StudentExamResponse(data=_build_student_exam_payload(exam))
+
+
+@student_router.get(
+    "/{exam_id}/session-sheet",
+    response_model=StudentExamSessionSheetResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def get_student_exam_session_sheet(
+    exam_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    exam = await usecase.get_student_exam_session_sheet(
+        exam_id=exam_id,
+        current_user=current_user,
+    )
+    return StudentExamSessionSheetResponse(
+        data=_build_student_exam_session_sheet_payload(exam)
+    )
+
+
+@student_router.post(
     "/{exam_id}/sessions",
     response_model=ExamSessionResponse,
     dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
 )
 @inject
 async def start_exam_session(
-    classroom_id: UUID,
     exam_id: UUID,
     current_user: CurrentUser = Depends(get_current_user),
     usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
 ):
     result = await usecase.start_exam_session(
-        classroom_id=classroom_id,
         exam_id=exam_id,
         current_user=current_user,
     )
@@ -201,20 +560,18 @@ async def start_exam_session(
     )
 
 
-@router.get(
+@student_router.get(
     "/{exam_id}/results/me",
     response_model=ExamResultListResponse,
     dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
 )
 @inject
 async def list_my_exam_results(
-    classroom_id: UUID,
     exam_id: UUID,
     current_user: CurrentUser = Depends(get_current_user),
     usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
 ):
     results = await usecase.list_my_exam_results(
-        classroom_id=classroom_id,
         exam_id=exam_id,
         current_user=current_user,
     )
@@ -223,14 +580,13 @@ async def list_my_exam_results(
     )
 
 
-@router.post(
+@student_router.post(
     "/{exam_id}/sessions/{session_id}/turns",
     response_model=ExamTurnResponse,
     dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
 )
 @inject
 async def record_exam_turn(
-    classroom_id: UUID,
     exam_id: UUID,
     session_id: UUID,
     request: RecordExamTurnRequest,
@@ -238,7 +594,6 @@ async def record_exam_turn(
     usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
 ):
     turn = await usecase.record_exam_turn(
-        classroom_id=classroom_id,
         exam_id=exam_id,
         session_id=session_id,
         current_user=current_user,
@@ -247,14 +602,55 @@ async def record_exam_turn(
     return ExamTurnResponse(data=_build_exam_turn_payload(turn))
 
 
-@router.post(
+@student_router.post(
+    "/{exam_id}/sessions/{session_id}/follow-ups",
+    response_model=ExamTurnResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def generate_exam_follow_up(
+    exam_id: UUID,
+    session_id: UUID,
+    request: GenerateExamFollowUpRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    turn = await usecase.generate_exam_follow_up(
+        exam_id=exam_id,
+        session_id=session_id,
+        current_user=current_user,
+        command=GenerateExamFollowUpCommand(**request.model_dump()),
+    )
+    return ExamTurnResponse(data=_build_exam_turn_payload(turn))
+
+
+@student_router.get(
+    "/{exam_id}/sessions/{session_id}/result",
+    response_model=ExamResultResponse,
+    dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
+)
+@inject
+async def get_my_exam_session_result(
+    exam_id: UUID,
+    session_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
+):
+    result = await usecase.get_my_exam_session_result(
+        exam_id=exam_id,
+        session_id=session_id,
+        current_user=current_user,
+    )
+    return ExamResultResponse(data=_build_exam_result_payload(result))
+
+
+@student_router.post(
     "/{exam_id}/sessions/{session_id}/complete",
     response_model=ExamSessionResponse,
     dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
 )
 @inject
 async def complete_exam_session(
-    classroom_id: UUID,
     exam_id: UUID,
     session_id: UUID,
     request: CompleteExamSessionRequest,
@@ -262,7 +658,6 @@ async def complete_exam_session(
     usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
 ):
     session = await usecase.complete_exam_session(
-        classroom_id=classroom_id,
         exam_id=exam_id,
         session_id=session_id,
         current_user=current_user,
@@ -273,14 +668,13 @@ async def complete_exam_session(
     )
 
 
-@router.post(
+@student_router.post(
     "/{exam_id}/sessions/{session_id}/results/finalize",
     response_model=ExamResultResponse,
     dependencies=[Depends(PermissionDependency([IsAuthenticated]))],
 )
 @inject
 async def finalize_exam_result(
-    classroom_id: UUID,
     exam_id: UUID,
     session_id: UUID,
     request: FinalizeExamResultRequest,
@@ -288,7 +682,6 @@ async def finalize_exam_result(
     usecase: ExamUseCase = Depends(Provide[ExamContainer.service]),
 ):
     result = await usecase.finalize_exam_result(
-        classroom_id=classroom_id,
         exam_id=exam_id,
         session_id=session_id,
         current_user=current_user,

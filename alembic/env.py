@@ -50,8 +50,8 @@ def configure_runtime_environment() -> None:
     if selected_environment not in VALID_ENVIRONMENTS:
         available = ", ".join(sorted(VALID_ENVIRONMENTS))
         msg = (
-            "Unsupported migration environment: "
-            f"{selected_environment}. Expected one of: {available}"
+            f"Unsupported migration environment: {selected_environment}. "
+            f"Expected one of: {available}"
         )
         raise ValueError(msg)
 

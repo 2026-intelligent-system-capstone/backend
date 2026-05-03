@@ -1,5 +1,9 @@
 from dependency_injector import containers, providers
 
+from app.async_job.container import AsyncJobContainer
+from app.classroom.adapter.output.integration import (
+    LLMClassroomMaterialIngestAdapter,
+)
 from app.classroom.adapter.output.persistence.sqlalchemy import (
     ClassroomMaterialSQLAlchemyRepository,
     ClassroomSQLAlchemyRepository,
@@ -24,10 +28,15 @@ class ClassroomContainer(containers.DeclarativeContainer):
     material_repository = providers.Singleton(
         ClassroomMaterialSQLAlchemyRepository
     )
+    material_ingest_port = providers.Singleton(
+        LLMClassroomMaterialIngestAdapter
+    )
     service = providers.Factory(
         ClassroomService,
         repository=repository,
         user_repository=user_repository,
         material_repository=material_repository,
         file_usecase=FileContainer.service,
+        material_ingest_port=material_ingest_port,
+        async_job_service=AsyncJobContainer.service,
     )

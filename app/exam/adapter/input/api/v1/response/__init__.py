@@ -14,6 +14,23 @@ class ExamCriterionPayload(BaseModel):
     poor_definition: str | None = None
 
 
+class ExamQuestionPayload(BaseModel):
+    id: str
+    exam_id: str
+    question_number: int
+    max_score: float
+    question_type: str
+    bloom_level: str
+    difficulty: str
+    question_text: str
+    intent_text: str
+    rubric_text: str
+    answer_options: list[str] = Field(default_factory=list)
+    correct_answer_text: str | None = None
+    source_material_ids: list[str]
+    status: str
+
+
 class ExamPayload(BaseModel):
     id: str
     classroom_id: str
@@ -21,11 +38,18 @@ class ExamPayload(BaseModel):
     description: str | None = None
     exam_type: str
     status: str
+    generation_status: str
+    generation_error: str | None = None
+    generation_job_id: str | None = None
+    generation_requested_at: str | None = None
+    generation_completed_at: str | None = None
     duration_minutes: int
     starts_at: str
     ends_at: str
-    allow_retake: bool
+    max_attempts: int
+    week: int
     criteria: list[ExamCriterionPayload]
+    questions: list[ExamQuestionPayload] = Field(default_factory=list)
 
 
 class ExamResponse(BaseResponse):
@@ -34,6 +58,27 @@ class ExamResponse(BaseResponse):
 
 class ExamListResponse(BaseResponse):
     data: list[ExamPayload] = Field(default=...)
+
+
+class ExamQuestionResponse(BaseResponse):
+    data: ExamQuestionPayload = Field(default=...)
+
+
+class ExamQuestionListResponse(BaseResponse):
+    data: list[ExamQuestionPayload] = Field(default=...)
+
+
+class ExamQuestionGenerationSubmitPayload(BaseModel):
+    exam_id: str
+    generation_status: str
+    job_id: str
+    job_status: str
+    generation_requested_at: str | None = None
+    generation_error: str | None = None
+
+
+class ExamQuestionGenerationSubmitResponse(BaseResponse):
+    data: ExamQuestionGenerationSubmitPayload = Field(default=...)
 
 
 class ExamSessionPayload(BaseModel):
@@ -51,6 +96,44 @@ class ExamSessionResponse(BaseResponse):
     data: ExamSessionPayload = Field(default=...)
 
 
+class StudentExamSessionQuestionPayload(BaseModel):
+    id: str
+    exam_id: str
+    question_number: int
+    max_score: float
+    question_type: str
+    bloom_level: str
+    difficulty: str
+    question_text: str
+    answer_options: list[str] = Field(default_factory=list)
+    status: str
+
+
+class StudentExamSessionSheetPayload(BaseModel):
+    id: str
+    classroom_id: str
+    title: str
+    description: str | None = None
+    exam_type: str
+    status: str
+    duration_minutes: int
+    starts_at: str
+    ends_at: str
+    max_attempts: int
+    week: int
+    questions: list[StudentExamSessionQuestionPayload]
+
+
+class StudentExamSessionSheetResponse(BaseResponse):
+    data: StudentExamSessionSheetPayload = Field(default=...)
+
+
+class ExamResultCriterionPayload(BaseModel):
+    criterion_id: str
+    score: float | None = None
+    feedback: str | None = None
+
+
 class ExamResultPayload(BaseModel):
     id: str
     exam_id: str
@@ -58,8 +141,14 @@ class ExamResultPayload(BaseModel):
     student_id: str
     status: str
     submitted_at: str | None = None
-    overall_score: int | None = None
+    overall_score: float | None = None
     summary: str | None = None
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    improvement_suggestions: list[str] = Field(default_factory=list)
+    criteria_results: list[ExamResultCriterionPayload] = Field(
+        default_factory=list
+    )
 
 
 class ExamResultListResponse(BaseResponse):
@@ -68,6 +157,20 @@ class ExamResultListResponse(BaseResponse):
 
 class ExamResultResponse(BaseResponse):
     data: ExamResultPayload = Field(default=...)
+
+
+class StudentExamPayload(ExamPayload):
+    is_completed: bool
+    can_enter: bool
+    has_result: bool
+
+
+class StudentExamResponse(BaseResponse):
+    data: StudentExamPayload = Field(default=...)
+
+
+class StudentExamListResponse(BaseResponse):
+    data: list[StudentExamPayload] = Field(default=...)
 
 
 class ExamTurnPayload(BaseModel):
