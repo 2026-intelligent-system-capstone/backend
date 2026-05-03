@@ -40,6 +40,7 @@ from app.classroom.domain.repository.classroom_material import (
 from app.classroom.domain.service import (
     ClassroomMaterialIngestPort,
     ClassroomMaterialIngestRequest,
+    evaluate_classroom_material_source,
     validate_classroom_material_source_url,
 )
 from app.classroom.domain.usecase import ClassroomUseCase
@@ -330,22 +331,50 @@ class ClassroomService(ClassroomUseCase):
         self,
         *,
         source_kind: ClassroomMaterialSourceKind,
+        file_name: str | None = None,
+        mime_type: str | None = None,
+        source_url: str | None = None,
     ) -> ClassroomMaterialIngestCapability:
-        if source_kind in (
-            ClassroomMaterialSourceKind.FILE,
-            ClassroomMaterialSourceKind.LINK,
-        ):
-            return ClassroomMaterialIngestCapability(supported=True)
+        if source_kind is ClassroomMaterialSourceKind.FILE:
+            source_policy = evaluate_classroom_material_source(
+                file_name=file_name,
+                mime_type=mime_type,
+            )
+        elif source_kind is ClassroomMaterialSourceKind.LINK:
+            source_policy = evaluate_classroom_material_source(
+                source_url=source_url,
+            )
+        else:
+            source_policy = evaluate_classroom_material_source()
+
         return ClassroomMaterialIngestCapability(
-            supported=False,
-            reason="현재 지원하지 않는 강의 자료 형식입니다.",
+            supported=source_policy.supported,
+            reason=source_policy.reason,
         )
 
-    def _build_file_ingest_metadata(self, *, mime_type: str) -> dict[str, Any]:
-        return {"mime_type": mime_type}
+    def _build_file_ingest_metadata(
+        self,
+        *,
+        file_name: str,
+        mime_type: str,
+    ) -> dict[str, Any]:
+        source_policy = evaluate_classroom_material_source(
+            file_name=file_name,
+            mime_type=mime_type,
+        )
+        return {
+            "mime_type": mime_type,
+            "extension": source_policy.extension,
+        }
 
     def _build_link_ingest_metadata(self, *, source_url: str) -> dict[str, Any]:
-        return {"source_url": source_url}
+        source_policy = evaluate_classroom_material_source(
+            source_url=source_url,
+        )
+        return {
+            "source_url": source_url,
+            "source_type": source_policy.source_type,
+        }
 
     def _validate_link_source_url(self, *, source_url: str) -> None:
         try:
@@ -443,6 +472,11 @@ class ClassroomService(ClassroomUseCase):
                 and material.source_kind is ClassroomMaterialSourceKind.FILE
             ):
                 raise ClassroomMaterialIngestEmptyScopeDomainException()
+            if ingest_result.generated_description:
+                material.update(
+                    description=ingest_result.generated_description,
+                    replace_description=True,
+                )
             material.mark_ingest_completed(ingest_result.scope_candidates)
         except ClassroomMaterialIngestEmptyScopeDomainException as exc:
             material.mark_ingest_failed(exc.message)
@@ -490,14 +524,17 @@ class ClassroomService(ClassroomUseCase):
                 file_id=uploaded_file.id,
                 title=command.title,
                 week=command.week,
-                description=command.description,
+                description=None,
                 uploaded_by=current_user.id,
                 original_file=uploaded_file,
                 ingest_capability=self._build_ingest_capability(
-                    source_kind=command.source_kind
+                    source_kind=command.source_kind,
+                    file_name=uploaded_file.file_name,
+                    mime_type=uploaded_file.mime_type,
                 ),
                 ingest_metadata=self._build_file_ingest_metadata(
-                    mime_type=uploaded_file.mime_type
+                    file_name=uploaded_file.file_name,
+                    mime_type=uploaded_file.mime_type,
                 ),
             )
             await self.material_repository.save(material)
@@ -526,10 +563,11 @@ class ClassroomService(ClassroomUseCase):
                 source_url=command.source_url,
                 title=command.title,
                 week=command.week,
-                description=command.description,
+                description=None,
                 uploaded_by=current_user.id,
                 ingest_capability=self._build_ingest_capability(
-                    source_kind=command.source_kind
+                    source_kind=command.source_kind,
+                    source_url=command.source_url,
                 ),
                 ingest_metadata=self._build_link_ingest_metadata(
                     source_url=command.source_url
@@ -699,7 +737,8 @@ class ClassroomService(ClassroomUseCase):
                 old_file_id = material.switch_to_link(
                     source_url=next_source_url,
                     ingest_capability=self._build_ingest_capability(
-                        source_kind=target_source_kind
+                        source_kind=target_source_kind,
+                        source_url=next_source_url,
                     ),
                     ingest_metadata=self._build_link_ingest_metadata(
                         source_url=next_source_url
@@ -708,7 +747,8 @@ class ClassroomService(ClassroomUseCase):
             else:
                 material.update(
                     ingest_capability=self._build_ingest_capability(
-                        source_kind=target_source_kind
+                        source_kind=target_source_kind,
+                        source_url=next_source_url,
                     ),
                     replace_ingest_capability=True,
                     ingest_metadata=self._build_link_ingest_metadata(
@@ -741,10 +781,13 @@ class ClassroomService(ClassroomUseCase):
                 file_id=replacement_file.id,
                 original_file=replacement_file,
                 ingest_capability=self._build_ingest_capability(
-                    source_kind=target_source_kind
+                    source_kind=target_source_kind,
+                    file_name=replacement_file.file_name,
+                    mime_type=replacement_file.mime_type,
                 ),
                 ingest_metadata=self._build_file_ingest_metadata(
-                    mime_type=replacement_file.mime_type
+                    file_name=replacement_file.file_name,
+                    mime_type=replacement_file.mime_type,
                 ),
             )
             await self.material_repository.save(material)
@@ -769,11 +812,14 @@ class ClassroomService(ClassroomUseCase):
         file = await self.file_usecase.get_file(material.file_id)
         material.update(
             ingest_capability=self._build_ingest_capability(
-                source_kind=target_source_kind
+                source_kind=target_source_kind,
+                file_name=file.file_name,
+                mime_type=file.mime_type,
             ),
             replace_ingest_capability=True,
             ingest_metadata=self._build_file_ingest_metadata(
-                mime_type=file.mime_type
+                file_name=file.file_name,
+                mime_type=file.mime_type,
             ),
             replace_ingest_metadata=True,
         )

@@ -917,6 +917,33 @@ async def test_run_next_queued_job_marks_material_ingest_job_failed():
 
 
 @pytest.mark.asyncio
+async def test_run_next_queued_job_preserves_material_ingest_error_message():
+    ingest_error = "PDF에서 추출할 수 있는 텍스트가 없습니다..."
+    job = make_material_ingest_job()
+    material = make_material()
+    file = make_file()
+    worker = AsyncJobWorker(
+        repository=InMemoryAsyncJobRepository([job]),
+        classroom_repository=InMemoryClassroomRepository([make_classroom()]),
+        material_repository=InMemoryClassroomMaterialRepository([material]),
+        file_usecase=FakeFileUseCase(files={FILE_ID: file}),
+        material_ingest_port=FakeMaterialIngestPort(
+            error=ClassroomMaterialIngestDomainException(message=ingest_error)
+        ),
+        exam_repository=InMemoryExamRepository([]),
+        question_generation_port=None,
+    )
+
+    handled = await worker.run_next_queued_job()
+
+    assert handled is True
+    assert material.ingest_status is ClassroomMaterialIngestStatus.FAILED
+    assert material.ingest_error == ingest_error
+    assert job.status is AsyncJobStatus.FAILED
+    assert job.error_message == ingest_error
+
+
+@pytest.mark.asyncio
 async def test_build_material_ingest_request_allows_public_https_link():
     material = make_link_material(
         source_url="https://example.com/lecture/week1"
@@ -947,10 +974,6 @@ async def test_build_material_ingest_request_allows_public_https_link():
 @pytest.mark.parametrize(
     "source_url",
     [
-        "http://127.0.0.1/admin",
-        "http://localhost/internal",
-        "http://10.0.0.5/secret",
-        "http://169.254.169.254/latest/meta-data",
         "file:///etc/passwd",
         "gopher://internal.service",
     ],

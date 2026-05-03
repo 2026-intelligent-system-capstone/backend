@@ -308,6 +308,84 @@ def test_list_classroom_materials_returns_200_for_student(
     assert response.json()["data"][0]["uploaded_at"] == "2026-01-01T09:00:00Z"
 
 
+def test_list_classroom_materials_includes_failed_ingest_error(
+    client,
+    monkeypatch,
+):
+    ingest_error = "PDF에서 추출할 수 있는 텍스트가 없습니다..."
+
+    async def list_stub(*_args, **_kwargs):
+        result = make_result()
+        result.material.ingest_status = type(
+            "IngestStatus",
+            (),
+            {"value": "failed"},
+        )()
+        result.material.ingest_error = ingest_error
+        return [result]
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "list_classroom_materials",
+        list_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.get(f"/api/classrooms/{CLASSROOM_ID}/materials")
+
+    material = response.json()["data"][0]
+
+    assert response.status_code == 200
+    assert material["ingest_status"] == "failed"
+    assert material["ingest_error"] == ingest_error
+
+
+def test_get_classroom_material_includes_failed_ingest_error(
+    client,
+    monkeypatch,
+):
+    ingest_error = "PDF에서 추출할 수 있는 텍스트가 없습니다..."
+
+    async def get_stub(*_args, **_kwargs):
+        result = make_result()
+        result.material.ingest_status = type(
+            "IngestStatus",
+            (),
+            {"value": "failed"},
+        )()
+        result.material.ingest_error = ingest_error
+        return result
+
+    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return student_user
+
+    monkeypatch.setattr(
+        ClassroomService,
+        "get_classroom_material",
+        get_stub,
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, student_user)
+
+    response = client.get(
+        f"/api/classrooms/{CLASSROOM_ID}/materials/{MATERIAL_ID}"
+    )
+
+    material = response.json()["data"]
+
+    assert response.status_code == 200
+    assert material["ingest_status"] == "failed"
+    assert material["ingest_error"] == ingest_error
+
+
 def test_get_classroom_material_returns_403_when_forbidden(
     client,
     monkeypatch,

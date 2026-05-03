@@ -1,11 +1,11 @@
+import asyncio
 import json
-from collections.abc import Iterable
-from io import BytesIO
+from dataclasses import replace
+from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
-from zipfile import BadZipFile, ZipFile
 
 from openai import AsyncOpenAI
-from pypdf import PdfReader
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -16,9 +16,28 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from app.classroom.adapter.output.integration.material_extractors import (
+    extract_docx_chunks,
+    extract_hwpx_chunks,
+    extract_pdf_chunks,
+    extract_pptx_chunks,
+    extract_zip_chunks,
+    split_text,
+    validate_extracted_chunk_budget,
+)
+from app.classroom.adapter.output.integration.media_transcript import (
+    FfmpegOpenAIMediaTranscriptExtractor,
+    MediaTranscriptExtractorPort,
+)
 from app.classroom.adapter.output.integration.prompts import (
+    MATERIAL_DESCRIPTION_SYSTEM_PROMPT,
     MATERIAL_SCOPE_CANDIDATES_SYSTEM_PROMPT,
+    build_material_description_user_prompt,
     build_material_scope_candidates_user_prompt,
+)
+from app.classroom.adapter.output.integration.youtube_transcript import (
+    YoutubeTranscriptExtractorPort,
+    YtDlpYoutubeTranscriptExtractor,
 )
 from app.classroom.domain.entity import (
     ClassroomMaterialScopeCandidate,
@@ -44,35 +63,68 @@ TEXT_MIME_TYPES = {
     "application/xml",
     "text/xml",
 }
-
-OFFICE_MIME_TYPES = {
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/msword",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.ms-excel",
+TEXT_FILE_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".csv",
+    ".json",
+    ".xml",
 }
 
-VIDEO_MIME_PREFIXES = (
-    "video/",
-    "audio/",
-)
+PDF_MIME_TYPES = {"application/pdf"}
+DOCX_MIME_TYPES = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+}
+PPTX_MIME_TYPES = {
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+}
+HWPX_MIME_TYPES = {
+    "application/haansofthwp",
+    "application/haansofthwpx",
+    "application/x-hwpml",
+}
+ZIP_MIME_TYPES = {
+    "application/zip",
+    "application/x-zip-compressed",
+}
 
-YOUTUBE_HOST_MARKERS = (
+MEDIA_MIME_TYPES = {
+    "video/mp4",
+    "video/x-msvideo",
+    "video/avi",
+    "application/x-troff-msvideo",
+}
+MEDIA_FILE_EXTENSIONS = {".mp4", ".avi"}
+
+YOUTUBE_LINK_HOSTS = {
     "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
     "youtu.be",
-)
+}
 
 SUPPORTED_STATUS = "supported"
 PARTIAL_SUPPORTED_STATUS = "partial_supported"
 UNSUPPORTED_STATUS = "unsupported"
-MAX_CHUNK_LENGTH = 1000
-CHUNK_OVERLAP = 200
 MAX_SCOPE_SOURCE_LENGTH = 6000
 
 
 class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
+    def __init__(
+        self,
+        *,
+        youtube_transcript_extractor: (
+            YoutubeTranscriptExtractorPort | None
+        ) = None,
+        media_transcript_extractor: MediaTranscriptExtractorPort | None = None,
+    ) -> None:
+        self._youtube_transcript_extractor = (
+            youtube_transcript_extractor or YtDlpYoutubeTranscriptExtractor()
+        )
+        self._media_transcript_extractor = (
+            media_transcript_extractor or FfmpegOpenAIMediaTranscriptExtractor()
+        )
+
     async def ingest_material(
         self,
         *,
@@ -84,7 +136,9 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
             )
 
         try:
-            extracted_chunks, support_status = self._extract_chunks(request)
+            extracted_chunks, support_status = await self._extract_chunks(
+                request
+            )
         except ClassroomMaterialIngestDomainException:
             raise
         except Exception as exc:
@@ -103,8 +157,13 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
 
         try:
             client = QdrantClient(url=config.QDRANT_URL)
-            if not client.collection_exists(config.QDRANT_COLLECTION_NAME):
-                client.create_collection(
+            collection_exists = await asyncio.to_thread(
+                client.collection_exists,
+                config.QDRANT_COLLECTION_NAME,
+            )
+            if not collection_exists:
+                await asyncio.to_thread(
+                    client.create_collection,
                     collection_name=config.QDRANT_COLLECTION_NAME,
                     vectors_config=VectorParams(
                         size=1536,
@@ -112,7 +171,8 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
                     ),
                 )
 
-            client.delete(
+            await asyncio.to_thread(
+                client.delete,
                 collection_name=config.QDRANT_COLLECTION_NAME,
                 points_selector=Filter(
                     must=[
@@ -125,45 +185,56 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
             )
 
             openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+            source_text = "\n".join(
+                chunk.text for chunk in extracted_chunks[:5]
+            )[:MAX_SCOPE_SOURCE_LENGTH]
+            generated_description = await self._generate_description(
+                openai_client=openai_client,
+                request=request,
+                source_text=source_text,
+            )
+            description_request = replace(
+                request,
+                description=generated_description,
+            )
             embeddings = await openai_client.embeddings.create(
                 model=config.OPENAI_EMBEDDING_MODEL,
                 input=[chunk.text for chunk in extracted_chunks],
             )
-            client.upsert(
+            points = [
+                PointStruct(
+                    id=str(uuid4()),
+                    vector=embedding.embedding,
+                    payload={
+                        "classroom_id": str(request.classroom_id),
+                        "material_id": str(request.material_id),
+                        "title": request.title,
+                        "description": generated_description,
+                        "file_name": request.file_name,
+                        "week": request.week,
+                        "mime_type": request.mime_type,
+                        "support_status": support_status,
+                        "source_type": chunk.source_type,
+                        "source_unit_type": chunk.source_unit_type,
+                        "source_locator": chunk.source_locator,
+                        "citation_label": chunk.citation_label,
+                        "chunk_index": chunk.chunk_index,
+                        "text": chunk.text,
+                    },
+                )
+                for chunk, embedding in zip(
+                    extracted_chunks,
+                    embeddings.data,
+                    strict=True,
+                )
+            ]
+            await asyncio.to_thread(
+                client.upsert,
                 collection_name=config.QDRANT_COLLECTION_NAME,
                 wait=True,
-                points=[
-                    PointStruct(
-                        id=str(uuid4()),
-                        vector=embedding.embedding,
-                        payload={
-                            "classroom_id": str(request.classroom_id),
-                            "material_id": str(request.material_id),
-                            "title": request.title,
-                            "description": request.description,
-                            "file_name": request.file_name,
-                            "week": request.week,
-                            "mime_type": request.mime_type,
-                            "support_status": support_status,
-                            "source_type": chunk.source_type,
-                            "source_unit_type": chunk.source_unit_type,
-                            "source_locator": chunk.source_locator,
-                            "citation_label": chunk.citation_label,
-                            "chunk_index": chunk.chunk_index,
-                            "text": chunk.text,
-                        },
-                    )
-                    for chunk, embedding in zip(
-                        extracted_chunks,
-                        embeddings.data,
-                        strict=True,
-                    )
-                ],
+                points=points,
             )
 
-            source_text = "\n".join(
-                chunk.text for chunk in extracted_chunks[:5]
-            )[:MAX_SCOPE_SOURCE_LENGTH]
             completion = await openai_client.chat.completions.create(
                 model=config.OPENAI_EXAM_GENERATION_MODEL,
                 response_format={"type": "json_object"},
@@ -175,7 +246,7 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
                     {
                         "role": "user",
                         "content": build_material_scope_candidates_user_prompt(
-                            request=request,
+                            request=description_request,
                             source_text=source_text,
                         ),
                     },
@@ -242,70 +313,115 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
             scope_candidates=candidates[:5],
             extracted_chunks=extracted_chunks,
             support_status=support_status,
+            generated_description=generated_description,
         )
 
-    def _extract_chunks(
+    async def _generate_description(
+        self,
+        *,
+        openai_client: AsyncOpenAI,
+        request: ClassroomMaterialIngestRequest,
+        source_text: str,
+    ) -> str:
+        completion = await openai_client.chat.completions.create(
+            model=config.OPENAI_EXAM_GENERATION_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": MATERIAL_DESCRIPTION_SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": build_material_description_user_prompt(
+                        request=request,
+                        source_text=source_text,
+                    ),
+                },
+            ],
+        )
+        raw_description = completion.choices[0].message.content or ""
+        generated_description = self._normalize_generated_description(
+            raw_description
+        )
+        return generated_description or self._build_fallback_description(
+            request
+        )
+
+    def _normalize_generated_description(self, description: str) -> str:
+        return " ".join(description.split())[:300]
+
+    def _build_fallback_description(
+        self,
+        request: ClassroomMaterialIngestRequest,
+    ) -> str:
+        if request.source_kind is ClassroomMaterialSourceKind.LINK:
+            return f"{request.title} 관련 참고 링크입니다."
+        return f"{request.title} 강의자료입니다."
+
+    async def _extract_chunks(
         self,
         request: ClassroomMaterialIngestRequest,
     ) -> tuple[list[ClassroomMaterialExtractedChunk], str]:
-        if request.mime_type == "application/pdf":
-            return self._extract_pdf_chunks(request), SUPPORTED_STATUS
+        file_extension = Path(request.file_name).suffix.lower()
+        mime_type = request.mime_type
+        if self._is_pdf_request(mime_type, file_extension):
+            return (
+                await asyncio.to_thread(
+                    extract_pdf_chunks,
+                    content=request.content,
+                    file_name=request.file_name,
+                ),
+                SUPPORTED_STATUS,
+            )
         if self._is_youtube_link_request(request):
-            return self._extract_youtube_link_chunks(
+            return await self._extract_youtube_link_chunks(
                 request
-            ), PARTIAL_SUPPORTED_STATUS
-        if self._is_zip_mime_type(request.mime_type):
-            return self._extract_zip_chunks(request), PARTIAL_SUPPORTED_STATUS
-        if request.mime_type in TEXT_MIME_TYPES:
+            ), SUPPORTED_STATUS
+        if request.source_kind is ClassroomMaterialSourceKind.LINK:
+            return [], UNSUPPORTED_STATUS
+        if self._is_docx_request(mime_type, file_extension):
+            return (
+                await asyncio.to_thread(
+                    extract_docx_chunks,
+                    content=request.content,
+                    file_name=request.file_name,
+                ),
+                SUPPORTED_STATUS,
+            )
+        if self._is_pptx_request(mime_type, file_extension):
+            return (
+                await asyncio.to_thread(
+                    extract_pptx_chunks,
+                    content=request.content,
+                    file_name=request.file_name,
+                ),
+                SUPPORTED_STATUS,
+            )
+        if self._is_hwpx_request(mime_type, file_extension):
+            return (
+                await asyncio.to_thread(
+                    extract_hwpx_chunks,
+                    content=request.content,
+                    file_name=request.file_name,
+                ),
+                SUPPORTED_STATUS,
+            )
+        if self._is_zip_request(mime_type, file_extension):
+            return (
+                await asyncio.to_thread(
+                    extract_zip_chunks,
+                    content=request.content,
+                    file_name=request.file_name,
+                ),
+                PARTIAL_SUPPORTED_STATUS,
+            )
+        if self._is_text_request(mime_type, file_extension):
             return self._extract_plain_text_chunks(request), SUPPORTED_STATUS
-        if request.mime_type in OFFICE_MIME_TYPES:
-            return self._extract_office_placeholder_chunks(
+        if self._is_media_request(mime_type, file_extension):
+            return await self._extract_media_transcript_chunks(
                 request
-            ), PARTIAL_SUPPORTED_STATUS
-        if request.mime_type.startswith(VIDEO_MIME_PREFIXES):
-            return self._extract_media_placeholder_chunks(
-                request
-            ), PARTIAL_SUPPORTED_STATUS
+            ), SUPPORTED_STATUS
         return [], UNSUPPORTED_STATUS
-
-    def _extract_pdf_chunks(
-        self,
-        request: ClassroomMaterialIngestRequest,
-    ) -> list[ClassroomMaterialExtractedChunk]:
-        try:
-            pages = PdfReader(BytesIO(request.content)).pages
-        except Exception as exc:
-            raise ClassroomMaterialIngestDomainException(
-                message="PDF 강의 자료를 해석하지 못했습니다."
-            ) from exc
-
-        extracted_pages: list[dict[str, object]] = []
-        for page_number, page in enumerate(pages, start=1):
-            text = page.extract_text()
-            if text and text.strip():
-                extracted_pages.append({
-                    "page": page_number,
-                    "text": text.strip(),
-                })
-
-        chunks: list[ClassroomMaterialExtractedChunk] = []
-        chunk_index = 0
-        for page in extracted_pages:
-            page_number = int(page["page"])
-            text = str(page["text"])
-            for chunk_text in self._split_text(text):
-                chunks.append(
-                    ClassroomMaterialExtractedChunk(
-                        text=chunk_text,
-                        source_type="pdf",
-                        source_unit_type="page",
-                        citation_label=f"p.{page_number}",
-                        chunk_index=chunk_index,
-                        source_locator={"page": page_number},
-                    )
-                )
-                chunk_index += 1
-        return chunks
 
     def _extract_plain_text_chunks(
         self,
@@ -313,7 +429,7 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
     ) -> list[ClassroomMaterialExtractedChunk]:
         text = request.content.decode("utf-8", errors="ignore").strip()
         chunks: list[ClassroomMaterialExtractedChunk] = []
-        for chunk_index, chunk_text in enumerate(self._split_text(text)):
+        for chunk_index, chunk_text in enumerate(split_text(text)):
             chunks.append(
                 ClassroomMaterialExtractedChunk(
                     text=chunk_text,
@@ -324,136 +440,83 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
                     source_locator={"file_name": request.file_name},
                 )
             )
+        validate_extracted_chunk_budget(chunks)
         return chunks
 
-    def _extract_zip_chunks(
+    async def _extract_youtube_link_chunks(
         self,
         request: ClassroomMaterialIngestRequest,
     ) -> list[ClassroomMaterialExtractedChunk]:
-        try:
-            archive = ZipFile(BytesIO(request.content))
-        except BadZipFile as exc:
-            raise ClassroomMaterialIngestDomainException(
-                message="ZIP 강의 자료를 해석하지 못했습니다."
-            ) from exc
-
-        chunks: list[ClassroomMaterialExtractedChunk] = []
-        chunk_index = 0
-        with archive:
-            for info in archive.infolist():
-                if info.is_dir():
-                    continue
-                if not self._is_text_file_name(info.filename):
-                    continue
-                try:
-                    raw = archive.read(info)
-                except Exception:
-                    continue
-                text = raw.decode("utf-8", errors="ignore").strip()
-                for chunk_text in self._split_text(text):
-                    chunks.append(
-                        ClassroomMaterialExtractedChunk(
-                            text=chunk_text,
-                            source_type="zip_text",
-                            source_unit_type="file",
-                            citation_label=info.filename,
-                            chunk_index=chunk_index,
-                            source_locator={"archive_path": info.filename},
-                        )
-                    )
-                    chunk_index += 1
-        return chunks
-
-    def _extract_youtube_link_chunks(
-        self,
-        request: ClassroomMaterialIngestRequest,
-    ) -> list[ClassroomMaterialExtractedChunk]:
-        locator = (
+        url = (
             request.source_url
             or request.content.decode("utf-8", errors="ignore").strip()
         )
-        placeholder = (
-            "YouTube 링크형 강의 자료입니다. 현재 transcript 자동 수집은 "
-            "연결되지 않았으며, 링크 메타데이터만 보존합니다. "
-            "transcript와 timestamp가 연결되면 같은 source_locator에 "
-            "확장 가능합니다."
+        segments = await asyncio.to_thread(
+            self._youtube_transcript_extractor.extract_transcript,
+            url=url,
         )
-        return [
-            ClassroomMaterialExtractedChunk(
-                text=placeholder,
-                source_type="youtube",
-                source_unit_type="transcript_segment",
-                citation_label=request.title,
-                chunk_index=0,
-                source_locator={
-                    "url": locator,
-                    "has_transcript": False,
-                },
+        chunks: list[ClassroomMaterialExtractedChunk] = []
+        for segment in segments:
+            text = segment.text.strip()
+            if not text:
+                continue
+            chunks.append(
+                ClassroomMaterialExtractedChunk(
+                    text=text,
+                    source_type="youtube",
+                    source_unit_type="transcript_segment",
+                    citation_label=(
+                        f"{request.title} {segment.start_seconds:.1f}s"
+                    ),
+                    chunk_index=len(chunks),
+                    source_locator={
+                        "url": url,
+                        "start_seconds": segment.start_seconds,
+                        "duration_seconds": segment.duration_seconds,
+                    },
+                )
             )
-        ]
+        if not chunks:
+            raise ClassroomMaterialIngestDomainException(
+                message="YouTube transcript를 추출하지 못했습니다."
+            )
+        validate_extracted_chunk_budget(chunks)
+        return chunks
 
-    def _extract_office_placeholder_chunks(
+    async def _extract_media_transcript_chunks(
         self,
         request: ClassroomMaterialIngestRequest,
     ) -> list[ClassroomMaterialExtractedChunk]:
-        placeholder = (
-            f"{request.file_name} 문서는 현재 본문 추출기가 연결되지 "
-            "않았습니다. 파일 메타데이터만 보존했으며, 추후 문서 텍스트 "
-            "추출 전략으로 대체할 수 있습니다."
+        segments = await self._media_transcript_extractor.extract_transcript(
+            content=request.content,
+            file_name=request.file_name,
         )
-        return [
-            ClassroomMaterialExtractedChunk(
-                text=placeholder,
-                source_type="office_document",
-                source_unit_type="document",
-                citation_label=request.file_name,
-                chunk_index=0,
-                source_locator={
-                    "file_name": request.file_name,
-                    "mime_type": request.mime_type,
-                    "extraction": "placeholder",
-                },
+        chunks: list[ClassroomMaterialExtractedChunk] = []
+        for segment in segments:
+            text = segment.text.strip()
+            if not text:
+                continue
+            chunks.append(
+                ClassroomMaterialExtractedChunk(
+                    text=text,
+                    source_type="media",
+                    source_unit_type="transcript_segment",
+                    citation_label=(
+                        f"{request.file_name} {segment.start_seconds:.1f}s"
+                    ),
+                    chunk_index=len(chunks),
+                    source_locator={
+                        "file_name": request.file_name,
+                        "start_seconds": segment.start_seconds,
+                        "duration_seconds": segment.duration_seconds,
+                    },
+                )
             )
-        ]
-
-    def _extract_media_placeholder_chunks(
-        self,
-        request: ClassroomMaterialIngestRequest,
-    ) -> list[ClassroomMaterialExtractedChunk]:
-        placeholder = (
-            f"{request.file_name} 미디어 자료입니다. 현재 원본 "
-            "비디오/오디오 다운로드 및 transcript 추출은 수행하지 않고, "
-            "transcript/timestamp 확장을 위한 placeholder만 저장합니다."
-        )
-        return [
-            ClassroomMaterialExtractedChunk(
-                text=placeholder,
-                source_type="media",
-                source_unit_type="transcript_segment",
-                citation_label=request.file_name,
-                chunk_index=0,
-                source_locator={
-                    "file_name": request.file_name,
-                    "mime_type": request.mime_type,
-                    "has_transcript": False,
-                },
+        if not chunks:
+            raise ClassroomMaterialIngestDomainException(
+                message="미디어 transcript를 추출하지 못했습니다."
             )
-        ]
-
-    def _split_text(self, text: str) -> Iterable[str]:
-        normalized = text.strip()
-        if not normalized:
-            return []
-
-        chunks: list[str] = []
-        start = 0
-        while start < len(normalized):
-            chunk_text = normalized[start : start + MAX_CHUNK_LENGTH].strip()
-            if chunk_text:
-                chunks.append(chunk_text)
-            if start + MAX_CHUNK_LENGTH >= len(normalized):
-                break
-            start += MAX_CHUNK_LENGTH - CHUNK_OVERLAP
+        validate_extracted_chunk_budget(chunks)
         return chunks
 
     def _is_youtube_link_request(
@@ -467,15 +530,33 @@ class LLMClassroomMaterialIngestAdapter(ClassroomMaterialIngestPort):
             raw_text = request.content.decode("utf-8", errors="ignore").strip()
         if not raw_text:
             return False
-        lowered = raw_text.lower()
-        return any(marker in lowered for marker in YOUTUBE_HOST_MARKERS)
+        parsed = urlparse(raw_text)
+        host = parsed.hostname or ""
+        return parsed.scheme == "https" and host.lower() in YOUTUBE_LINK_HOSTS
 
-    def _is_zip_mime_type(self, mime_type: str) -> bool:
-        return mime_type in {
-            "application/zip",
-            "application/x-zip-compressed",
-        }
+    def _is_text_request(self, mime_type: str, file_extension: str) -> bool:
+        return (
+            mime_type in TEXT_MIME_TYPES
+            or file_extension in TEXT_FILE_EXTENSIONS
+        )
 
-    def _is_text_file_name(self, file_name: str) -> bool:
-        lowered = file_name.lower()
-        return lowered.endswith((".txt", ".md", ".csv", ".json", ".xml"))
+    def _is_pdf_request(self, mime_type: str, file_extension: str) -> bool:
+        return mime_type in PDF_MIME_TYPES or file_extension == ".pdf"
+
+    def _is_docx_request(self, mime_type: str, file_extension: str) -> bool:
+        return mime_type in DOCX_MIME_TYPES or file_extension == ".docx"
+
+    def _is_pptx_request(self, mime_type: str, file_extension: str) -> bool:
+        return mime_type in PPTX_MIME_TYPES or file_extension == ".pptx"
+
+    def _is_hwpx_request(self, mime_type: str, file_extension: str) -> bool:
+        return mime_type in HWPX_MIME_TYPES or file_extension == ".hwpx"
+
+    def _is_zip_request(self, mime_type: str, file_extension: str) -> bool:
+        return mime_type in ZIP_MIME_TYPES or file_extension == ".zip"
+
+    def _is_media_request(self, mime_type: str, file_extension: str) -> bool:
+        return (
+            mime_type in MEDIA_MIME_TYPES
+            or file_extension in MEDIA_FILE_EXTENSIONS
+        )

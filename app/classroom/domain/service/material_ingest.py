@@ -1,7 +1,5 @@
-import ipaddress
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from socket import AddressFamily, getaddrinfo
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -47,6 +45,7 @@ class ClassroomMaterialIngestResult:
         default_factory=list
     )
     support_status: str = "supported"
+    generated_description: str | None = None
 
 
 def validate_classroom_material_source_url(source_url: str) -> None:
@@ -61,43 +60,6 @@ def validate_classroom_material_source_url(source_url: str) -> None:
         raise ClassroomMaterialIngestDomainException(
             message="허용되지 않는 링크 주소입니다."
         )
-
-    normalized_host = hostname.strip().lower()
-    if normalized_host == "localhost":
-        raise ClassroomMaterialIngestDomainException(
-            message="내부망 주소는 사용할 수 없습니다."
-        )
-
-    resolved_addresses: set[str] = set()
-    try:
-        for result in getaddrinfo(hostname, None, type=0):
-            family, _, _, _, sockaddr = result
-            if family is AddressFamily.AF_INET:
-                resolved_addresses.add(sockaddr[0])
-            elif family is AddressFamily.AF_INET6:
-                resolved_addresses.add(sockaddr[0])
-    except OSError:
-        resolved_addresses.add(normalized_host)
-
-    if not resolved_addresses:
-        resolved_addresses.add(normalized_host)
-
-    for address in resolved_addresses:
-        try:
-            ip = ipaddress.ip_address(address)
-        except ValueError:
-            continue
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_unspecified
-            or ip.is_reserved
-            or ip.is_multicast
-        ):
-            raise ClassroomMaterialIngestDomainException(
-                message="내부망 주소는 사용할 수 없습니다."
-            )
 
 
 class ClassroomMaterialIngestPort(ABC):

@@ -405,7 +405,6 @@ async def test_create_classroom_material_success():
         command=CreateClassroomMaterialCommand(
             title="1주차 자료",
             week=1,
-            description="소개 자료",
             source_kind=ClassroomMaterialSourceKind.FILE,
         ),
         file_upload=FileUploadData(
@@ -430,6 +429,53 @@ async def test_create_classroom_material_success():
             FileStatus.ACTIVE,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_create_material_stores_generated_description_on_sync_ingest():
+    file_usecase = FakeFileUseCase()
+    ingest_port = FakeMaterialIngestPort(
+        result=ClassroomMaterialIngestResult(
+            scope_candidates=[
+                ClassroomMaterialScopeCandidate(
+                    label="기초 개념",
+                    scope_text="머신러닝 개요와 지도학습",
+                    keywords=["머신러닝", "지도학습"],
+                    week_range="1주차",
+                    confidence=0.92,
+                )
+            ],
+            generated_description="자동 생성 설명",
+        )
+    )
+    service = build_service(
+        file_usecase=file_usecase,
+        material_ingest_port=ingest_port,
+        async_job_service=None,
+    )
+
+    result = await service.create_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=CreateClassroomMaterialCommand(
+            title="1주차 자료",
+            week=1,
+            source_kind=ClassroomMaterialSourceKind.FILE,
+        ),
+        file_upload=FileUploadData(
+            file_name="week1.pdf",
+            mime_type="application/pdf",
+            content=BytesIO(b"pdf-content"),
+        ),
+    )
+
+    assert result.material.description == "자동 생성 설명"
+    assert (
+        result.material.ingest_status is ClassroomMaterialIngestStatus.COMPLETED
+    )
 
 
 @pytest.mark.asyncio
@@ -464,7 +510,6 @@ async def test_create_classroom_material_enqueues_ingest_job():
         command=CreateClassroomMaterialCommand(
             title="1주차 자료",
             week=1,
-            description="소개 자료",
             source_kind=ClassroomMaterialSourceKind.FILE,
         ),
         file_upload=FileUploadData(
@@ -495,6 +540,114 @@ async def test_create_classroom_material_enqueues_ingest_job():
 
 
 @pytest.mark.asyncio
+async def test_create_file_material_stores_octet_stream_extension():
+    file_usecase = FakeFileUseCase()
+    async_job_service = FakeAsyncJobService()
+    service = build_service(
+        file_usecase=file_usecase,
+        async_job_service=async_job_service,
+    )
+
+    result = await service.create_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=CreateClassroomMaterialCommand(
+            title="DOCX 자료",
+            week=1,
+            source_kind=ClassroomMaterialSourceKind.FILE,
+        ),
+        file_upload=FileUploadData(
+            file_name="week1.docx",
+            mime_type="application/octet-stream",
+            content=BytesIO(b"docx-content"),
+        ),
+    )
+
+    assert result.material.supports_ingest() is True
+    assert result.material.ingest_metadata == {
+        "mime_type": "application/octet-stream",
+        "extension": "docx",
+    }
+    assert len(async_job_service.enqueue_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_legacy_ppt_material_keeps_unsupported_without_enqueue():
+    file_usecase = FakeFileUseCase()
+    async_job_service = FakeAsyncJobService()
+    service = build_service(
+        file_usecase=file_usecase,
+        async_job_service=async_job_service,
+    )
+
+    result = await service.create_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=CreateClassroomMaterialCommand(
+            title="PPT 자료",
+            week=1,
+            source_kind=ClassroomMaterialSourceKind.FILE,
+        ),
+        file_upload=FileUploadData(
+            file_name="week1.ppt",
+            mime_type="application/octet-stream",
+            content=BytesIO(b"ppt-content"),
+        ),
+    )
+
+    capability = result.material.get_ingest_capability()
+    assert capability.supported is False
+    assert capability.reason == "현재 지원하지 않는 강의 자료 형식입니다."
+    assert result.material.ingest_metadata == {
+        "mime_type": "application/octet-stream",
+        "extension": "ppt",
+    }
+    assert async_job_service.enqueue_calls == []
+
+
+@pytest.mark.asyncio
+async def test_create_text_file_material_enqueues_ingest_job():
+    file_usecase = FakeFileUseCase()
+    async_job_service = FakeAsyncJobService()
+    service = build_service(
+        file_usecase=file_usecase,
+        async_job_service=async_job_service,
+    )
+
+    result = await service.create_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=CreateClassroomMaterialCommand(
+            title="미지원 자료",
+            week=1,
+            source_kind=ClassroomMaterialSourceKind.FILE,
+        ),
+        file_upload=FileUploadData(
+            file_name="week1.txt",
+            mime_type="text/plain",
+            content=BytesIO(b"text-content"),
+        ),
+    )
+
+    capability = result.material.get_ingest_capability()
+    assert capability.supported is True
+    assert result.material.ingest_metadata == {
+        "mime_type": "text/plain",
+        "extension": "txt",
+    }
+    assert len(async_job_service.enqueue_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_create_material_submit_ignores_port_error():
     file_usecase = FakeFileUseCase()
     ingest_port = FakeMaterialIngestPort(
@@ -518,7 +671,6 @@ async def test_create_material_submit_ignores_port_error():
         command=CreateClassroomMaterialCommand(
             title="1주차 자료",
             week=1,
-            description="소개 자료",
             source_kind=ClassroomMaterialSourceKind.FILE,
         ),
         file_upload=FileUploadData(
@@ -559,7 +711,6 @@ async def test_create_material_submit_keeps_pending_on_unknown_worker_result():
         command=CreateClassroomMaterialCommand(
             title="1주차 자료",
             week=1,
-            description="소개 자료",
             source_kind=ClassroomMaterialSourceKind.FILE,
         ),
         file_upload=FileUploadData(
@@ -608,7 +759,6 @@ async def test_create_link_classroom_material_enqueues_ingest_job():
         command=CreateClassroomMaterialCommand(
             title="유튜브 자료",
             week=2,
-            description="강의 링크",
             source_kind=ClassroomMaterialSourceKind.LINK,
             source_url="https://youtu.be/demo",
         ),
@@ -635,6 +785,40 @@ async def test_create_link_classroom_material_enqueues_ingest_job():
     )
     assert result.material.scope_candidates == []
     assert result.material.ingest_error is None
+    assert result.material.ingest_metadata == {
+        "source_url": "https://youtu.be/demo",
+        "source_type": "youtube",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_general_link_material_stays_not_ingestible():
+    async_job_service = FakeAsyncJobService()
+    service = build_service(async_job_service=async_job_service)
+
+    result = await service.create_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=CreateClassroomMaterialCommand(
+            title="일반 링크 자료",
+            week=2,
+            source_kind=ClassroomMaterialSourceKind.LINK,
+            source_url="https://example.com/lecture",
+        ),
+        file_upload=None,
+    )
+
+    capability = result.material.get_ingest_capability()
+    assert capability.supported is False
+    assert capability.reason == "현재 지원하지 않는 강의 자료 형식입니다."
+    assert result.material.ingest_metadata == {
+        "source_url": "https://example.com/lecture",
+        "source_type": "link",
+    }
+    assert async_job_service.enqueue_calls == []
 
 
 @pytest.mark.asyncio
@@ -705,7 +889,6 @@ async def test_create_link_material_submit_stays_pending():
         command=CreateClassroomMaterialCommand(
             title="유튜브 자료",
             week=2,
-            description="강의 링크",
             source_kind=ClassroomMaterialSourceKind.LINK,
             source_url="https://youtu.be/demo",
         ),
@@ -723,89 +906,113 @@ async def test_create_link_material_submit_stays_pending():
 
 
 @pytest.mark.asyncio
-async def test_create_link_material_rejects_internal_source_url_immediately():
+async def test_create_internal_link_material_stays_not_ingestible():
     ingest_port = FakeMaterialIngestPort()
+    async_job_service = FakeAsyncJobService()
     service = build_service(
         material_ingest_port=ingest_port,
+        async_job_service=async_job_service,
     )
 
-    with pytest.raises(ClassroomMaterialInvalidSourceException) as exc_info:
-        await service.create_classroom_material(
-            classroom_id=CLASSROOM_ID,
-            current_user=make_current_user(
-                role=UserRole.PROFESSOR,
-                user_id=PROFESSOR_ID,
-            ),
-            command=CreateClassroomMaterialCommand(
-                title="내부 링크 자료",
-                week=2,
-                description="차단 대상 링크",
-                source_kind=ClassroomMaterialSourceKind.LINK,
-                source_url="http://localhost/internal",
-            ),
-            file_upload=None,
-        )
+    result = await service.create_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=CreateClassroomMaterialCommand(
+            title="내부 링크 자료",
+            week=2,
+            source_kind=ClassroomMaterialSourceKind.LINK,
+            source_url="http://localhost/internal",
+        ),
+        file_upload=None,
+    )
 
-    assert exc_info.value.message == "내부망 주소는 사용할 수 없습니다."
-    assert len(ingest_port.requests) == 0
+    assert ingest_port.requests == []
+    assert result.material.supports_ingest() is False
+    assert result.material.ingest_metadata == {
+        "source_url": "http://localhost/internal",
+        "source_type": "link",
+    }
+    assert async_job_service.enqueue_calls == []
 
 
 @pytest.mark.asyncio
-async def test_reingest_link_material_rejects_internal_source_url_immediately():
+async def test_reingest_internal_link_material_enqueues_ingest_job():
     material = make_link_material()
     material.source_url = "http://localhost/reingest"
     ingest_port = FakeMaterialIngestPort()
+    async_job_service = FakeAsyncJobService()
     service = build_service(
         materials=[material],
         material_ingest_port=ingest_port,
+        async_job_service=async_job_service,
     )
 
-    with pytest.raises(ClassroomMaterialInvalidSourceException) as exc_info:
-        await service.reingest_classroom_material(
-            classroom_id=CLASSROOM_ID,
-            material_id=MATERIAL_ID,
-            current_user=make_current_user(
-                role=UserRole.PROFESSOR,
-                user_id=PROFESSOR_ID,
-            ),
-        )
+    result = await service.reingest_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+    )
 
-    assert exc_info.value.message == "내부망 주소는 사용할 수 없습니다."
-    assert len(ingest_port.requests) == 0
+    assert ingest_port.requests == []
+    assert len(async_job_service.enqueue_calls) == 1
+    enqueue_call = async_job_service.enqueue_calls[0]
+    assert enqueue_call["payload"] == {
+        "classroom_id": str(CLASSROOM_ID),
+        "material_id": str(MATERIAL_ID),
+        "file_id": None,
+    }
+    assert result.file is None
+    assert (
+        result.material.ingest_status is ClassroomMaterialIngestStatus.PENDING
+    )
+    assert result.material.scope_candidates == []
+    assert result.material.ingest_error is None
 
 
 @pytest.mark.asyncio
-async def test_update_link_material_rejects_internal_source_url_immediately():
+async def test_update_link_material_allows_internal_source_url():
     material = make_link_material()
     ingest_port = FakeMaterialIngestPort()
+    async_job_service = FakeAsyncJobService()
     service = build_service(
         materials=[material],
         material_ingest_port=ingest_port,
+        async_job_service=async_job_service,
     )
 
-    with pytest.raises(ClassroomMaterialInvalidSourceException) as exc_info:
-        await service.update_classroom_material(
-            classroom_id=CLASSROOM_ID,
-            material_id=MATERIAL_ID,
-            current_user=make_current_user(
-                role=UserRole.PROFESSOR,
-                user_id=PROFESSOR_ID,
-            ),
-            command=UpdateClassroomMaterialCommand(
-                source_kind=ClassroomMaterialSourceKind.LINK,
-                source_url="http://localhost/updated",
-                title="변경 제목",
-                week=10,
-                description="변경 설명",
-            ),
-        )
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(
+            source_kind=ClassroomMaterialSourceKind.LINK,
+            source_url="http://localhost/updated",
+            title="변경 제목",
+            week=10,
+            description="변경 설명",
+        ),
+    )
 
-    assert exc_info.value.message == "내부망 주소는 사용할 수 없습니다."
-    assert len(ingest_port.requests) == 0
-    assert material.title == "링크 자료"
-    assert material.week == 2
-    assert material.description == "유튜브 링크"
-    assert material.source_url == "https://youtu.be/demo"
+    assert ingest_port.requests == []
+    assert result.material.title == "변경 제목"
+    assert result.material.week == 10
+    assert result.material.description == "변경 설명"
+    assert result.material.source_url == "http://localhost/updated"
+    assert result.material.ingest_metadata == {
+        "source_url": "http://localhost/updated",
+        "source_type": "link",
+    }
+    assert result.material.supports_ingest() is False
+    assert async_job_service.enqueue_calls == []
 
 
 @pytest.mark.asyncio
@@ -1024,7 +1231,6 @@ async def test_update_classroom_material_replaces_file_and_deletes_old():
         command=UpdateClassroomMaterialCommand(
             title="수정 자료",
             week=1,
-            description="소개 자료",
         ),
         file_upload=FileUploadData(
             file_name="week1-v2.pdf",
@@ -1168,7 +1374,6 @@ async def test_update_classroom_material_with_file_enqueues_ingest_job():
         command=UpdateClassroomMaterialCommand(
             title="수정 자료",
             week=1,
-            description="소개 자료",
         ),
         file_upload=FileUploadData(
             file_name="week1-v2.pdf",
@@ -1191,6 +1396,56 @@ async def test_update_classroom_material_with_file_enqueues_ingest_job():
     )
     assert result.material.scope_candidates == []
     assert result.material.ingest_error is None
+
+
+@pytest.mark.asyncio
+async def test_update_material_with_unsupported_file_does_not_enqueue():
+    material = make_material()
+    file_usecase = FakeFileUseCase()
+    old_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    old_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = old_file
+    async_job_service = FakeAsyncJobService()
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        async_job_service=async_job_service,
+    )
+
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(
+            title="수정 자료",
+            week=1,
+        ),
+        file_upload=FileUploadData(
+            file_name="week1-v2.hwp",
+            mime_type="application/octet-stream",
+            content=BytesIO(b"hwp-content"),
+        ),
+    )
+
+    capability = result.material.get_ingest_capability()
+    assert capability.supported is False
+    assert capability.reason == "현재 지원하지 않는 강의 자료 형식입니다."
+    assert result.material.ingest_metadata == {
+        "mime_type": "application/octet-stream",
+        "extension": "hwp",
+    }
+    assert async_job_service.enqueue_calls == []
+    assert file_usecase.deleted_file_ids == [FILE_ID]
 
 
 @pytest.mark.asyncio
@@ -1228,7 +1483,6 @@ async def test_update_classroom_material_with_file_submit_stays_pending():
         command=UpdateClassroomMaterialCommand(
             title="수정 자료",
             week=1,
-            description="소개 자료",
         ),
         file_upload=FileUploadData(
             file_name="week1-v2.pdf",
@@ -1396,6 +1650,134 @@ async def test_update_description_reuses_file_and_enqueues_reingest():
 
 
 @pytest.mark.asyncio
+async def test_update_file_metadata_uses_policy_for_current_file():
+    material = make_material()
+    file_usecase = FakeFileUseCase()
+    current_file = File(
+        file_name="week1.zip",
+        file_path="classrooms/week1.zip",
+        file_extension="zip",
+        file_size=10,
+        mime_type="application/octet-stream",
+        status=FileStatus.ACTIVE,
+    )
+    current_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = current_file
+    async_job_service = FakeAsyncJobService()
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        async_job_service=async_job_service,
+    )
+
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(title="ZIP 자료"),
+    )
+
+    assert result.material.supports_ingest() is True
+    assert result.material.ingest_metadata == {
+        "mime_type": "application/octet-stream",
+        "extension": "zip",
+    }
+    assert len(async_job_service.enqueue_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_update_switch_to_general_link_stays_not_ingestible():
+    material = make_material()
+    file_usecase = FakeFileUseCase()
+    old_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    old_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = old_file
+    async_job_service = FakeAsyncJobService()
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        async_job_service=async_job_service,
+    )
+
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(
+            source_kind=ClassroomMaterialSourceKind.LINK,
+            source_url="https://example.com/lecture",
+            title="일반 링크 자료",
+        ),
+    )
+
+    capability = result.material.get_ingest_capability()
+    assert capability.supported is False
+    assert result.material.ingest_metadata == {
+        "source_url": "https://example.com/lecture",
+        "source_type": "link",
+    }
+    assert async_job_service.enqueue_calls == []
+    assert file_usecase.deleted_file_ids == [FILE_ID]
+
+
+@pytest.mark.asyncio
+async def test_update_switch_to_youtube_link_enqueues_with_link_metadata():
+    material = make_material()
+    file_usecase = FakeFileUseCase()
+    old_file = File(
+        file_name="week1.pdf",
+        file_path="classrooms/week1.pdf",
+        file_extension="pdf",
+        file_size=10,
+        mime_type="application/pdf",
+        status=FileStatus.ACTIVE,
+    )
+    old_file.id = FILE_ID
+    file_usecase.files[FILE_ID] = old_file
+    async_job_service = FakeAsyncJobService()
+    service = build_service(
+        materials=[material],
+        file_usecase=file_usecase,
+        async_job_service=async_job_service,
+    )
+
+    result = await service.update_classroom_material(
+        classroom_id=CLASSROOM_ID,
+        material_id=MATERIAL_ID,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateClassroomMaterialCommand(
+            source_kind=ClassroomMaterialSourceKind.LINK,
+            source_url="https://www.youtube.com/watch?v=updated",
+            title="유튜브 링크 자료",
+        ),
+    )
+
+    assert result.material.supports_ingest() is True
+    assert result.material.ingest_metadata == {
+        "source_url": "https://www.youtube.com/watch?v=updated",
+        "source_type": "youtube",
+    }
+    assert len(async_job_service.enqueue_calls) == 1
+    assert file_usecase.deleted_file_ids == [FILE_ID]
+
+
+@pytest.mark.asyncio
 async def test_update_metadata_submit_stays_pending_until_worker_result():
     material = make_material()
     material.mark_ingest_completed([
@@ -1495,7 +1877,6 @@ async def test_update_classroom_material_metadata_noop_does_not_reingest():
         command=UpdateClassroomMaterialCommand(
             title="1주차 자료",
             week=1,
-            description="소개 자료",
         ),
     )
 
