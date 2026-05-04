@@ -1,7 +1,9 @@
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Cookie, Depends, Response
+from fastapi.responses import JSONResponse
 
 from app.auth.adapter.input.api.v1.request import LoginRequest
+from app.auth.application.exception import AuthInvalidRefreshTokenException
 from app.auth.container import AuthContainer
 from app.auth.domain.command import (
     LoginCommand,
@@ -63,9 +65,22 @@ async def refresh(
     ),
     usecase: AuthUseCase = Depends(Provide[AuthContainer.service]),
 ):
-    tokens = await usecase.refresh(
-        RefreshTokenCommand(refresh_token=refresh_token)
-    )
+    try:
+        tokens = await usecase.refresh(
+            RefreshTokenCommand(refresh_token=refresh_token)
+        )
+    except AuthInvalidRefreshTokenException as exc:
+        error_response = JSONResponse(
+            status_code=exc.code,
+            content={
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "detail": exc.detail,
+            },
+        )
+        _clear_auth_cookies(error_response)
+        return error_response
+
     _set_auth_cookies(response, tokens)
     return None
 

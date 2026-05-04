@@ -148,11 +148,15 @@ def test_refresh_rotates_auth_cookies(client, monkeypatch):
     assert response.cookies.get("refresh_token") == "refresh-token-value"
 
 
-def test_refresh_without_cookie_returns_401(client):
+def test_refresh_without_cookie_returns_401_and_clears_auth_cookies(client):
     response = client.post("/api/auth/refresh")
 
+    set_cookie_header = response.headers.get("set-cookie", "")
     assert response.status_code == 401
     assert response.json()["error_code"] == "AUTH__INVALID_REFRESH_TOKEN"
+    assert "access_token=" in set_cookie_header
+    assert "refresh_token=" in set_cookie_header
+    assert "Max-Age=0" in set_cookie_header
 
 
 def test_logout_clears_auth_cookies(client, monkeypatch):
@@ -172,14 +176,22 @@ def test_logout_clears_auth_cookies(client, monkeypatch):
     assert "refresh_token=" in set_cookie_header
 
 
-def test_refresh_invalid_token_returns_401(client, monkeypatch):
+def test_refresh_invalid_token_returns_401_and_clears_auth_cookies(
+    client,
+    monkeypatch,
+):
     async def refresh_stub(*_args, **_kwargs):
         raise AuthInvalidRefreshTokenException()
 
     monkeypatch.setattr(AuthService, "refresh", refresh_stub)
     client.cookies.set("refresh_token", "bad-refresh-token")
+    client.cookies.set("access_token", "expired-access-token")
 
     response = client.post("/api/auth/refresh")
 
+    set_cookie_header = response.headers.get("set-cookie", "")
     assert response.status_code == 401
     assert response.json()["error_code"] == "AUTH__INVALID_REFRESH_TOKEN"
+    assert "access_token=" in set_cookie_header
+    assert "refresh_token=" in set_cookie_header
+    assert "Max-Age=0" in set_cookie_header
