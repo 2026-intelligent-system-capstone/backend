@@ -110,6 +110,7 @@ exam_table = BaseTable(
     Column("starts_at", DateTime(timezone=True), nullable=False),
     Column("ends_at", DateTime(timezone=True), nullable=False),
     Column("max_attempts", Integer, nullable=False, default=1),
+    Column("max_follow_ups", Integer, nullable=False, default=2),
     Column(
         "generation_status",
         Enum(
@@ -128,6 +129,10 @@ exam_table = BaseTable(
     Column("generation_job_id", PG_UUID(as_uuid=True), nullable=True),
     Column("generation_requested_at", DateTime(timezone=True), nullable=True),
     Column("generation_completed_at", DateTime(timezone=True), nullable=True),
+    CheckConstraint(
+        "max_follow_ups >= 0",
+        name="ck_t_exam_max_follow_ups_non_negative",
+    ),
 )
 
 exam_criterion_table = BaseTable(

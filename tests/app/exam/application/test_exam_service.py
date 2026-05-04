@@ -1499,6 +1499,7 @@ async def test_generate_exam_questions_enqueues_job_and_marks_exam_queued():
     assert "question_type_strategy" not in payload["request"]
     assert "total_question_count" not in payload["request"]
     saved_exam = service.repository.exams[EXAM_ID]
+    assert saved_exam.max_follow_ups == 2
     assert saved_exam.generation_status is ExamGenerationStatus.QUEUED
     assert saved_exam.generation_job_id == result.job.job_id
     assert saved_exam.generation_requested_at is not None

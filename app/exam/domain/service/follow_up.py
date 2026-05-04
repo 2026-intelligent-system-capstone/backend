@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from app.exam.domain.entity import (
+    BloomLevel,
     ExamDifficulty,
     ExamQuestionType,
     ExamTurnEventType,
@@ -17,10 +18,13 @@ class ExamFollowUpGenerationQuestion:
     question_id: UUID
     question_number: int
     question_type: ExamQuestionType
+    bloom_level: BloomLevel
     difficulty: ExamDifficulty
     question_text: str
     intent_text: str
     rubric_text: str
+    max_follow_ups: int
+    source_material_ids: list[UUID] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,7 @@ class ExamFollowUpGenerationRequest:
 @dataclass(frozen=True)
 class ExamFollowUpGenerationResult:
     content: str
+    event_type: ExamTurnEventType = ExamTurnEventType.FOLLOW_UP
     metadata: dict[str, str] = field(default_factory=dict)
 
 

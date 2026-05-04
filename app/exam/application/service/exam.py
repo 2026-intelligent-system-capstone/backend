@@ -46,7 +46,6 @@ from app.exam.domain.entity import (
     ExamSessionStatus,
     ExamStatus,
     ExamTurn,
-    ExamTurnEventType,
     ExamTurnRole,
     StartedExamSession,
     StudentExam,
@@ -663,6 +662,7 @@ class ExamService(ExamUseCase):
             },
             dedupe_key=f"exam-question-generation:{exam.id}",
         )
+        exam.set_max_follow_ups(generation_request.max_follow_ups)
         exam.mark_generation_queued(
             job_id=job.id,
             requested_at=datetime.now(UTC),
@@ -851,10 +851,13 @@ class ExamService(ExamUseCase):
                     question_id=question.id,
                     question_number=question.question_number,
                     question_type=question.question_type,
+                    bloom_level=question.bloom_level,
                     difficulty=question.difficulty,
                     question_text=question.question_text,
                     intent_text=question.intent_text,
                     rubric_text=question.rubric_text,
+                    source_material_ids=question.source_material_ids,
+                    max_follow_ups=exam.max_follow_ups,
                 ),
                 answer_content=command.answer_content,
                 turns=[
@@ -874,10 +877,14 @@ class ExamService(ExamUseCase):
             session=session,
             student_id=current_user.id,
             role=ExamTurnRole.ASSISTANT,
-            event_type=ExamTurnEventType.FOLLOW_UP,
+            event_type=result.event_type,
             content=result.content,
             created_at=command.occurred_at,
-            metadata={**command.metadata, **result.metadata},
+            metadata={
+                **command.metadata,
+                **result.metadata,
+                "question_id": str(question.id),
+            },
             existing_turns=existing_turns,
         )
         await self.turn_repository.save(turn)

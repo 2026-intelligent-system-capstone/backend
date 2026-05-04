@@ -304,6 +304,7 @@ class FailOnSecondSessionSaveRepository(InMemoryExamSessionRepository):
 class FakeExamFollowUpGenerationPort(ExamFollowUpGenerationPort):
     def __init__(self):
         self.requests: list[ExamFollowUpGenerationRequest] = []
+        self.event_type = ExamTurnEventType.FOLLOW_UP
 
     async def generate_follow_up(
         self,
@@ -313,6 +314,7 @@ class FakeExamFollowUpGenerationPort(ExamFollowUpGenerationPort):
         self.requests.append(request)
         return ExamFollowUpGenerationResult(
             content="왜 그런 차이가 생기는지 예시로 설명해볼까요?",
+            event_type=self.event_type,
             metadata={"augmentation_used": "false"},
         )
 
@@ -1540,6 +1542,7 @@ async def test_get_student_exam_session_sheet_blocks_completed_exam_result():
 @pytest.mark.asyncio
 async def test_generate_exam_follow_up_persists_assistant_turn():
     exam = make_exam()
+    exam.max_follow_ups = 4
     exam.questions = [make_question()]
     session_repository = InMemoryExamSessionRepository()
     turn_repository = InMemoryExamTurnRepository()
@@ -1585,7 +1588,10 @@ async def test_generate_exam_follow_up_persists_assistant_turn():
         command=GenerateExamFollowUpCommand(
             question_id=exam.questions[0].id,
             answer_content="분류는 범주, 회귀는 값을 예측합니다.",
-            metadata={"answer_turn_id": "77777777-7777-7777-7777-777777777777"},
+            metadata={
+                "answer_turn_id": "77777777-7777-7777-7777-777777777777",
+                "question_id": "99999999-9999-9999-9999-999999999999",
+            },
             occurred_at=ENDS_AT,
         ),
     )
@@ -1594,9 +1600,57 @@ async def test_generate_exam_follow_up_persists_assistant_turn():
     assert follow_up.event_type is ExamTurnEventType.FOLLOW_UP
     assert follow_up.sequence == 2
     assert follow_up.content == "왜 그런 차이가 생기는지 예시로 설명해볼까요?"
+    assert follow_up.metadata["question_id"] == str(exam.questions[0].id)
     assert follow_up_port.requests[0].answer_content == (
         "분류는 범주, 회귀는 값을 예측합니다."
     )
+    assert follow_up_port.requests[0].question.max_follow_ups == 4
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_follow_up_uses_generated_event_type():
+    exam = make_exam()
+    exam.questions = [make_question()]
+    session_repository = InMemoryExamSessionRepository()
+    turn_repository = InMemoryExamTurnRepository()
+    session = ExamSession(
+        exam_id=EXAM_ID,
+        student_id=STUDENT_ID,
+        status=ExamSessionStatus.IN_PROGRESS,
+        started_at=STARTS_AT,
+        last_activity_at=STARTS_AT,
+        attempt_number=1,
+    )
+    session.id = UUID("66666666-6666-6666-6666-666666666666")
+    await session_repository.save(session)
+    follow_up_port = FakeExamFollowUpGenerationPort()
+    follow_up_port.event_type = ExamTurnEventType.MESSAGE
+    service = ExamService(
+        repository=InMemoryExamRepository([exam]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=session_repository,
+        result_repository=InMemoryExamResultRepository(),
+        turn_repository=turn_repository,
+        realtime_session_port=FakeRealtimeSessionPort(),
+        follow_up_generation_port=follow_up_port,
+    )
+
+    follow_up = await service.generate_exam_follow_up(
+        exam_id=EXAM_ID,
+        session_id=session.id,
+        current_user=make_current_user(
+            role=UserRole.STUDENT,
+            user_id=STUDENT_ID,
+        ),
+        command=GenerateExamFollowUpCommand(
+            question_id=exam.questions[0].id,
+            answer_content="분류는 범주, 회귀는 값을 예측합니다.",
+            metadata={},
+            occurred_at=ENDS_AT,
+        ),
+    )
+
+    assert follow_up.event_type is ExamTurnEventType.MESSAGE
 
 
 @pytest.mark.asyncio

@@ -295,6 +295,7 @@ class Exam(AggregateRoot):
     ends_at: datetime
     max_attempts: int
     week: int
+    max_follow_ups: int = 2
     description: str | None = None
     status: ExamStatus = ExamStatus.READY
     generation_status: ExamGenerationStatus = ExamGenerationStatus.IDLE
@@ -319,6 +320,7 @@ class Exam(AggregateRoot):
         max_attempts: int,
         week: int,
         criteria: Sequence[ExamCriterion],
+        max_follow_ups: int = 2,
     ) -> Exam:
         if week < 1:
             raise ExamInvalidWeekDomainException(
@@ -339,7 +341,9 @@ class Exam(AggregateRoot):
             ends_at=ends_at,
             max_attempts=max_attempts,
             week=week,
+            max_follow_ups=max_follow_ups,
         )
+        exam.set_max_follow_ups(max_follow_ups)
         exam.criteria = [
             ExamCriterion(
                 exam_id=exam.id,
@@ -357,6 +361,13 @@ class Exam(AggregateRoot):
 
     def belongs_to_classroom(self, classroom_id: UUID) -> bool:
         return self.classroom_id == classroom_id
+
+    def set_max_follow_ups(self, max_follow_ups: int) -> None:
+        if max_follow_ups < 0:
+            raise ValueError(
+                "max_follow_ups must be greater than or equal to 0"
+            )
+        self.max_follow_ups = max_follow_ups
 
     def mark_generation_queued(
         self,
