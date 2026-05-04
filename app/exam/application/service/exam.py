@@ -727,6 +727,7 @@ class ExamService(ExamUseCase):
         )
         try:
             await self.session_repository.save(session_entity)
+            await session.flush()
             await self.result_repository.save(
                 session_entity.create_pending_result()
             )

@@ -141,8 +141,11 @@ class InMemoryExamSessionRepository(ExamSessionRepository):
 class InMemoryExamResultRepository(ExamResultRepository):
     def __init__(self):
         self.results: dict[UUID, ExamResult] = {}
+        self.raise_on_save: IntegrityError | None = None
 
     async def save(self, entity: ExamResult) -> None:
+        if self.raise_on_save is not None:
+            raise self.raise_on_save
         self.results[entity.id] = entity
 
     async def get_by_id(self, entity_id: UUID) -> ExamResult | None:
@@ -1110,6 +1113,33 @@ async def test_start_exam_session_skips_secret_when_save_fails():
     )
 
     with pytest.raises(ExamSessionAlreadyInProgressException):
+        await service.start_exam_session(
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.STUDENT,
+                user_id=STUDENT_ID,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_exam_session_skips_secret_when_result_save_fails():
+    result_repository = InMemoryExamResultRepository()
+    result_repository.raise_on_save = IntegrityError(
+        statement=None,
+        params=None,
+        orig=Exception("t_exam_result_session_id_fkey"),
+    )
+    service = ExamService(
+        repository=InMemoryExamRepository([make_exam(max_attempts=2)]),
+        classroom_usecase=FakeClassroomUseCase(make_classroom()),
+        session_repository=InMemoryExamSessionRepository(),
+        result_repository=result_repository,
+        turn_repository=InMemoryExamTurnRepository(),
+        realtime_session_port=FailIfSecretCreatedRealtimeSessionPort(),
+    )
+
+    with pytest.raises(IntegrityError):
         await service.start_exam_session(
             exam_id=EXAM_ID,
             current_user=make_current_user(
