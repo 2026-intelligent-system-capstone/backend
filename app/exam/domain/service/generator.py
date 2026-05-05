@@ -90,6 +90,7 @@ def allocate_bloom_weight_counts(
             count=allocated_counts[index],
         )
         for index, item in enumerate(positive_weights)
+        if allocated_counts[index] > 0
     ]
 
 

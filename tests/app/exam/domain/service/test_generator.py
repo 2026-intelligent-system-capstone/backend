@@ -38,7 +38,7 @@ def test_allocate_bloom_weight_counts_rejects_all_zero_weights():
         )
 
 
-def test_allocate_bloom_weight_counts_allows_zero_questions():
+def test_allocate_bloom_weight_counts_filters_zero_count_levels():
     counts = allocate_bloom_weight_counts(
         total_question_count=2,
         weights=[
@@ -51,7 +51,6 @@ def test_allocate_bloom_weight_counts_allows_zero_questions():
     assert [(item.bloom_level, item.count) for item in counts] == [
         (BloomLevel.REMEMBER, 1),
         (BloomLevel.UNDERSTAND, 1),
-        (BloomLevel.APPLY, 0),
     ]
 
 

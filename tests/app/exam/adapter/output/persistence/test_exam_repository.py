@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, text
+from sqlalchemy import delete, make_url, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_scoped_session,
@@ -79,8 +79,22 @@ STARTS_AT = NOW - timedelta(minutes=5)
 ENDS_AT = NOW + timedelta(hours=1)
 
 
+def assert_test_database_url(database_url: str) -> None:
+    database_name = make_url(database_url).database or ""
+    if "test" not in database_name.lower():
+        raise RuntimeError("repository tests require a test database")
+
+
+def test_repository_fixture_rejects_non_test_database_url():
+    with pytest.raises(RuntimeError, match="test database"):
+        assert_test_database_url(
+            "postgresql+asyncpg://postgres:password@127.0.0.1:55432/dialearn"
+        )
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
+    assert_test_database_url(config.DATABASE_URL)
     engine = create_async_engine(config.DATABASE_URL)
     async with engine.begin() as conn:
         await conn.run_sync(metadata_drop_exam_repository_tables)
