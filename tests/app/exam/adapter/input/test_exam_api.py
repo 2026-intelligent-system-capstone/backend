@@ -147,7 +147,10 @@ def test_create_exam_returns_200_for_professor(client, monkeypatch):
 
     async def create_stub_exam(*_args, **kwargs):
         captured["command"] = kwargs["command"]
-        return make_exam()
+        exam = make_exam()
+        exam.question_count = kwargs["command"].question_count
+        exam.difficulty = kwargs["command"].difficulty
+        return exam
 
     professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
 
@@ -169,6 +172,8 @@ def test_create_exam_returns_200_for_professor(client, monkeypatch):
             "ends_at": ENDS_AT.isoformat(),
             "max_attempts": 1,
             "week": WEEK,
+            "question_count": 12,
+            "difficulty": "hard",
             "criteria": [
                 {
                     "title": "개념 이해",
@@ -188,6 +193,11 @@ def test_create_exam_returns_200_for_professor(client, monkeypatch):
     assert response.status_code == 200
     assert captured["command"].week == WEEK
     assert captured["command"].max_attempts == 1
+    assert captured["command"].question_count == 12
+    assert captured["command"].difficulty is ExamDifficulty.HARD
+    body = response.json()
+    assert body["data"]["question_count"] == 12
+    assert body["data"]["difficulty"] == "hard"
     assert response.json()["data"]["title"] == "중간 평가"
     assert response.json()["data"]["exam_type"] == "midterm"
     assert response.json()["data"]["status"] == "ready"
@@ -221,6 +231,8 @@ def test_create_exam_succeeds_when_description_omitted(client, monkeypatch):
             "ends_at": ENDS_AT.isoformat(),
             "max_attempts": 1,
             "week": WEEK,
+            "question_count": 12,
+            "difficulty": "hard",
             "criteria": [
                 {
                     "title": "개념 이해",
@@ -268,6 +280,8 @@ def test_create_exam_succeeds_when_description_is_null(client, monkeypatch):
             "ends_at": ENDS_AT.isoformat(),
             "max_attempts": 1,
             "week": WEEK,
+            "question_count": 12,
+            "difficulty": "hard",
             "criteria": [
                 {
                     "title": "개념 이해",
@@ -322,6 +336,8 @@ def test_create_exam_accepts_weekly_and_project_types(client, monkeypatch):
             "ends_at": ENDS_AT.isoformat(),
             "max_attempts": 1,
             "week": WEEK,
+            "question_count": 12,
+            "difficulty": "hard",
             "criteria": [
                 {
                     "title": "개념 이해",
@@ -349,6 +365,8 @@ def test_create_exam_accepts_weekly_and_project_types(client, monkeypatch):
             "ends_at": ENDS_AT.isoformat(),
             "max_attempts": 1,
             "week": WEEK,
+            "question_count": 12,
+            "difficulty": "hard",
             "criteria": [
                 {
                     "title": "설계 근거",
@@ -593,6 +611,8 @@ def test_create_exam_returns_422_for_invalid_week(client, monkeypatch):
             "ends_at": ENDS_AT.isoformat(),
             "max_attempts": 1,
             "week": 0,
+            "question_count": 12,
+            "difficulty": "hard",
             "criteria": [
                 {
                     "title": "개념 이해",
@@ -681,20 +701,12 @@ def test_get_exam_hides_answers_for_student(client, monkeypatch):
     assert response.json()["data"]["questions"] == []
 
 
-def test_create_exam_question_returns_200_for_professor(client, monkeypatch):
-    async def create_question_stub(*_args, **_kwargs):
-        return make_question(max_score=2.5)
-
+def test_create_exam_question_returns_404_for_professor(client, monkeypatch):
     professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
 
     async def get_by_id_stub(*_args, **_kwargs):
         return professor_user
 
-    monkeypatch.setattr(
-        ExamService,
-        "create_exam_question",
-        create_question_stub,
-    )
     monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
     set_access_token_cookie(client, professor_user)
 
@@ -719,207 +731,7 @@ def test_create_exam_question_returns_200_for_professor(client, monkeypatch):
         },
     )
 
-    assert response.status_code == 200
-    assert response.json()["data"]["question_type"] == "subjective"
-    assert response.json()["data"]["bloom_level"] == "apply"
-    assert response.json()["data"]["difficulty"] == "medium"
-    assert response.json()["data"]["max_score"] == 2.5
-    assert response.json()["data"]["answer_options"] == []
-    assert response.json()["data"]["correct_answer_text"] == "회귀와 분류"
-    assert response.json()["data"]["source_material_ids"] == [
-        "99999999-9999-9999-9999-999999999999"
-    ]
-
-
-def test_create_exam_question_422_when_subjective_answer_missing(
-    client,
-    monkeypatch,
-):
-    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
-
-    async def get_by_id_stub(*_args, **_kwargs):
-        return professor_user
-
-    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
-    set_access_token_cookie(client, professor_user)
-
-    response = client.post(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
-        json={
-            "question_number": 1,
-            "max_score": 1.0,
-            "question_type": "subjective",
-            "bloom_level": "apply",
-            "difficulty": "medium",
-            "question_text": "회귀와 분류의 차이를 설명하세요.",
-            "intent_text": "주관식에서 핵심 개념 구분 능력을 평가합니다.",
-            "rubric_text": "핵심 개념과 예시를 설명하면 정답",
-            "source_material_ids": [],
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
-
-
-def test_create_exam_question_returns_422_when_oral_rubric_missing(
-    client,
-    monkeypatch,
-):
-    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
-
-    async def get_by_id_stub(*_args, **_kwargs):
-        return professor_user
-
-    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
-    set_access_token_cookie(client, professor_user)
-
-    response = client.post(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
-        json={
-            "question_number": 1,
-            "max_score": 1.0,
-            "question_type": "oral",
-            "bloom_level": "apply",
-            "difficulty": "medium",
-            "question_text": "회귀와 분류의 차이를 설명하세요.",
-            "intent_text": "구술형에서 개념 구분 능력을 평가합니다.",
-            "source_material_ids": [],
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
-
-
-def test_create_exam_question_422_when_mc_options_missing(
-    client,
-    monkeypatch,
-):
-    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
-
-    async def get_by_id_stub(*_args, **_kwargs):
-        return professor_user
-
-    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
-    set_access_token_cookie(client, professor_user)
-
-    response = client.post(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
-        json={
-            "question_number": 1,
-            "max_score": 1.0,
-            "question_type": "multiple_choice",
-            "bloom_level": "apply",
-            "difficulty": "medium",
-            "question_text": "지도학습 예시를 고르세요.",
-            "intent_text": "객관식에서 개념 분류 능력을 평가합니다.",
-            "rubric_text": "정확한 개념 선택 여부를 평가합니다.",
-            "correct_answer_text": "회귀",
-            "source_material_ids": [],
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
-
-
-def test_create_exam_question_422_when_mc_has_single_option(
-    client,
-    monkeypatch,
-):
-    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
-
-    async def get_by_id_stub(*_args, **_kwargs):
-        return professor_user
-
-    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
-    set_access_token_cookie(client, professor_user)
-
-    response = client.post(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
-        json={
-            "question_number": 1,
-            "max_score": 1.0,
-            "question_type": "multiple_choice",
-            "bloom_level": "apply",
-            "difficulty": "medium",
-            "question_text": "지도학습 예시를 고르세요.",
-            "intent_text": "객관식에서 개념 분류 능력을 평가합니다.",
-            "rubric_text": "정확한 개념 선택 여부를 평가합니다.",
-            "answer_options": ["회귀"],
-            "correct_answer_text": "회귀",
-            "source_material_ids": [],
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
-
-
-def test_create_exam_question_422_when_mc_correct_answer_missing(
-    client,
-    monkeypatch,
-):
-    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
-
-    async def get_by_id_stub(*_args, **_kwargs):
-        return professor_user
-
-    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
-    set_access_token_cookie(client, professor_user)
-
-    response = client.post(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
-        json={
-            "question_number": 1,
-            "max_score": 1.0,
-            "question_type": "multiple_choice",
-            "bloom_level": "apply",
-            "difficulty": "medium",
-            "question_text": "지도학습 예시를 고르세요.",
-            "intent_text": "객관식에서 개념 분류 능력을 평가합니다.",
-            "rubric_text": "정확한 개념 선택 여부를 평가합니다.",
-            "answer_options": ["회귀", "분류", "강화학습"],
-            "source_material_ids": [],
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
-
-
-def test_create_exam_question_422_when_mc_answer_not_in_options(
-    client,
-    monkeypatch,
-):
-    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
-
-    async def get_by_id_stub(*_args, **_kwargs):
-        return professor_user
-
-    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
-    set_access_token_cookie(client, professor_user)
-
-    response = client.post(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
-        json={
-            "question_number": 1,
-            "max_score": 1.0,
-            "question_type": "multiple_choice",
-            "bloom_level": "apply",
-            "difficulty": "medium",
-            "question_text": "지도학습 예시를 고르세요.",
-            "intent_text": "객관식에서 개념 분류 능력을 평가합니다.",
-            "rubric_text": "정확한 개념 선택 여부를 평가합니다.",
-            "answer_options": ["회귀", "분류", "강화학습"],
-            "correct_answer_text": "군집화",
-            "source_material_ids": [],
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
+    assert response.status_code == 404
 
 
 def test_update_exam_question_returns_200_for_professor(client, monkeypatch):
@@ -1048,43 +860,6 @@ def test_update_exam_question_422_switching_to_mc_without_answer(
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_create_exam_question_returns_422_for_non_positive_max_score(
-    client,
-    monkeypatch,
-):
-    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
-
-    async def get_by_id_stub(*_args, **_kwargs):
-        return professor_user
-
-    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
-    set_access_token_cookie(client, professor_user)
-
-    response = client.post(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
-        json={
-            "question_number": 1,
-            "max_score": 0,
-            "question_type": "subjective",
-            "bloom_level": "apply",
-            "difficulty": "medium",
-            "question_text": "회귀와 분류의 차이를 설명하세요.",
-            "intent_text": (
-                "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가"
-            ),
-            "rubric_text": (
-                "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
-                "예시를 설명하면 정답"
-            ),
-            "correct_answer_text": "회귀와 분류",
-            "source_material_ids": [],
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
-
-
 def test_update_exam_question_returns_422_for_non_positive_max_score(
     client,
     monkeypatch,
@@ -1106,22 +881,12 @@ def test_update_exam_question_returns_422_for_non_positive_max_score(
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_delete_exam_question_returns_200_for_professor(client, monkeypatch):
-    async def delete_question_stub(*_args, **_kwargs):
-        question = make_question()
-        question.status = ExamQuestionStatus.DELETED
-        return question
-
+def test_delete_exam_question_returns_404_for_professor(client, monkeypatch):
     professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
 
     async def get_by_id_stub(*_args, **_kwargs):
         return professor_user
 
-    monkeypatch.setattr(
-        ExamService,
-        "delete_exam_question",
-        delete_question_stub,
-    )
     monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
     set_access_token_cookie(client, professor_user)
 
@@ -1129,44 +894,7 @@ def test_delete_exam_question_returns_200_for_professor(client, monkeypatch):
         f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions/88888888-8888-8888-8888-888888888888"
     )
 
-    assert response.status_code == 200
-    assert response.json()["data"]["status"] == "deleted"
-    assert response.json()["data"]["max_score"] == 1.0
-    assert response.json()["data"]["answer_options"] == []
-    assert response.json()["data"]["correct_answer_text"] == "회귀와 분류"
-
-
-def test_create_exam_question_returns_403_for_student(client, monkeypatch):
-    student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
-
-    async def get_by_id_stub(*_args, **_kwargs):
-        return student_user
-
-    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
-    set_access_token_cookie(client, student_user)
-
-    response = client.post(
-        f"/api/classrooms/{CLASSROOM_ID}/exams/{EXAM_ID}/questions",
-        json={
-            "question_number": 1,
-            "max_score": 1.0,
-            "question_type": "subjective",
-            "bloom_level": "apply",
-            "difficulty": "medium",
-            "question_text": "회귀와 분류의 차이를 설명하세요.",
-            "intent_text": (
-                "1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가"
-            ),
-            "rubric_text": (
-                "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
-                "예시를 설명하면 정답"
-            ),
-            "source_material_ids": [],
-        },
-    )
-
-    assert response.status_code == 403
-    assert response.json()["error_code"] == "AUTH__FORBIDDEN"
+    assert response.status_code == 404
 
 
 def test_generate_exam_questions_returns_202_for_professor(
@@ -1209,9 +937,8 @@ def test_generate_exam_questions_returns_202_for_professor(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "bloom_weights": [{"bloom_level": "apply", "weight": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1225,7 +952,6 @@ def test_generate_exam_questions_returns_202_for_professor(
     assert captured["exam_id"] == EXAM_ID
     assert captured["command"].scope_text == "1주차 머신러닝 기초"
     assert captured["command"].max_follow_ups == 2
-    assert captured["command"].difficulty is ExamDifficulty.MEDIUM
     assert captured["command"].source_material_ids == [
         UUID("99999999-9999-9999-9999-999999999999")
     ]
@@ -1233,7 +959,8 @@ def test_generate_exam_questions_returns_202_for_professor(
         ExamQuestionType.SUBJECTIVE
     )
     assert captured["command"].question_type_counts[0].count == 1
-    assert captured["command"].total_question_count is None
+    assert captured["command"].bloom_weights[0].bloom_level is BloomLevel.APPLY
+    assert captured["command"].bloom_weights[0].weight == 1
     assert captured["command"].question_type_strategy is None
     assert body["data"]["exam_id"] == str(EXAM_ID)
     assert body["data"]["generation_status"] == "queued"
@@ -1283,25 +1010,22 @@ def test_generate_exam_questions_returns_202_for_strategy_request(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "total_question_count": 3,
             "question_type_strategy": "oral_focus",
-            "bloom_counts": [
-                {"bloom_level": "remember", "count": 1},
-                {"bloom_level": "apply", "count": 2},
+            "bloom_weights": [
+                {"bloom_level": "remember", "weight": 1},
+                {"bloom_level": "apply", "weight": 2},
             ],
         },
     )
 
     assert response.status_code == 202
-    assert captured["command"].total_question_count == 3
     assert (
         captured["command"].question_type_strategy
         is ExamQuestionTypeStrategy.ORAL_FOCUS
     )
     assert captured["command"].question_type_counts is None
-    assert [item.count for item in captured["command"].bloom_counts] == [1, 2]
+    assert [item.weight for item in captured["command"].bloom_weights] == [1, 2]
 
 
 def test_generate_exam_questions_returns_400_for_invalid_materials(
@@ -1329,9 +1053,8 @@ def test_generate_exam_questions_returns_400_for_invalid_materials(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "bloom_weights": [{"bloom_level": "apply", "weight": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1369,9 +1092,8 @@ def test_generate_exam_questions_returns_400_for_pending_material(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "bloom_weights": [{"bloom_level": "apply", "weight": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1409,9 +1131,8 @@ def test_generate_exam_questions_returns_409_for_already_in_progress(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "bloom_weights": [{"bloom_level": "apply", "weight": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1449,9 +1170,8 @@ def test_generate_exam_questions_returns_400_for_failed_material(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "bloom_weights": [{"bloom_level": "apply", "weight": 1}],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 1}
             ],
@@ -1464,7 +1184,7 @@ def test_generate_exam_questions_returns_400_for_failed_material(
     )
 
 
-def test_generate_exam_questions_returns_422_for_legacy_mismatched_totals(
+def test_generate_exam_questions_returns_422_for_duplicate_bloom_level(
     client,
     monkeypatch,
 ):
@@ -1481,9 +1201,11 @@ def test_generate_exam_questions_returns_422_for_legacy_mismatched_totals(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "bloom_weights": [
+                {"bloom_level": "apply", "weight": 1},
+                {"bloom_level": "apply", "weight": 2},
+            ],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 2}
             ],
@@ -1494,7 +1216,7 @@ def test_generate_exam_questions_returns_422_for_legacy_mismatched_totals(
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_generate_exam_questions_returns_422_for_strategy_total_mismatch(
+def test_generate_exam_questions_returns_422_for_all_zero_bloom_weights(
     client,
     monkeypatch,
 ):
@@ -1511,11 +1233,12 @@ def test_generate_exam_questions_returns_422_for_strategy_total_mismatch(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "total_question_count": 2,
             "question_type_strategy": "oral_focus",
-            "bloom_counts": [{"bloom_level": "apply", "count": 3}],
+            "bloom_weights": [
+                {"bloom_level": "remember", "weight": 0},
+                {"bloom_level": "apply", "weight": 0},
+            ],
         },
     )
 
@@ -1523,7 +1246,7 @@ def test_generate_exam_questions_returns_422_for_strategy_total_mismatch(
     assert response.json()["error_code"] == "SERVER__REQUEST_VALIDATION_ERROR"
 
 
-def test_generate_exam_questions_returns_422_for_mixed_strategy_and_legacy_mode(
+def test_generate_exam_questions_returns_422_for_bloom_weight_above_ten(
     client,
     monkeypatch,
 ):
@@ -1540,14 +1263,9 @@ def test_generate_exam_questions_returns_422_for_mixed_strategy_and_legacy_mode(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "total_question_count": 1,
             "question_type_strategy": "oral_focus",
-            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
-            "question_type_counts": [
-                {"question_type": "subjective", "count": 1}
-            ],
+            "bloom_weights": [{"bloom_level": "apply", "weight": 11}],
         },
     )
 
@@ -1572,9 +1290,8 @@ def test_generate_exam_questions_returns_422_for_invalid_question_type(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "bloom_weights": [{"bloom_level": "apply", "weight": 1}],
             "question_type_counts": [{"question_type": "essay", "count": 1}],
         },
     )
@@ -1600,9 +1317,8 @@ def test_generate_exam_questions_returns_422_for_none_question_type(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "bloom_counts": [{"bloom_level": "apply", "count": 1}],
+            "bloom_weights": [{"bloom_level": "apply", "weight": 1}],
             "question_type_counts": [{"question_type": "none", "count": 1}],
         },
     )
@@ -1651,12 +1367,11 @@ def test_generate_exam_questions_accepts_question_type_count_above_five(
         json={
             "scope_text": "1주차 머신러닝 기초",
             "max_follow_ups": 2,
-            "difficulty": "medium",
             "source_material_ids": ["99999999-9999-9999-9999-999999999999"],
-            "bloom_counts": [
-                {"bloom_level": "remember", "count": 5},
-                {"bloom_level": "understand", "count": 5},
-                {"bloom_level": "apply", "count": 2},
+            "bloom_weights": [
+                {"bloom_level": "remember", "weight": 5},
+                {"bloom_level": "understand", "weight": 5},
+                {"bloom_level": "apply", "weight": 2},
             ],
             "question_type_counts": [
                 {"question_type": "subjective", "count": 6},

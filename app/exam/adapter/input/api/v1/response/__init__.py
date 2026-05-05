@@ -48,6 +48,8 @@ class ExamPayload(BaseModel):
     ends_at: str
     max_attempts: int
     week: int
+    question_count: int
+    difficulty: str
     criteria: list[ExamCriterionPayload]
     questions: list[ExamQuestionPayload] = Field(default_factory=list)
 
@@ -121,6 +123,8 @@ class StudentExamSessionSheetPayload(BaseModel):
     ends_at: str
     max_attempts: int
     week: int
+    question_count: int
+    difficulty: str
     questions: list[StudentExamSessionQuestionPayload]
 
 

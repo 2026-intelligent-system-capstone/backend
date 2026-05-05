@@ -5,10 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from app.async_job.domain.entity import AsyncJobReference
-from app.exam.domain.constants import (
-    MAX_BLOOM_LEVEL_QUESTION_COUNT,
-    MAX_QUESTION_TYPE_QUESTION_COUNT,
-)
+from app.exam.domain.constants import MAX_QUESTION_TYPE_QUESTION_COUNT
 from app.exam.domain.entity import (
     BloomLevel,
     ExamDifficulty,
@@ -34,8 +31,66 @@ class ExamQuestionGenerationLevelCount:
     count: int
 
     def __post_init__(self) -> None:
-        if self.count < 1 or self.count > MAX_BLOOM_LEVEL_QUESTION_COUNT:
-            raise ValueError("count must be between 1 and 5")
+        if self.count < 0 or self.count > MAX_QUESTION_TYPE_QUESTION_COUNT:
+            raise ValueError("count must be between 0 and 30")
+
+
+@dataclass(frozen=True)
+class ExamQuestionGenerationLevelWeight:
+    bloom_level: BloomLevel
+    weight: int
+
+    def __post_init__(self) -> None:
+        if self.weight < 0 or self.weight > 10:
+            raise ValueError("weight must be between 0 and 10")
+
+
+def allocate_bloom_weight_counts(
+    *,
+    total_question_count: int,
+    weights: Sequence[ExamQuestionGenerationLevelWeight],
+) -> list[ExamQuestionGenerationLevelCount]:
+    if (
+        total_question_count < 1
+        or total_question_count > MAX_QUESTION_TYPE_QUESTION_COUNT
+    ):
+        raise ValueError("total_question_count must be between 1 and 30")
+    if not weights:
+        raise ValueError("weights must not be empty")
+
+    bloom_levels = [item.bloom_level for item in weights]
+    if len(set(bloom_levels)) != len(bloom_levels):
+        raise ValueError("bloom levels must not contain duplicates")
+
+    total_weight = sum(item.weight for item in weights)
+    if total_weight <= 0:
+        raise ValueError("total weight must be greater than 0")
+
+    positive_weights = [item for item in weights if item.weight > 0]
+    allocated_counts = [
+        (total_question_count * item.weight) // total_weight
+        for item in positive_weights
+    ]
+    remaining_count = total_question_count - sum(allocated_counts)
+    remainders = [
+        (total_question_count * item.weight) % total_weight
+        for item in positive_weights
+    ]
+    remainder_order = sorted(
+        range(len(positive_weights)),
+        key=lambda index: (-remainders[index], index),
+    )
+
+    for index in remainder_order[:remaining_count]:
+        allocated_counts[index] += 1
+
+    return [
+        ExamQuestionGenerationLevelCount(
+            bloom_level=item.bloom_level,
+            count=allocated_counts[index],
+        )
+        for index, item in enumerate(positive_weights)
+    ]
 
 
 @dataclass(frozen=True)

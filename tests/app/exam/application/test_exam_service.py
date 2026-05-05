@@ -30,9 +30,8 @@ from app.exam.application.exception import (
 from app.exam.application.service import ExamService
 from app.exam.domain.command import (
     CreateExamCommand,
-    CreateExamQuestionCommand,
     ExamCriterionCommand,
-    ExamQuestionBloomCountCommand,
+    ExamQuestionBloomWeightCommand,
     ExamQuestionTypeCountCommand,
     GenerateExamQuestionsCommand,
     UpdateExamQuestionCommand,
@@ -45,6 +44,7 @@ from app.exam.domain.entity import (
     ExamGenerationStatus,
     ExamQuestionStatus,
     ExamQuestionType,
+    ExamQuestionTypeStrategy,
     ExamResult,
     ExamResultStatus,
     ExamSession,
@@ -405,6 +405,8 @@ def make_exam(
     exam_type: ExamType = ExamType.MIDTERM,
     title: str = "중간 평가",
     max_attempts: int = 1,
+    question_count: int = 1,
+    difficulty: ExamDifficulty = ExamDifficulty.MEDIUM,
 ) -> Exam:
     exam = Exam(
         classroom_id=classroom_id,
@@ -417,6 +419,8 @@ def make_exam(
         ends_at=ENDS_AT,
         max_attempts=max_attempts,
         week=week,
+        question_count=question_count,
+        difficulty=difficulty,
         criteria=[
             ExamCriterion(
                 exam_id=EXAM_ID,
@@ -436,41 +440,41 @@ def make_exam(
     return exam
 
 
-def make_question_command() -> CreateExamQuestionCommand:
-    return CreateExamQuestionCommand(
-        question_number=1,
-        max_score=1.0,
-        question_type=ExamQuestionType.SUBJECTIVE,
-        bloom_level=BloomLevel.APPLY,
-        difficulty=ExamDifficulty.MEDIUM,
-        question_text="회귀와 분류의 차이를 설명하세요.",
-        intent_text=(
+def make_question_payload() -> dict[str, object]:
+    return {
+        "question_number": 1,
+        "max_score": 1.0,
+        "question_type": ExamQuestionType.SUBJECTIVE,
+        "bloom_level": BloomLevel.APPLY,
+        "difficulty": ExamDifficulty.MEDIUM,
+        "question_text": "회귀와 분류의 차이를 설명하세요.",
+        "intent_text": (
             "1주차 머신러닝 기초 범위에서 지도학습의 핵심 구분을 "
             "설명하도록 유도"
         ),
-        rubric_text=(
+        "rubric_text": (
             "출력 형태와 학습 목표 차이를 포함하고, 핵심 개념과 예시를 "
             "함께 설명하면 정답"
         ),
-        correct_answer_text="회귀와 분류",
-        source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
-    )
+        "correct_answer_text": "회귀와 분류",
+        "source_material_ids": [UUID("99999999-9999-9999-9999-999999999999")],
+    }
 
 
-def make_multiple_choice_question_command() -> CreateExamQuestionCommand:
-    return CreateExamQuestionCommand(
-        question_number=1,
-        max_score=1.0,
-        question_type=ExamQuestionType.MULTIPLE_CHOICE,
-        bloom_level=BloomLevel.APPLY,
-        difficulty=ExamDifficulty.MEDIUM,
-        question_text="지도학습 예시를 고르세요.",
-        intent_text="객관식에서 개념 분류 능력을 평가합니다.",
-        rubric_text="정확한 개념 선택 여부를 평가합니다.",
-        answer_options=["회귀", "분류", "강화학습"],
-        correct_answer_text="회귀",
-        source_material_ids=[],
-    )
+def make_multiple_choice_question_payload() -> dict[str, object]:
+    return {
+        "question_number": 1,
+        "max_score": 1.0,
+        "question_type": ExamQuestionType.MULTIPLE_CHOICE,
+        "bloom_level": BloomLevel.APPLY,
+        "difficulty": ExamDifficulty.MEDIUM,
+        "question_text": "지도학습 예시를 고르세요.",
+        "intent_text": "객관식에서 개념 분류 능력을 평가합니다.",
+        "rubric_text": "정확한 개념 선택 여부를 평가합니다.",
+        "answer_options": ["회귀", "분류", "강화학습"],
+        "correct_answer_text": "회귀",
+        "source_material_ids": [],
+    }
 
 
 def make_material_result(
@@ -615,6 +619,8 @@ async def test_create_exam_success():
             ends_at=ENDS_AT,
             max_attempts=1,
             week=WEEK,
+            question_count=12,
+            difficulty=ExamDifficulty.HARD,
             criteria=[
                 ExamCriterionCommand(
                     title="개념 이해",
@@ -650,6 +656,8 @@ async def test_create_exam_success():
     assert exam.ends_at == ENDS_AT
     assert exam.max_attempts == 1
     assert exam.week == WEEK
+    assert exam.question_count == 12
+    assert exam.difficulty is ExamDifficulty.HARD
     assert len(exam.criteria) == 2
     assert exam.criteria[0].title == "개념 이해"
     assert exam.criteria[1].weight == 40
@@ -687,6 +695,8 @@ def test_create_exam_command_requires_positive_week():
             ends_at=ENDS_AT,
             max_attempts=1,
             week=0,
+            question_count=12,
+            difficulty=ExamDifficulty.HARD,
             criteria=[
                 ExamCriterionCommand(
                     title="개념 이해",
@@ -698,73 +708,6 @@ def test_create_exam_command_requires_positive_week():
                     poor_definition=None,
                 )
             ],
-        )
-
-
-def test_create_exam_question_command_requires_mc_options():
-    with pytest.raises(ValueError, match="answer_options"):
-        CreateExamQuestionCommand(
-            question_number=1,
-            max_score=1.0,
-            question_type=ExamQuestionType.MULTIPLE_CHOICE,
-            bloom_level=BloomLevel.APPLY,
-            difficulty=ExamDifficulty.MEDIUM,
-            question_text="지도학습 예시를 고르세요.",
-            intent_text="객관식에서 개념 분류 능력을 평가합니다.",
-            rubric_text="정확한 개념 선택 여부를 평가합니다.",
-            answer_options=[],
-            correct_answer_text="회귀",
-            source_material_ids=[],
-        )
-
-
-def test_create_exam_question_command_requires_mc_answer():
-    with pytest.raises(ValueError, match="correct_answer_text"):
-        CreateExamQuestionCommand(
-            question_number=1,
-            max_score=1.0,
-            question_type=ExamQuestionType.MULTIPLE_CHOICE,
-            bloom_level=BloomLevel.APPLY,
-            difficulty=ExamDifficulty.MEDIUM,
-            question_text="지도학습 예시를 고르세요.",
-            intent_text="객관식에서 개념 분류 능력을 평가합니다.",
-            rubric_text="정확한 개념 선택 여부를 평가합니다.",
-            answer_options=["회귀", "분류"],
-            correct_answer_text=None,
-            source_material_ids=[],
-        )
-
-
-def test_create_exam_question_command_requires_two_mc_options():
-    with pytest.raises(ValueError, match="at least two"):
-        CreateExamQuestionCommand(
-            question_number=1,
-            max_score=1.0,
-            question_type=ExamQuestionType.MULTIPLE_CHOICE,
-            bloom_level=BloomLevel.APPLY,
-            difficulty=ExamDifficulty.MEDIUM,
-            question_text="지도학습 예시를 고르세요.",
-            intent_text="객관식에서 개념 분류 능력을 평가합니다.",
-            rubric_text="정확한 개념 선택 여부를 평가합니다.",
-            answer_options=["회귀"],
-            correct_answer_text="회귀",
-            source_material_ids=[],
-        )
-
-
-def test_create_exam_question_command_requires_correct_answer_for_subjective():
-    with pytest.raises(ValueError, match="correct_answer_text"):
-        CreateExamQuestionCommand(
-            question_number=1,
-            max_score=1.0,
-            question_type=ExamQuestionType.SUBJECTIVE,
-            bloom_level=BloomLevel.APPLY,
-            difficulty=ExamDifficulty.MEDIUM,
-            question_text="회귀와 분류의 차이를 설명하세요.",
-            intent_text="주관식에서 핵심 개념 구분 능력을 평가합니다.",
-            rubric_text="핵심 개념과 예시를 설명하면 정답",
-            correct_answer_text=None,
-            source_material_ids=[],
         )
 
 
@@ -814,6 +757,8 @@ async def test_create_exam_student_forbidden():
                 ends_at=ENDS_AT,
                 max_attempts=1,
                 week=WEEK,
+                question_count=12,
+                difficulty=ExamDifficulty.HARD,
                 criteria=[
                     ExamCriterionCommand(
                         title="개념 이해",
@@ -1117,32 +1062,9 @@ async def test_get_student_exam_raises_for_other_classroom():
 
 
 @pytest.mark.asyncio
-async def test_create_exam_question_success():
-    service, _, _, _, _, _ = build_service(exams=[make_exam()])
-
-    question = await service.create_exam_question(
-        classroom_id=CLASSROOM_ID,
-        exam_id=EXAM_ID,
-        current_user=make_current_user(
-            role=UserRole.PROFESSOR,
-            user_id=PROFESSOR_ID,
-        ),
-        command=make_question_command(),
-    )
-
-    assert question.exam_id == EXAM_ID
-    assert question.question_number == 1
-    assert question.max_score == 1.0
-    assert question.question_type is ExamQuestionType.SUBJECTIVE
-    assert question.bloom_level is BloomLevel.APPLY
-    assert question.difficulty is ExamDifficulty.MEDIUM
-    assert question.status is ExamQuestionStatus.GENERATED
-
-
-@pytest.mark.asyncio
 async def test_update_exam_question_marks_reviewed():
     exam = make_exam()
-    created = exam.add_question(**make_question_command().model_dump())
+    created = exam.add_question(**make_question_payload())
     service, _, _, _, _, _ = build_service(exams=[exam])
 
     question = await service.update_exam_question(
@@ -1170,9 +1092,7 @@ async def test_update_exam_question_marks_reviewed():
 @pytest.mark.asyncio
 async def test_update_exam_question_rejects_mc_without_required_answer_fields():
     exam = make_exam()
-    created = exam.add_question(
-        **make_multiple_choice_question_command().model_dump()
-    )
+    created = exam.add_question(**make_multiple_choice_question_payload())
     service, _, _, _, _, _ = build_service(exams=[exam])
 
     with pytest.raises(ExamQuestionInvalidPayloadException):
@@ -1259,9 +1179,7 @@ async def test_update_legacy_mc_rejects_answer_edit_without_full_contract():
 @pytest.mark.asyncio
 async def test_update_mc_question_to_subjective_keeps_exact_answer():
     exam = make_exam()
-    created = exam.add_question(
-        **make_multiple_choice_question_command().model_dump()
-    )
+    created = exam.add_question(**make_multiple_choice_question_payload())
     service, _, _, _, _, _ = build_service(exams=[exam])
 
     question = await service.update_exam_question(
@@ -1288,26 +1206,6 @@ async def test_update_mc_question_to_subjective_keeps_exact_answer():
 
 
 @pytest.mark.asyncio
-async def test_delete_exam_question_marks_deleted():
-    exam = make_exam()
-    created = exam.add_question(**make_question_command().model_dump())
-    service, _, _, _, _, _ = build_service(exams=[exam])
-
-    question = await service.delete_exam_question(
-        classroom_id=CLASSROOM_ID,
-        exam_id=EXAM_ID,
-        question_id=created.id,
-        current_user=make_current_user(
-            role=UserRole.PROFESSOR,
-            user_id=PROFESSOR_ID,
-        ),
-    )
-
-    assert question.id == created.id
-    assert question.status is ExamQuestionStatus.DELETED
-
-
-@pytest.mark.asyncio
 async def test_update_exam_question_not_found_raises():
     service, _, _, _, _, _ = build_service(exams=[make_exam()])
 
@@ -1321,38 +1219,6 @@ async def test_update_exam_question_not_found_raises():
                 user_id=PROFESSOR_ID,
             ),
             command=UpdateExamQuestionCommand(question_text="수정"),
-        )
-
-
-@pytest.mark.asyncio
-async def test_delete_exam_question_not_found_raises():
-    service, _, _, _, _, _ = build_service(exams=[make_exam()])
-
-    with pytest.raises(ExamQuestionNotFoundException):
-        await service.delete_exam_question(
-            classroom_id=CLASSROOM_ID,
-            exam_id=EXAM_ID,
-            question_id=UUID("77777777-7777-7777-7777-777777777777"),
-            current_user=make_current_user(
-                role=UserRole.PROFESSOR,
-                user_id=PROFESSOR_ID,
-            ),
-        )
-
-
-@pytest.mark.asyncio
-async def test_create_exam_question_student_forbidden():
-    service, _, _, _, _, _ = build_service(exams=[make_exam()])
-
-    with pytest.raises(AuthForbiddenException):
-        await service.create_exam_question(
-            classroom_id=CLASSROOM_ID,
-            exam_id=EXAM_ID,
-            current_user=make_current_user(
-                role=UserRole.STUDENT,
-                user_id=STUDENT_ID,
-            ),
-            command=make_question_command(),
         )
 
 
@@ -1438,7 +1304,7 @@ async def test_generate_exam_questions_enqueues_job_and_marks_exam_queued():
     material_id = UUID("99999999-9999-9999-9999-999999999999")
     async_job_service = FakeAsyncJobService()
     service, _, _, _, _, _ = build_service(
-        exams=[make_exam()],
+        exams=[make_exam(question_count=7, difficulty=ExamDifficulty.HARD)],
         materials=[make_material_result(material_id=material_id)],
         async_job_service=async_job_service,
     )
@@ -1453,20 +1319,34 @@ async def test_generate_exam_questions_enqueues_job_and_marks_exam_queued():
         command=GenerateExamQuestionsCommand(
             scope_text="1주차 머신러닝 기초",
             max_follow_ups=2,
-            difficulty=ExamDifficulty.MEDIUM,
             source_material_ids=[material_id],
-            bloom_counts=[
-                ExamQuestionBloomCountCommand(
+            bloom_weights=[
+                ExamQuestionBloomWeightCommand(
+                    bloom_level=BloomLevel.REMEMBER,
+                    weight=2,
+                ),
+                ExamQuestionBloomWeightCommand(
+                    bloom_level=BloomLevel.UNDERSTAND,
+                    weight=2,
+                ),
+                ExamQuestionBloomWeightCommand(
                     bloom_level=BloomLevel.APPLY,
-                    count=1,
-                )
+                    weight=1,
+                ),
+                ExamQuestionBloomWeightCommand(
+                    bloom_level=BloomLevel.ANALYZE,
+                    weight=0,
+                ),
+                ExamQuestionBloomWeightCommand(
+                    bloom_level=BloomLevel.EVALUATE,
+                    weight=0,
+                ),
+                ExamQuestionBloomWeightCommand(
+                    bloom_level=BloomLevel.CREATE,
+                    weight=0,
+                ),
             ],
-            question_type_counts=[
-                ExamQuestionTypeCountCommand(
-                    question_type=ExamQuestionType.ORAL,
-                    count=1,
-                )
-            ],
+            question_type_strategy=ExamQuestionTypeStrategy.ORAL_FOCUS,
         ),
     )
 
@@ -1488,14 +1368,20 @@ async def test_generate_exam_questions_enqueues_job_and_marks_exam_queued():
     assert payload["classroom_id"] == str(CLASSROOM_ID)
     assert payload["request"]["scope_text"] == "1주차 머신러닝 기초"
     assert payload["request"]["max_follow_ups"] == 2
-    assert payload["request"]["difficulty"] == "medium"
+    assert payload["request"]["difficulty"] == "hard"
     assert payload["request"]["source_material_ids"] == [str(material_id)]
     assert payload["request"]["bloom_counts"] == [
-        {"bloom_level": "apply", "count": 1}
+        {"bloom_level": "remember", "count": 3},
+        {"bloom_level": "understand", "count": 3},
+        {"bloom_level": "apply", "count": 1},
     ]
-    assert payload["request"]["question_type_counts"] == [
-        {"question_type": "oral", "count": 1}
-    ]
+    assert (
+        sum(
+            item["count"] for item in payload["request"]["question_type_counts"]
+        )
+        == 7
+    )
+    assert "bloom_weights" not in payload["request"]
     assert "question_type_strategy" not in payload["request"]
     assert "total_question_count" not in payload["request"]
     saved_exam = service.repository.exams[EXAM_ID]
@@ -1512,7 +1398,7 @@ async def test_generate_exam_questions_normalizes_strategy_counts():
     material_id = UUID("99999999-9999-9999-9999-999999999999")
     async_job_service = FakeAsyncJobService()
     service, _, _, _, _, _ = build_service(
-        exams=[make_exam()],
+        exams=[make_exam(question_count=4)],
         materials=[make_material_result(material_id=material_id)],
         async_job_service=async_job_service,
     )
@@ -1527,18 +1413,16 @@ async def test_generate_exam_questions_normalizes_strategy_counts():
         command=GenerateExamQuestionsCommand(
             scope_text="1주차 머신러닝 기초",
             max_follow_ups=2,
-            difficulty=ExamDifficulty.MEDIUM,
             source_material_ids=[material_id],
-            total_question_count=4,
             question_type_strategy="oral_focus",
-            bloom_counts=[
-                ExamQuestionBloomCountCommand(
+            bloom_weights=[
+                ExamQuestionBloomWeightCommand(
                     bloom_level=BloomLevel.REMEMBER,
-                    count=1,
+                    weight=1,
                 ),
-                ExamQuestionBloomCountCommand(
+                ExamQuestionBloomWeightCommand(
                     bloom_level=BloomLevel.APPLY,
-                    count=3,
+                    weight=3,
                 ),
             ],
         ),
@@ -1561,6 +1445,46 @@ async def test_generate_exam_questions_normalizes_strategy_counts():
     assert counts_by_type["oral"] >= counts_by_type["multiple_choice"]
     assert "question_type_strategy" not in payload["request"]
     assert "total_question_count" not in payload["request"]
+
+
+@pytest.mark.asyncio
+async def test_generate_exam_questions_rejects_type_count_total_mismatch():
+    material_id = UUID("99999999-9999-9999-9999-999999999999")
+    async_job_service = FakeAsyncJobService()
+    service, _, _, _, _, _ = build_service(
+        exams=[make_exam(question_count=3)],
+        materials=[make_material_result(material_id=material_id)],
+        async_job_service=async_job_service,
+    )
+
+    with pytest.raises(ExamQuestionInvalidPayloadException):
+        await service.generate_exam_questions(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=GenerateExamQuestionsCommand(
+                scope_text="1주차 머신러닝 기초",
+                max_follow_ups=2,
+                source_material_ids=[material_id],
+                bloom_weights=[
+                    ExamQuestionBloomWeightCommand(
+                        bloom_level=BloomLevel.APPLY,
+                        weight=1,
+                    )
+                ],
+                question_type_counts=[
+                    ExamQuestionTypeCountCommand(
+                        question_type=ExamQuestionType.ORAL,
+                        count=1,
+                    )
+                ],
+            ),
+        )
+
+    assert async_job_service.enqueue_calls == []
 
 
 @pytest.mark.asyncio
@@ -1589,12 +1513,11 @@ async def test_generate_exam_questions_already_in_progress_raises():
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
                 max_follow_ups=0,
-                difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[material_id],
-                bloom_counts=[
-                    ExamQuestionBloomCountCommand(
+                bloom_weights=[
+                    ExamQuestionBloomWeightCommand(
                         bloom_level=BloomLevel.ANALYZE,
-                        count=1,
+                        weight=1,
                     )
                 ],
                 question_type_counts=[
@@ -1629,14 +1552,13 @@ async def test_generate_exam_questions_invalid_material_raises():
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
                 max_follow_ups=0,
-                difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[
                     UUID("99999999-9999-9999-9999-999999999999")
                 ],
-                bloom_counts=[
-                    ExamQuestionBloomCountCommand(
+                bloom_weights=[
+                    ExamQuestionBloomWeightCommand(
                         bloom_level=BloomLevel.APPLY,
-                        count=1,
+                        weight=1,
                     )
                 ],
                 question_type_counts=[
@@ -1677,12 +1599,11 @@ async def test_generate_exam_questions_pending_material_raises():
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
                 max_follow_ups=0,
-                difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[material_id],
-                bloom_counts=[
-                    ExamQuestionBloomCountCommand(
+                bloom_weights=[
+                    ExamQuestionBloomWeightCommand(
                         bloom_level=BloomLevel.APPLY,
-                        count=1,
+                        weight=1,
                     )
                 ],
                 question_type_counts=[
@@ -1723,12 +1644,11 @@ async def test_generate_exam_questions_failed_material_raises_before_enqueue():
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
                 max_follow_ups=0,
-                difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[material_id],
-                bloom_counts=[
-                    ExamQuestionBloomCountCommand(
+                bloom_weights=[
+                    ExamQuestionBloomWeightCommand(
                         bloom_level=BloomLevel.APPLY,
-                        count=1,
+                        weight=1,
                     )
                 ],
                 question_type_counts=[
@@ -1758,12 +1678,11 @@ async def test_generate_exam_questions_unavailable_raises():
             command=GenerateExamQuestionsCommand(
                 scope_text="1주차 머신러닝 기초",
                 max_follow_ups=0,
-                difficulty=ExamDifficulty.MEDIUM,
                 source_material_ids=[],
-                bloom_counts=[
-                    ExamQuestionBloomCountCommand(
+                bloom_weights=[
+                    ExamQuestionBloomWeightCommand(
                         bloom_level=BloomLevel.APPLY,
-                        count=1,
+                        weight=1,
                     )
                 ],
                 question_type_counts=[

@@ -3,10 +3,7 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
-from app.exam.domain.constants import (
-    MAX_BLOOM_LEVEL_QUESTION_COUNT,
-    MAX_QUESTION_TYPE_QUESTION_COUNT,
-)
+from app.exam.domain.constants import MAX_QUESTION_TYPE_QUESTION_COUNT
 from app.exam.domain.entity import (
     BloomLevel,
     ExamDifficulty,
@@ -47,6 +44,8 @@ class CreateExamRequest(BaseRequest):
     ends_at: datetime
     max_attempts: int = Field(..., ge=1, le=10)
     week: int = Field(..., ge=1)
+    question_count: int = Field(..., ge=1, le=MAX_QUESTION_TYPE_QUESTION_COUNT)
+    difficulty: ExamDifficulty
     criteria: list[ExamCriterionRequest] = Field(
         ..., min_length=1, max_length=20
     )
@@ -57,52 +56,6 @@ class CreateExamRequest(BaseRequest):
             raise ValueError("starts_at must be before ends_at")
         if sum(criterion.weight for criterion in self.criteria) != 100:
             raise ValueError("criteria weights must sum to 100")
-        return self
-
-
-class CreateExamQuestionRequest(BaseRequest):
-    question_number: int = Field(..., ge=1, le=500)
-    max_score: float = Field(..., gt=0)
-    question_type: ExamQuestionType = ExamQuestionType.NONE
-    bloom_level: BloomLevel
-    difficulty: ExamDifficulty
-    question_text: str = Field(..., min_length=1, max_length=5000)
-    intent_text: str = Field(..., min_length=1, max_length=5000)
-    rubric_text: str | None = Field(None, max_length=12000)
-    answer_options: list[str] = Field(default_factory=list)
-    correct_answer_text: str | None = Field(None, max_length=2000)
-    source_material_ids: list[UUID] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_question_payload(self):
-        rubric_text = (self.rubric_text or "").strip()
-        correct_answer_text = (self.correct_answer_text or "").strip()
-        normalized_answer_options = [
-            option.strip() for option in self.answer_options if option.strip()
-        ]
-        if self.question_type is ExamQuestionType.ORAL and not rubric_text:
-            raise ValueError("구술형은 루브릭(rubric_text)을 입력해야 합니다.")
-        if (
-            self.question_type is ExamQuestionType.SUBJECTIVE
-            and not correct_answer_text
-        ):
-            raise ValueError(
-                "주관식은 정답(correct_answer_text)을 입력해야 합니다."
-            )
-        if self.question_type is not ExamQuestionType.MULTIPLE_CHOICE:
-            return self
-        if len(normalized_answer_options) < 2:
-            raise ValueError(
-                "객관식은 보기(answer_options)를 두 개 이상 입력해야 합니다."
-            )
-        if not correct_answer_text:
-            raise ValueError(
-                "객관식은 정답(correct_answer_text)을 입력해야 합니다."
-            )
-        if correct_answer_text not in normalized_answer_options:
-            raise ValueError(
-                "객관식 정답은 answer_options 중 하나와 정확히 일치해야 합니다."
-            )
         return self
 
 
@@ -160,9 +113,9 @@ class UpdateExamQuestionRequest(BaseRequest):
         return self
 
 
-class ExamQuestionBloomCountRequest(BaseRequest):
+class ExamQuestionBloomWeightRequest(BaseRequest):
     bloom_level: BloomLevel
-    count: int = Field(..., ge=1, le=MAX_BLOOM_LEVEL_QUESTION_COUNT)
+    weight: int = Field(..., ge=0, le=10)
 
 
 class ExamQuestionTypeCountRequest(BaseRequest):
@@ -179,46 +132,37 @@ class ExamQuestionTypeCountRequest(BaseRequest):
 class GenerateExamQuestionsRequest(BaseRequest):
     scope_text: str = Field(..., min_length=1, max_length=1000)
     max_follow_ups: int = Field(..., ge=0, le=20)
-    difficulty: ExamDifficulty
     source_material_ids: list[UUID] = Field(default_factory=list)
-    bloom_counts: list[ExamQuestionBloomCountRequest] = Field(
+    bloom_weights: list[ExamQuestionBloomWeightRequest] = Field(
         ..., min_length=1, max_length=6
     )
     question_type_counts: list[ExamQuestionTypeCountRequest] | None = Field(
         default=None, min_length=1, max_length=3
     )
-    total_question_count: int | None = Field(
-        default=None, ge=1, le=MAX_QUESTION_TYPE_QUESTION_COUNT
-    )
     question_type_strategy: ExamQuestionTypeStrategy | None = None
 
     @model_validator(mode="after")
     def validate_distribution_counts(self):
-        bloom_levels = [item.bloom_level for item in self.bloom_counts]
+        bloom_levels = [item.bloom_level for item in self.bloom_weights]
         if len(set(bloom_levels)) != len(bloom_levels):
             raise ValueError("Bloom 단계는 중복될 수 없습니다.")
+        if sum(item.weight for item in self.bloom_weights) <= 0:
+            raise ValueError(
+                "Bloom 단계별 가중치 중 하나 이상은 0보다 커야 합니다."
+            )
 
         has_legacy_counts = self.question_type_counts is not None
         has_strategy = self.question_type_strategy is not None
-        has_total_question_count = self.total_question_count is not None
 
-        if has_legacy_counts and (has_strategy or has_total_question_count):
+        if has_legacy_counts and has_strategy:
             raise ValueError(
-                "문제 유형별 개수와 문제 유형 전략/총 문항 수는 함께 "
-                "보낼 수 없습니다."
-            )
-        if has_strategy != has_total_question_count:
-            raise ValueError(
-                "문제 유형 전략과 총 문항 수는 함께 입력해야 합니다."
+                "문제 유형별 개수와 문제 유형 전략은 함께 보낼 수 없습니다."
             )
         if not has_legacy_counts and not has_strategy:
             raise ValueError(
-                "문제 유형별 개수 또는 문제 유형 전략/총 문항 수 중 "
-                "하나는 반드시 필요합니다."
+                "문제 유형별 개수 또는 문제 유형 전략 중 하나는 "
+                "반드시 필요합니다."
             )
-
-        bloom_total = sum(item.count for item in self.bloom_counts)
-
         if has_legacy_counts:
             assert self.question_type_counts is not None
             question_types = [
@@ -226,20 +170,6 @@ class GenerateExamQuestionsRequest(BaseRequest):
             ]
             if len(set(question_types)) != len(question_types):
                 raise ValueError("문제 유형은 중복될 수 없습니다.")
-            if bloom_total != sum(
-                item.count for item in self.question_type_counts
-            ):
-                raise ValueError(
-                    "Bloom 단계별 문항 수와 문제 유형별 문항 수의 "
-                    "총합이 같아야 합니다."
-                )
-            return self
-
-        assert self.total_question_count is not None
-        if bloom_total != self.total_question_count:
-            raise ValueError(
-                "Bloom 단계별 문항 수와 총 문항 수의 합이 같아야 합니다."
-            )
         return self
 
 

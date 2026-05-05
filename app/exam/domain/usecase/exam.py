@@ -6,7 +6,6 @@ from app.auth.domain.entity import CurrentUser
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
     CreateExamCommand,
-    CreateExamQuestionCommand,
     FinalizeExamResultCommand,
     GenerateExamFollowUpCommand,
     GenerateExamQuestionsCommand,
@@ -56,17 +55,6 @@ class ExamUseCase(ABC):
         """Get exam."""
 
     @abstractmethod
-    async def create_exam_question(
-        self,
-        *,
-        classroom_id: UUID,
-        exam_id: UUID,
-        current_user: CurrentUser,
-        command: CreateExamQuestionCommand,
-    ) -> ExamQuestion:
-        """Create exam question."""
-
-    @abstractmethod
     async def update_exam_question(
         self,
         *,
@@ -77,17 +65,6 @@ class ExamUseCase(ABC):
         command: UpdateExamQuestionCommand,
     ) -> ExamQuestion:
         """Update exam question."""
-
-    @abstractmethod
-    async def delete_exam_question(
-        self,
-        *,
-        classroom_id: UUID,
-        exam_id: UUID,
-        question_id: UUID,
-        current_user: CurrentUser,
-    ) -> ExamQuestion:
-        """Delete exam question."""
 
     @abstractmethod
     async def generate_exam_questions(

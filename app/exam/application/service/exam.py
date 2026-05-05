@@ -26,7 +26,6 @@ from app.exam.application.exception import (
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
     CreateExamCommand,
-    CreateExamQuestionCommand,
     FinalizeExamResultCommand,
     GenerateExamFollowUpCommand,
     GenerateExamQuestionsCommand,
@@ -67,13 +66,14 @@ from app.exam.domain.service import (
     ExamFollowUpGenerationRequest,
     ExamFollowUpGenerationTurn,
     ExamQuestionGenerationCriterion,
-    ExamQuestionGenerationLevelCount,
+    ExamQuestionGenerationLevelWeight,
     ExamQuestionGenerationPort,
     ExamQuestionGenerationSubmitResult,
     ExamQuestionGenerationTypeCount,
     ExamQuestionSourceMaterial,
     GenerateExamQuestionsRequest,
     RealtimeSessionPort,
+    allocate_bloom_weight_counts,
 )
 from app.exam.domain.usecase import ExamUseCase
 from app.user.domain.entity import UserRole
@@ -174,6 +174,8 @@ class ExamService(ExamUseCase):
             ends_at=command.ends_at,
             max_attempts=command.max_attempts,
             week=command.week,
+            question_count=command.question_count,
+            difficulty=command.difficulty,
             criteria=command.criteria,
         )
         await self.repository.save(exam)
@@ -354,41 +356,6 @@ class ExamService(ExamUseCase):
         return exam
 
     @transactional
-    async def create_exam_question(
-        self,
-        *,
-        classroom_id: UUID,
-        exam_id: UUID,
-        current_user: CurrentUser,
-        command: CreateExamQuestionCommand,
-    ) -> ExamQuestion:
-        exam = await self.get_exam(
-            classroom_id=classroom_id,
-            exam_id=exam_id,
-            current_user=current_user,
-        )
-        if current_user.role not in {UserRole.PROFESSOR, UserRole.ADMIN}:
-            raise AuthForbiddenException()
-        try:
-            question = exam.add_question(
-                question_number=command.question_number,
-                max_score=command.max_score,
-                question_type=command.question_type,
-                bloom_level=command.bloom_level,
-                difficulty=command.difficulty,
-                question_text=command.question_text,
-                intent_text=command.intent_text,
-                rubric_text=command.rubric_text,
-                answer_options=command.answer_options,
-                correct_answer_text=command.correct_answer_text,
-                source_material_ids=command.source_material_ids,
-            )
-        except ValueError as exc:
-            raise ExamQuestionInvalidPayloadException() from exc
-        await self.repository.save(exam)
-        return question
-
-    @transactional
     async def update_exam_question(
         self,
         *,
@@ -489,29 +456,6 @@ class ExamService(ExamUseCase):
         return question
 
     @transactional
-    async def delete_exam_question(
-        self,
-        *,
-        classroom_id: UUID,
-        exam_id: UUID,
-        question_id: UUID,
-        current_user: CurrentUser,
-    ) -> ExamQuestion:
-        exam = await self.get_exam(
-            classroom_id=classroom_id,
-            exam_id=exam_id,
-            current_user=current_user,
-        )
-        if current_user.role not in {UserRole.PROFESSOR, UserRole.ADMIN}:
-            raise AuthForbiddenException()
-        try:
-            question = exam.delete_question(question_id)
-        except ExamQuestionNotFoundDomainException as exc:
-            raise ExamQuestionNotFoundException() from exc
-        await self.repository.save(exam)
-        return question
-
-    @transactional
     async def generate_exam_questions(
         self,
         *,
@@ -583,20 +527,35 @@ class ExamService(ExamUseCase):
                 for material_id in command.source_material_ids
             ]
 
-        question_type_counts = (
-            [
+        total_question_count = exam.question_count
+        if command.question_type_counts is not None:
+            if (
+                sum(item.count for item in command.question_type_counts)
+                != total_question_count
+            ):
+                raise ExamQuestionInvalidPayloadException()
+            question_type_counts = [
                 ExamQuestionGenerationTypeCount(
                     question_type=item.question_type,
                     count=item.count,
                 )
                 for item in command.question_type_counts
             ]
-            if command.question_type_counts is not None
-            else self._normalize_question_type_counts(
-                total_question_count=command.total_question_count or 0,
+        else:
+            question_type_counts = self._normalize_question_type_counts(
+                total_question_count=total_question_count,
                 strategy=command.question_type_strategy
                 or ExamQuestionTypeStrategy.BALANCED,
             )
+        bloom_counts = allocate_bloom_weight_counts(
+            total_question_count=total_question_count,
+            weights=[
+                ExamQuestionGenerationLevelWeight(
+                    bloom_level=item.bloom_level,
+                    weight=item.weight,
+                )
+                for item in command.bloom_weights
+            ],
         )
 
         generation_request = GenerateExamQuestionsRequest(
@@ -606,7 +565,7 @@ class ExamService(ExamUseCase):
             exam_type=exam.exam_type,
             scope_text=command.scope_text,
             max_follow_ups=command.max_follow_ups,
-            difficulty=command.difficulty,
+            difficulty=exam.difficulty,
             criteria=[
                 ExamQuestionGenerationCriterion(
                     title=criterion.title,
@@ -618,13 +577,7 @@ class ExamService(ExamUseCase):
                 )
                 for criterion in exam.criteria
             ],
-            bloom_counts=[
-                ExamQuestionGenerationLevelCount(
-                    bloom_level=item.bloom_level,
-                    count=item.count,
-                )
-                for item in command.bloom_counts
-            ],
+            bloom_counts=bloom_counts,
             question_type_counts=question_type_counts,
             source_materials=source_materials,
         )
@@ -649,7 +602,7 @@ class ExamService(ExamUseCase):
                             "bloom_level": item.bloom_level.value,
                             "count": item.count,
                         }
-                        for item in command.bloom_counts
+                        for item in bloom_counts
                     ],
                     "question_type_counts": [
                         {

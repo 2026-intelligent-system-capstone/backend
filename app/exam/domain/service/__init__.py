@@ -17,12 +17,14 @@ from app.exam.domain.service.follow_up import (
 from app.exam.domain.service.generator import (
     ExamQuestionGenerationCriterion,
     ExamQuestionGenerationLevelCount,
+    ExamQuestionGenerationLevelWeight,
     ExamQuestionGenerationPort,
     ExamQuestionGenerationSubmitResult,
     ExamQuestionGenerationTypeCount,
     ExamQuestionSourceMaterial,
     GeneratedExamQuestionDraft,
     GenerateExamQuestionsRequest,
+    allocate_bloom_weight_counts,
 )
 from app.exam.domain.service.realtime import RealtimeSessionPort
 
@@ -42,10 +44,12 @@ __all__ = [
     "ExamQuestionGenerationCriterion",
     "ExamQuestionGenerationPort",
     "ExamQuestionGenerationLevelCount",
+    "ExamQuestionGenerationLevelWeight",
     "ExamQuestionGenerationSubmitResult",
     "ExamQuestionGenerationTypeCount",
     "ExamQuestionSourceMaterial",
     "GenerateExamQuestionsRequest",
     "GeneratedExamQuestionDraft",
     "RealtimeSessionPort",
+    "allocate_bloom_weight_counts",
 ]
