@@ -130,6 +130,8 @@ class ExamQuestionStatus(StrEnum):
 
 
 EXAM_GENERATION_ERROR_MAX_LENGTH = 1000
+MIN_EXAM_QUESTION_COUNT = 1
+MAX_EXAM_QUESTION_COUNT = 30
 
 
 class ExamSessionStatus(StrEnum):
@@ -295,6 +297,8 @@ class Exam(AggregateRoot):
     ends_at: datetime
     max_attempts: int
     week: int
+    question_count: int = 1
+    difficulty: ExamDifficulty = ExamDifficulty.MEDIUM
     max_follow_ups: int = 2
     description: str | None = None
     status: ExamStatus = ExamStatus.READY
@@ -320,6 +324,8 @@ class Exam(AggregateRoot):
         max_attempts: int,
         week: int,
         criteria: Sequence[ExamCriterion],
+        question_count: int = 1,
+        difficulty: ExamDifficulty = ExamDifficulty.MEDIUM,
         max_follow_ups: int = 2,
     ) -> Exam:
         if week < 1:
@@ -330,6 +336,10 @@ class Exam(AggregateRoot):
             raise ExamInvalidMaxAttemptsDomainException(
                 message="max_attempts must be greater than or equal to 1"
             )
+        if not (
+            MIN_EXAM_QUESTION_COUNT <= question_count <= MAX_EXAM_QUESTION_COUNT
+        ):
+            raise ValueError("question_count must be between 1 and 30")
         exam = cls(
             classroom_id=classroom_id,
             title=title,
@@ -341,6 +351,8 @@ class Exam(AggregateRoot):
             ends_at=ends_at,
             max_attempts=max_attempts,
             week=week,
+            question_count=question_count,
+            difficulty=difficulty,
             max_follow_ups=max_follow_ups,
         )
         exam.set_max_follow_ups(max_follow_ups)

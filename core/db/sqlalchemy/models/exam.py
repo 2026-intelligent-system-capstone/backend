@@ -107,6 +107,21 @@ exam_table = BaseTable(
     ),
     Column("duration_minutes", Integer, nullable=False),
     Column("week", Integer, nullable=False),
+    Column("question_count", Integer, nullable=False, default=1),
+    Column(
+        "difficulty",
+        Enum(
+            ExamDifficulty,
+            native_enum=False,
+            values_callable=lambda enum_cls: [
+                member.value for member in enum_cls
+            ],
+            validate_strings=True,
+            length=50,
+        ),
+        nullable=False,
+        default=ExamDifficulty.MEDIUM.value,
+    ),
     Column("starts_at", DateTime(timezone=True), nullable=False),
     Column("ends_at", DateTime(timezone=True), nullable=False),
     Column("max_attempts", Integer, nullable=False, default=1),
@@ -132,6 +147,10 @@ exam_table = BaseTable(
     CheckConstraint(
         "max_follow_ups >= 0",
         name="ck_t_exam_max_follow_ups_non_negative",
+    ),
+    CheckConstraint(
+        "question_count BETWEEN 1 AND 30",
+        name="ck_t_exam_question_count_range",
     ),
 )
 

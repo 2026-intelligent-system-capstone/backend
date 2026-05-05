@@ -1,10 +1,34 @@
+import uuid
+from contextvars import ContextVar
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import delete, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_scoped_session,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.sql.sqltypes import Enum as SQLAlchemyEnum
 
+import core.db.sqlalchemy as sqlalchemy_mapping
+from app.classroom.adapter.output.persistence.sqlalchemy import (
+    classroom as classroom_repo,
+)
+from app.classroom.adapter.output.persistence.sqlalchemy.classroom import (
+    ClassroomSQLAlchemyRepository,
+)
+from app.classroom.domain.entity import Classroom
+from app.exam.adapter.output.persistence.sqlalchemy import exam as exam_repo
+from app.exam.adapter.output.persistence.sqlalchemy.exam import (
+    ExamSQLAlchemyRepository,
+)
 from app.exam.domain.entity import (
     BloomLevel,
+    Exam,
     ExamDifficulty,
     ExamQuestion,
     ExamQuestionStatus,
@@ -16,7 +40,25 @@ from app.exam.domain.entity import (
     ExamTurnRole,
     ExamType,
 )
+from app.organization.adapter.output.persistence.sqlalchemy import (
+    OrganizationSQLAlchemyRepository,
+)
+from app.organization.adapter.output.persistence.sqlalchemy import (
+    organization as organization_repo,
+)
+from app.organization.domain.entity import (
+    Organization,
+    OrganizationAuthProvider,
+)
+from app.user.adapter.output.persistence.sqlalchemy import user as user_repo
+from app.user.adapter.output.persistence.sqlalchemy.user import (
+    UserSQLAlchemyRepository,
+)
+from app.user.domain.entity import User, UserRole
+from core.config import config
+from core.db.sqlalchemy.models.classroom import classroom_table
 from core.db.sqlalchemy.models.exam import (
+    exam_criterion_table,
     exam_question_table,
     exam_result_criterion_table,
     exam_result_table,
@@ -24,6 +66,153 @@ from core.db.sqlalchemy.models.exam import (
     exam_table,
     exam_turn_table,
 )
+from core.db.sqlalchemy.models.organization import organization_table
+from core.db.sqlalchemy.models.user import user_table
+
+sqlalchemy_mapping.init_orm_mappers()
+
+ORG_ID = UUID("11111111-1111-1111-1111-111111111111")
+CLASSROOM_ID = UUID("22222222-2222-2222-2222-222222222222")
+PROFESSOR_ID = UUID("44444444-4444-4444-4444-444444444444")
+NOW = datetime.now(UTC)
+STARTS_AT = NOW - timedelta(minutes=5)
+ENDS_AT = NOW + timedelta(hours=1)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def setup_db():
+    engine = create_async_engine(config.DATABASE_URL)
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata_drop_exam_repository_tables)
+        await conn.run_sync(organization_table.create)
+        await conn.run_sync(user_table.create)
+        await conn.run_sync(classroom_table.create)
+        await conn.run_sync(exam_table.create)
+        await conn.run_sync(exam_criterion_table.create)
+        await conn.run_sync(exam_question_table.create)
+    yield
+    async with engine.begin() as conn:
+        await conn.execute(delete(exam_criterion_table))
+        await conn.execute(delete(exam_table))
+        await conn.execute(delete(classroom_table))
+        await conn.execute(delete(user_table))
+        await conn.execute(delete(organization_table))
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def db_session():
+    session_context = ContextVar[str]("test_session_context", default="global")
+
+    def get_context() -> str:
+        return session_context.get()
+
+    engine = create_async_engine(config.DATABASE_URL)
+    factory = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    scoped_session = async_scoped_session(factory, scopefunc=get_context)
+    original_sessions = (
+        organization_repo.session,
+        user_repo.session,
+        classroom_repo.session,
+        exam_repo.session,
+    )
+    organization_repo.session = scoped_session
+    user_repo.session = scoped_session
+    classroom_repo.session = scoped_session
+    exam_repo.session = scoped_session
+
+    token = session_context.set(str(uuid.uuid4()))
+    current_session = scoped_session()
+    try:
+        yield current_session
+        await current_session.rollback()
+    finally:
+        (
+            organization_repo.session,
+            user_repo.session,
+            classroom_repo.session,
+            exam_repo.session,
+        ) = original_sessions
+        await scoped_session.remove()
+        await engine.dispose()
+        session_context.reset(token)
+
+
+def metadata_drop_exam_repository_tables(connection):
+    for table_name in (
+        "t_exam_turn",
+        "t_exam_result_criterion",
+        "t_exam_result",
+        "t_exam_session",
+        "t_exam_question",
+        "t_exam_criterion",
+        "t_exam",
+        "t_classroom",
+        "t_user",
+        "t_organization",
+    ):
+        connection.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
+
+
+async def seed_exam_context(db_session: AsyncSession) -> None:
+    organization = Organization(
+        code="univ_hansung",
+        name="한성대학교",
+        auth_provider=OrganizationAuthProvider.HANSUNG_SIS,
+    )
+    organization.id = ORG_ID
+    await OrganizationSQLAlchemyRepository().save(organization)
+    await db_session.flush()
+
+    professor = User(
+        organization_id=ORG_ID,
+        login_id="professor01",
+        role=UserRole.PROFESSOR,
+        email="professor@example.com",
+        name="교수",
+    )
+    professor.id = PROFESSOR_ID
+    await UserSQLAlchemyRepository().save(professor)
+    await db_session.flush()
+
+    classroom = Classroom(
+        organization_id=ORG_ID,
+        name="AI 기초",
+        professor_ids=[PROFESSOR_ID],
+        grade=4,
+        semester="1",
+        section="01",
+        description="캡스톤 시험 수업",
+        student_ids=[],
+    )
+    classroom.id = CLASSROOM_ID
+    await ClassroomSQLAlchemyRepository().save(classroom)
+    await db_session.flush()
+
+
+def make_exam(
+    *,
+    question_count: int,
+    difficulty: ExamDifficulty,
+) -> Exam:
+    return Exam.create(
+        classroom_id=CLASSROOM_ID,
+        title="중간 평가",
+        description="1주차 범위 평가",
+        exam_type=ExamType.MIDTERM,
+        duration_minutes=60,
+        starts_at=STARTS_AT,
+        ends_at=ENDS_AT,
+        max_attempts=1,
+        week=1,
+        criteria=[],
+        question_count=question_count,
+        difficulty=difficulty,
+    )
 
 
 def assert_enum_column(column, enum_class):
@@ -34,9 +223,27 @@ def assert_enum_column(column, enum_class):
     assert column.type.enums == [member.value for member in enum_class]
 
 
+@pytest.mark.asyncio
+async def test_exam_repository_round_trips_question_count_and_difficulty(
+    db_session,
+):
+    await seed_exam_context(db_session)
+    exam = make_exam(question_count=12, difficulty=ExamDifficulty.HARD)
+
+    await ExamSQLAlchemyRepository().save(exam)
+    await db_session.commit()
+    db_session.expunge_all()
+    loaded = await ExamSQLAlchemyRepository().get_by_id(exam.id)
+
+    assert loaded is not None
+    assert loaded.question_count == 12
+    assert loaded.difficulty is ExamDifficulty.HARD
+
+
 def test_exam_table_uses_sqlalchemy_enum_columns():
     assert_enum_column(exam_table.c.exam_type, ExamType)
     assert_enum_column(exam_table.c.status, ExamStatus)
+    assert_enum_column(exam_table.c.difficulty, ExamDifficulty)
 
 
 def test_exam_table_contains_non_nullable_week_column():
@@ -47,6 +254,23 @@ def test_exam_table_contains_non_nullable_max_attempts_column():
     assert exam_table.c.max_attempts.nullable is False
     assert exam_table.c.max_attempts.default is not None
     assert exam_table.c.max_attempts.default.arg == 1
+
+
+def test_exam_table_contains_question_count_column_and_range_constraint():
+    assert exam_table.c.question_count.nullable is False
+    assert exam_table.c.question_count.default is not None
+    assert exam_table.c.question_count.default.arg == 1
+    check_constraints = [
+        constraint
+        for constraint in exam_table.constraints
+        if constraint.__class__.__name__ == "CheckConstraint"
+    ]
+
+    assert any(
+        constraint.name == "ck_t_exam_question_count_range"
+        and str(constraint.sqltext) == "question_count BETWEEN 1 AND 30"
+        for constraint in check_constraints
+    )
 
 
 def test_exam_question_table_uses_sqlalchemy_enum_columns():
