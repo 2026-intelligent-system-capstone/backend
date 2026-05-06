@@ -231,6 +231,7 @@ class ExamQuestion(Entity):
 
     def __post_init__(self) -> None:
         self._validate_max_score()
+        self._ensure_structured_answer_defaults()
         self._normalize_answer_fields()
 
     def belongs_to_exam(self, exam_id: UUID) -> bool:
@@ -254,6 +255,7 @@ class ExamQuestion(Entity):
         rubric_data: ExamQuestionRubric | None = None,
         source_material_ids: Sequence[UUID] | None = None,
     ) -> None:
+        self._ensure_structured_answer_defaults()
         previous_question_type = self.question_type
         next_question_type = question_type or self.question_type
         snapshot = {
@@ -328,6 +330,14 @@ class ExamQuestion(Entity):
         if self.max_score <= 0:
             raise ValueError("max_score must be greater than 0")
 
+    def _ensure_structured_answer_defaults(self) -> None:
+        if not hasattr(self, "answer_options_data"):
+            self.answer_options_data = []
+        if not hasattr(self, "answer_key_data"):
+            self.answer_key_data = None
+        if not hasattr(self, "rubric_data"):
+            self.rubric_data = ExamQuestionRubric()
+
     def _normalize_answer_fields(self) -> None:
         normalized_options = [
             str(option).strip()
@@ -363,6 +373,7 @@ class ExamQuestion(Entity):
             self._validate_structured_oral_answer()
 
     def _normalize_structured_answer_fields(self) -> None:
+        self._ensure_structured_answer_defaults()
         self.answer_options_data = [
             ExamQuestionAnswerOption(
                 id=str(option.id).strip(),

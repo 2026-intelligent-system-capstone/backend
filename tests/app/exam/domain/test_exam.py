@@ -11,6 +11,7 @@ from app.exam.domain.entity import (
     ExamQuestionAnswerOption,
     ExamQuestionRubric,
     ExamQuestionRubricCriterion,
+    ExamQuestionStatus,
     ExamQuestionType,
     ExamType,
 )
@@ -100,6 +101,20 @@ def test_multiple_choice_accepts_structured_options_and_key_by_id():
     assert question.answer_options_data[0].id == "option-a"
     assert question.answer_key_data is not None
     assert question.answer_key_data.correct_option_ids == ["option-a"]
+
+
+def test_revise_restores_missing_structured_defaults_for_orm_loaded_question():
+    question = _question()
+    delattr(question, "answer_options_data")  # noqa: B043
+    delattr(question, "answer_key_data")  # noqa: B043
+    delattr(question, "rubric_data")  # noqa: B043
+
+    question.revise(question_text="수정된 질문")
+
+    assert question.answer_options_data == []
+    assert question.answer_key_data is None
+    assert question.rubric_data == ExamQuestionRubric()
+    assert question.status is ExamQuestionStatus.REVIEWED
 
 
 def test_revise_multiple_choice_replaces_structured_options_and_key():
