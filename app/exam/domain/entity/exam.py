@@ -176,6 +176,39 @@ class ExamCriterion(Entity):
 
 
 @dataclass
+class ExamQuestionAnswerOption:
+    id: str
+    label: str
+    text: str
+    is_correct: bool = False
+    explanation: str | None = None
+
+
+@dataclass
+class ExamQuestionRubricCriterion:
+    name: str
+    description: str
+    points: float
+
+
+@dataclass
+class ExamQuestionAnswerKey:
+    type: ExamQuestionType
+    correct_option_ids: list[str] = field(default_factory=list)
+    model_answer: str | None = None
+    acceptable_answers: list[str] = field(default_factory=list)
+    required_keywords: list[str] = field(default_factory=list)
+    expected_points: list[str] = field(default_factory=list)
+    follow_up_questions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ExamQuestionRubric:
+    criteria: list[ExamQuestionRubricCriterion] = field(default_factory=list)
+    evidence_policy: str | None = None
+
+
+@dataclass
 class ExamQuestion(Entity):
     exam_id: UUID
     question_number: int
@@ -188,6 +221,11 @@ class ExamQuestion(Entity):
     rubric_text: str = ""
     answer_options: list[str] = field(default_factory=list)
     correct_answer_text: str | None = None
+    answer_options_data: list[ExamQuestionAnswerOption] = field(
+        default_factory=list
+    )
+    answer_key_data: ExamQuestionAnswerKey | None = None
+    rubric_data: ExamQuestionRubric = field(default_factory=ExamQuestionRubric)
     source_material_ids: list[UUID] = field(default_factory=list)
     status: ExamQuestionStatus = ExamQuestionStatus.GENERATED
 
@@ -211,46 +249,77 @@ class ExamQuestion(Entity):
         rubric_text: str | None = None,
         answer_options: Sequence[str] | None = None,
         correct_answer_text: str | None = None,
+        answer_options_data: Sequence[ExamQuestionAnswerOption] | None = None,
+        answer_key_data: ExamQuestionAnswerKey | None = None,
+        rubric_data: ExamQuestionRubric | None = None,
         source_material_ids: Sequence[UUID] | None = None,
     ) -> None:
         previous_question_type = self.question_type
         next_question_type = question_type or self.question_type
+        snapshot = {
+            "question_number": self.question_number,
+            "max_score": self.max_score,
+            "question_type": self.question_type,
+            "bloom_level": self.bloom_level,
+            "difficulty": self.difficulty,
+            "question_text": self.question_text,
+            "intent_text": self.intent_text,
+            "rubric_text": self.rubric_text,
+            "answer_options": self.answer_options,
+            "correct_answer_text": self.correct_answer_text,
+            "answer_options_data": self.answer_options_data,
+            "answer_key_data": self.answer_key_data,
+            "rubric_data": self.rubric_data,
+            "source_material_ids": self.source_material_ids,
+            "status": self.status,
+        }
 
-        if question_number is not None:
-            self.question_number = question_number
-        if max_score is not None:
-            self.max_score = max_score
-        if question_type is not None:
-            self.question_type = question_type
-        if bloom_level is not None:
-            self.bloom_level = bloom_level
-        if difficulty is not None:
-            self.difficulty = difficulty
-        if question_text is not None:
-            self.question_text = question_text
-        if intent_text is not None:
-            self.intent_text = intent_text
-        if rubric_text is not None:
-            self.rubric_text = rubric_text
-        if answer_options is not None:
-            self.answer_options = list(answer_options)
-        if (
-            correct_answer_text is not None
-            or next_question_type is ExamQuestionType.ORAL
-        ):
-            self.correct_answer_text = correct_answer_text
-        elif (
-            question_type is not None
-            and previous_question_type is ExamQuestionType.MULTIPLE_CHOICE
-            and next_question_type is not ExamQuestionType.MULTIPLE_CHOICE
-        ):
-            self.correct_answer_text = None
-        if source_material_ids is not None:
-            self.source_material_ids = list(source_material_ids)
-        self._validate_max_score()
-        self._normalize_answer_fields()
-        if self.status is not ExamQuestionStatus.DELETED:
-            self.status = ExamQuestionStatus.REVIEWED
+        try:
+            if question_number is not None:
+                self.question_number = question_number
+            if max_score is not None:
+                self.max_score = max_score
+            if question_type is not None:
+                self.question_type = question_type
+            if bloom_level is not None:
+                self.bloom_level = bloom_level
+            if difficulty is not None:
+                self.difficulty = difficulty
+            if question_text is not None:
+                self.question_text = question_text
+            if intent_text is not None:
+                self.intent_text = intent_text
+            if rubric_text is not None:
+                self.rubric_text = rubric_text
+            if answer_options is not None:
+                self.answer_options = list(answer_options)
+            if (
+                correct_answer_text is not None
+                or next_question_type is ExamQuestionType.ORAL
+            ):
+                self.correct_answer_text = correct_answer_text
+            elif (
+                question_type is not None
+                and previous_question_type is ExamQuestionType.MULTIPLE_CHOICE
+                and next_question_type is not ExamQuestionType.MULTIPLE_CHOICE
+            ):
+                self.correct_answer_text = None
+            if answer_options_data is not None:
+                self.answer_options_data = list(answer_options_data)
+            if answer_key_data is not None:
+                self.answer_key_data = answer_key_data
+            if rubric_data is not None:
+                self.rubric_data = rubric_data
+            if source_material_ids is not None:
+                self.source_material_ids = list(source_material_ids)
+            self._validate_max_score()
+            self._normalize_answer_fields()
+            if self.status is not ExamQuestionStatus.DELETED:
+                self.status = ExamQuestionStatus.REVIEWED
+        except ValueError:
+            for field_name, value in snapshot.items():
+                setattr(self, field_name, value)
+            raise
 
     def delete(self) -> None:
         self.status = ExamQuestionStatus.DELETED
@@ -272,7 +341,11 @@ class ExamQuestion(Entity):
             and self.correct_answer_text.strip()
             else None
         )
+        self._normalize_structured_answer_fields()
         if self.question_type is ExamQuestionType.MULTIPLE_CHOICE:
+            if self.answer_options_data:
+                self._validate_structured_multiple_choice_answer()
+                return
             if self.answer_options and (
                 self.correct_answer_text is None
                 or self.correct_answer_text not in self.answer_options
@@ -283,8 +356,150 @@ class ExamQuestion(Entity):
                 )
             return
         self.answer_options = []
+        if self.question_type is ExamQuestionType.SUBJECTIVE:
+            self._validate_structured_subjective_answer()
         if self.question_type is ExamQuestionType.ORAL:
             self.correct_answer_text = None
+            self._validate_structured_oral_answer()
+
+    def _normalize_structured_answer_fields(self) -> None:
+        self.answer_options_data = [
+            ExamQuestionAnswerOption(
+                id=str(option.id).strip(),
+                label=str(option.label).strip(),
+                text=str(option.text).strip(),
+                is_correct=option.is_correct,
+                explanation=(
+                    option.explanation.strip()
+                    if isinstance(option.explanation, str)
+                    and option.explanation.strip()
+                    else None
+                ),
+            )
+            for option in self.answer_options_data
+        ]
+        self.rubric_data = ExamQuestionRubric(
+            criteria=[
+                ExamQuestionRubricCriterion(
+                    name=str(criterion.name).strip(),
+                    description=str(criterion.description).strip(),
+                    points=criterion.points,
+                )
+                for criterion in self.rubric_data.criteria
+            ],
+            evidence_policy=(
+                self.rubric_data.evidence_policy.strip()
+                if isinstance(self.rubric_data.evidence_policy, str)
+                and self.rubric_data.evidence_policy.strip()
+                else None
+            ),
+        )
+        self._validate_structured_rubric()
+        if self.answer_key_data is None:
+            return
+        self.answer_key_data = ExamQuestionAnswerKey(
+            type=self.answer_key_data.type,
+            correct_option_ids=self._normalize_text_list(
+                self.answer_key_data.correct_option_ids
+            ),
+            model_answer=(
+                self.answer_key_data.model_answer.strip()
+                if isinstance(self.answer_key_data.model_answer, str)
+                and self.answer_key_data.model_answer.strip()
+                else None
+            ),
+            acceptable_answers=self._normalize_text_list(
+                self.answer_key_data.acceptable_answers
+            ),
+            required_keywords=self._normalize_text_list(
+                self.answer_key_data.required_keywords
+            ),
+            expected_points=self._normalize_text_list(
+                self.answer_key_data.expected_points
+            ),
+            follow_up_questions=self._normalize_text_list(
+                self.answer_key_data.follow_up_questions
+            ),
+        )
+
+    @staticmethod
+    def _normalize_text_list(values: Sequence[str]) -> list[str]:
+        return [str(value).strip() for value in values if str(value).strip()]
+
+    def _validate_structured_multiple_choice_answer(self) -> None:
+        if not self.answer_options_data:
+            raise ValueError("multiple_choice answer_options_data is required")
+        option_ids = [option.id for option in self.answer_options_data]
+        if any(not option_id for option_id in option_ids):
+            raise ValueError("option id must not be empty")
+        if any(not option.label for option in self.answer_options_data):
+            raise ValueError("option label must not be empty")
+        if any(not option.text for option in self.answer_options_data):
+            raise ValueError("option text must not be empty")
+        if len(set(option_ids)) != len(option_ids):
+            raise ValueError("option id must be unique")
+        correct_options = [
+            option for option in self.answer_options_data if option.is_correct
+        ]
+        if len(correct_options) != 1:
+            raise ValueError(
+                "multiple_choice requires exactly one correct answer option"
+            )
+        if self.answer_key_data is None:
+            raise ValueError("multiple_choice answer_key_data is required")
+        if self.answer_key_data.type is not ExamQuestionType.MULTIPLE_CHOICE:
+            raise ValueError("answer_key_data.type must be multiple_choice")
+        if len(self.answer_key_data.correct_option_ids) != 1:
+            raise ValueError(
+                "multiple_choice correct_option_ids must contain exactly one id"
+            )
+        correct_option_id = self.answer_key_data.correct_option_ids[0]
+        if correct_option_id not in option_ids:
+            raise ValueError(
+                "correct_option_ids must reference existing answer_options_data"
+            )
+        if correct_option_id != correct_options[0].id:
+            raise ValueError(
+                "correct_option_ids must match the correct answer option"
+            )
+
+    def _validate_structured_rubric(self) -> None:
+        for criterion in self.rubric_data.criteria:
+            if not criterion.name:
+                raise ValueError("rubric criterion name must not be empty")
+            if not criterion.description:
+                raise ValueError(
+                    "rubric criterion description must not be empty"
+                )
+            if criterion.points <= 0:
+                raise ValueError(
+                    "rubric criterion points must be greater than 0"
+                )
+
+    def _validate_structured_subjective_answer(self) -> None:
+        if self.answer_options_data:
+            raise ValueError("subjective answer_options_data must be empty")
+        if self.answer_key_data is None:
+            return
+        if self.answer_key_data.type is not ExamQuestionType.SUBJECTIVE:
+            raise ValueError("answer_key_data.type must be subjective")
+        if self.answer_key_data.model_answer is None:
+            raise ValueError("subjective model_answer is required")
+
+    def _validate_structured_oral_answer(self) -> None:
+        if self.answer_options_data:
+            raise ValueError("oral answer_options_data must be empty")
+        if self.answer_key_data is None:
+            return
+        if self.answer_key_data.type is not ExamQuestionType.ORAL:
+            raise ValueError("answer_key_data.type must be oral")
+        if (
+            not self.answer_key_data.expected_points
+            and not self.rubric_data.criteria
+        ):
+            raise ValueError(
+                "oral questions require expected_points or rubric criteria"
+            )
 
 
 @dataclass
