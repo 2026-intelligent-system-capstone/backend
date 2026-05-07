@@ -428,6 +428,9 @@ class AsyncJobWorker:
                 rubric_text=draft.rubric_text,
                 answer_options=draft.answer_options,
                 correct_answer_text=draft.correct_answer_text,
+                answer_options_data=draft.answer_options_data,
+                answer_key_data=draft.answer_key_data,
+                rubric_data=draft.rubric_data,
                 source_material_ids=draft.source_material_ids,
             )
         exam.mark_generation_completed(completed_at=datetime.now(UTC))
@@ -729,6 +732,7 @@ class AsyncJobWorker:
             ],
             questions=[
                 ExamResultEvaluationQuestion(
+                    question_id=question.id,
                     question_number=question.question_number,
                     max_score=question.max_score,
                     question_type=question.question_type,
@@ -738,6 +742,9 @@ class AsyncJobWorker:
                     rubric_text=question.rubric_text,
                     answer_options=list(question.answer_options),
                     correct_answer_text=question.correct_answer_text,
+                    answer_options_data=list(question.answer_options_data),
+                    answer_key_data=question.answer_key_data,
+                    rubric_data=question.rubric_data,
                 )
                 for question in exam.questions
             ],
@@ -928,16 +935,14 @@ class AsyncJobWorker:
         objective_questions = [
             question
             for question in request.questions
-            if question.question_type
-            in (
-                ExamQuestionType.MULTIPLE_CHOICE,
-                ExamQuestionType.SUBJECTIVE,
-            )
+            if question.question_type is ExamQuestionType.MULTIPLE_CHOICE
+            or self._is_plain_subjective_question(question)
         ]
-        oral_questions = [
+        rubric_questions = [
             question
             for question in request.questions
             if question.question_type is ExamQuestionType.ORAL
+            or self._is_structured_subjective_question(question)
         ]
 
         objective_result = self._build_objective_quantitative_result(
@@ -945,30 +950,53 @@ class AsyncJobWorker:
             objective_questions=objective_questions,
         )
 
-        if not oral_questions:
+        if not rubric_questions:
             return objective_result
 
         if self.result_evaluation_port is None:
             raise ValueError("구술형 자동 평가 기능을 현재 사용할 수 없습니다.")
 
-        oral_request = EvaluateExamResultRequest(
+        rubric_request = EvaluateExamResultRequest(
             exam_id=request.exam_id,
             session_id=request.session_id,
             student_id=request.student_id,
             exam_title=request.exam_title,
             exam_type=request.exam_type,
             criteria=request.criteria,
-            questions=oral_questions,
+            questions=rubric_questions,
             turns=request.turns,
         )
-        oral_result = await self.result_evaluation_port.evaluate_result(
-            request=oral_request
+        rubric_result = await self.result_evaluation_port.evaluate_result(
+            request=rubric_request
         )
         return self._merge_exam_evaluation_results(
             objective_result=objective_result,
-            oral_result=oral_result,
+            rubric_result=rubric_result,
             objective_question_count=len(objective_questions),
-            oral_question_count=len(oral_questions),
+            rubric_question_count=len(rubric_questions),
+        )
+
+    def _is_plain_subjective_question(
+        self, question: ExamResultEvaluationQuestion
+    ) -> bool:
+        return (
+            question.question_type is ExamQuestionType.SUBJECTIVE
+            and not self._is_structured_subjective_question(question)
+        )
+
+    def _is_structured_subjective_question(
+        self, question: ExamResultEvaluationQuestion
+    ) -> bool:
+        if question.question_type is not ExamQuestionType.SUBJECTIVE:
+            return False
+        if question.rubric_data.criteria:
+            return True
+        answer_key = question.answer_key_data
+        return answer_key is not None and (
+            bool(answer_key.acceptable_answers)
+            or bool(answer_key.required_keywords)
+            or bool(answer_key.expected_points)
+            or bool(answer_key.follow_up_questions)
         )
 
     def _build_objective_quantitative_result(
@@ -988,17 +1016,33 @@ class AsyncJobWorker:
                 criteria_results=[],
             )
 
-        answer_turns = self._map_answer_turns_by_question_number(request.turns)
+        answer_turns_by_question_id = self._map_answer_turns_by_question_id(
+            request.turns
+        )
+        answer_turns_by_question_number = (
+            self._map_answer_turns_by_question_number(request.turns)
+        )
         matched_count = 0
         total_questions = len(objective_questions)
         for question in objective_questions:
-            turn = answer_turns.get(question.question_number)
+            turn = answer_turns_by_question_id.get(question.question_id)
+            if turn is None:
+                turn = answer_turns_by_question_number.get(
+                    question.question_number
+                )
             if turn is None:
                 continue
-            if self._is_exact_answer_match(
-                expected=question.correct_answer_text,
-                actual=turn.content,
-            ):
+            if question.question_type is ExamQuestionType.MULTIPLE_CHOICE:
+                is_matched = self._is_multiple_choice_answer_match(
+                    question=question,
+                    turn=turn,
+                )
+            else:
+                is_matched = self._is_exact_answer_match(
+                    expected=question.correct_answer_text,
+                    actual=turn.content,
+                )
+            if is_matched:
                 matched_count += 1
 
         quantitative_score = (matched_count / total_questions) * 100.0
@@ -1048,46 +1092,46 @@ class AsyncJobWorker:
         self,
         *,
         objective_result: EvaluateExamResult,
-        oral_result: EvaluateExamResult,
+        rubric_result: EvaluateExamResult,
         objective_question_count: int,
-        oral_question_count: int,
+        rubric_question_count: int,
     ) -> EvaluateExamResult:
         objective_scores = {
             item.criterion_id: item
             for item in objective_result.criteria_results
         }
-        oral_scores = {
-            item.criterion_id: item for item in oral_result.criteria_results
+        rubric_scores = {
+            item.criterion_id: item for item in rubric_result.criteria_results
         }
         merged_criteria_results: list[ExamResultEvaluationCriterionScore] = []
-        total_question_count = objective_question_count + oral_question_count
+        total_question_count = objective_question_count + rubric_question_count
         criterion_ids = list(objective_scores)
-        for criterion_id in oral_scores:
+        for criterion_id in rubric_scores:
             if criterion_id not in objective_scores:
                 criterion_ids.append(criterion_id)
 
         for criterion_id in criterion_ids:
             objective_item = objective_scores.get(criterion_id)
-            oral_item = oral_scores.get(criterion_id)
-            if objective_item is None and oral_item is not None:
-                merged_criteria_results.append(oral_item)
+            rubric_item = rubric_scores.get(criterion_id)
+            if objective_item is None and rubric_item is not None:
+                merged_criteria_results.append(rubric_item)
                 continue
-            if oral_item is None and objective_item is not None:
+            if rubric_item is None and objective_item is not None:
                 merged_criteria_results.append(objective_item)
                 continue
-            if objective_item is None or oral_item is None:
+            if objective_item is None or rubric_item is None:
                 continue
             if objective_question_count == 0 or total_question_count == 0:
-                score = oral_item.score
-                feedback = oral_item.feedback
+                score = rubric_item.score
+                feedback = rubric_item.feedback
             else:
                 score = (
                     (objective_item.score * objective_question_count)
-                    + (oral_item.score * oral_question_count)
+                    + (rubric_item.score * rubric_question_count)
                 ) / total_question_count
                 feedback = (
                     f"정량 점수 반영: {objective_item.feedback}\n"
-                    f"구술형 평가 반영: {oral_item.feedback}"
+                    f"루브릭 평가 반영: {rubric_item.feedback}"
                 )
             merged_criteria_results.append(
                 ExamResultEvaluationCriterionScore(
@@ -1097,7 +1141,7 @@ class AsyncJobWorker:
                 )
             )
 
-        summary = oral_result.summary
+        summary = rubric_result.summary
         if objective_question_count > 0:
             summary = (
                 f"{objective_result.summary} "
@@ -1106,14 +1150,37 @@ class AsyncJobWorker:
 
         return EvaluateExamResult(
             summary=summary,
-            strengths=[*objective_result.strengths, *oral_result.strengths],
-            weaknesses=[*objective_result.weaknesses, *oral_result.weaknesses],
+            strengths=[*objective_result.strengths, *rubric_result.strengths],
+            weaknesses=[
+                *objective_result.weaknesses,
+                *rubric_result.weaknesses,
+            ],
             improvement_suggestions=[
                 *objective_result.improvement_suggestions,
-                *oral_result.improvement_suggestions,
+                *rubric_result.improvement_suggestions,
             ],
             criteria_results=merged_criteria_results,
         )
+
+    def _map_answer_turns_by_question_id(
+        self,
+        turns: Iterable[ExamResultEvaluationTurn],
+    ) -> dict[UUID, ExamResultEvaluationTurn]:
+        mapped: dict[UUID, ExamResultEvaluationTurn] = {}
+        for turn in turns:
+            if not self._is_student_answer_turn(turn):
+                continue
+            raw_question_id = turn.metadata.get("question_id")
+            if raw_question_id is None:
+                continue
+            try:
+                question_id = UUID(raw_question_id)
+            except ValueError:
+                continue
+            if question_id in mapped:
+                continue
+            mapped[question_id] = turn
+        return mapped
 
     def _map_answer_turns_by_question_number(
         self,
@@ -1121,9 +1188,7 @@ class AsyncJobWorker:
     ) -> dict[int, ExamResultEvaluationTurn]:
         mapped: dict[int, ExamResultEvaluationTurn] = {}
         for turn in turns:
-            if turn.role is not ExamTurnRole.STUDENT:
-                continue
-            if turn.event_type is not ExamTurnEventType.ANSWER:
+            if not self._is_student_answer_turn(turn):
                 continue
             raw_question_number = turn.metadata.get("question_number")
             if raw_question_number is None:
@@ -1136,6 +1201,40 @@ class AsyncJobWorker:
                 continue
             mapped[question_number] = turn
         return mapped
+
+    @staticmethod
+    def _is_student_answer_turn(turn: ExamResultEvaluationTurn) -> bool:
+        return (
+            turn.role is ExamTurnRole.STUDENT
+            and turn.event_type is ExamTurnEventType.ANSWER
+        )
+
+    def _is_multiple_choice_answer_match(
+        self,
+        *,
+        question: ExamResultEvaluationQuestion,
+        turn: ExamResultEvaluationTurn,
+    ) -> bool:
+        if question.answer_key_data is None:
+            return self._is_exact_answer_match(
+                expected=question.correct_answer_text,
+                actual=turn.content,
+            )
+        if (
+            question.answer_key_data.type
+            is not ExamQuestionType.MULTIPLE_CHOICE
+        ):
+            return False
+        selected_option_id = turn.metadata.get("selected_option_id")
+        if selected_option_id:
+            return (
+                selected_option_id
+                in question.answer_key_data.correct_option_ids
+            )
+        return self._is_exact_answer_match(
+            expected=question.correct_answer_text,
+            actual=turn.content,
+        )
 
     def _is_exact_answer_match(
         self, *, expected: str | None, actual: str

@@ -40,6 +40,10 @@ from app.exam.domain.entity import (
     ExamCriterion,
     ExamDifficulty,
     ExamGenerationStatus,
+    ExamQuestionAnswerKey,
+    ExamQuestionAnswerOption,
+    ExamQuestionRubric,
+    ExamQuestionRubricCriterion,
     ExamQuestionType,
     ExamResult,
     ExamResultStatus,
@@ -693,7 +697,7 @@ def make_exam_for_evaluation() -> Exam:
     return exam
 
 
-def make_multiple_choice_exam_for_evaluation() -> Exam:
+def make_legacy_multiple_choice_exam_for_evaluation() -> Exam:
     exam = make_exam()
     exam.add_question(
         question_number=1,
@@ -715,6 +719,41 @@ def make_multiple_choice_exam_for_evaluation() -> Exam:
     return exam
 
 
+def make_multiple_choice_exam_for_evaluation() -> Exam:
+    exam = make_legacy_multiple_choice_exam_for_evaluation()
+    question = exam.questions[0]
+    question.revise(
+        answer_options_data=[
+            ExamQuestionAnswerOption(
+                id="option-a",
+                label="A",
+                text="정답 레이블이 있는 데이터로 학습한다.",
+                is_correct=True,
+            ),
+            ExamQuestionAnswerOption(
+                id="option-b",
+                label="B",
+                text="보상으로 학습한다.",
+                is_correct=False,
+            ),
+        ],
+        answer_key_data=ExamQuestionAnswerKey(
+            type=ExamQuestionType.MULTIPLE_CHOICE,
+            correct_option_ids=["option-a"],
+        ),
+        rubric_data=ExamQuestionRubric(
+            criteria=[
+                ExamQuestionRubricCriterion(
+                    name="정답 선택",
+                    description="지도학습 정의 선택",
+                    points=5.0,
+                )
+            ]
+        ),
+    )
+    return exam
+
+
 def make_subjective_exam_for_evaluation() -> Exam:
     exam = make_exam()
     exam.add_question(
@@ -727,6 +766,39 @@ def make_subjective_exam_for_evaluation() -> Exam:
         intent_text="핵심 용어를 정확히 기억하는지 평가한다.",
         rubric_text="정답과 exact match 되면 만점이다.",
         correct_answer_text="레이블 데이터",
+        source_material_ids=[MATERIAL_ID],
+    )
+    exam.criteria[0].id = CRITERION_ID
+    return exam
+
+
+def make_structured_subjective_exam_for_evaluation() -> Exam:
+    exam = make_exam()
+    exam.add_question(
+        question_number=1,
+        max_score=3.0,
+        question_type=ExamQuestionType.SUBJECTIVE,
+        bloom_level=BloomLevel.REMEMBER,
+        difficulty=ExamDifficulty.EASY,
+        question_text="지도학습에서 사용하는 데이터는 무엇인가요?",
+        intent_text="핵심 용어를 정확히 기억하는지 평가한다.",
+        rubric_text="모범 답안과 키워드, 루브릭으로 평가한다.",
+        correct_answer_text="레이블 데이터",
+        answer_key_data=ExamQuestionAnswerKey(
+            type=ExamQuestionType.SUBJECTIVE,
+            model_answer="레이블 데이터로 학습합니다.",
+            acceptable_answers=["정답 데이터로 학습합니다."],
+            required_keywords=["레이블", "학습"],
+        ),
+        rubric_data=ExamQuestionRubric(
+            criteria=[
+                ExamQuestionRubricCriterion(
+                    name="핵심 키워드",
+                    description="레이블과 학습을 포함해 설명한다.",
+                    points=3.0,
+                )
+            ]
+        ),
         source_material_ids=[MATERIAL_ID],
     )
     exam.criteria[0].id = CRITERION_ID
@@ -749,6 +821,33 @@ def make_mixed_exam_for_evaluation() -> Exam:
             "보상으로 학습한다.",
         ],
         correct_answer_text="정답 레이블이 있는 데이터로 학습한다.",
+        answer_options_data=[
+            ExamQuestionAnswerOption(
+                id="option-a",
+                label="A",
+                text="정답 레이블이 있는 데이터로 학습한다.",
+                is_correct=True,
+            ),
+            ExamQuestionAnswerOption(
+                id="option-b",
+                label="B",
+                text="보상으로 학습한다.",
+                is_correct=False,
+            ),
+        ],
+        answer_key_data=ExamQuestionAnswerKey(
+            type=ExamQuestionType.MULTIPLE_CHOICE,
+            correct_option_ids=["option-a"],
+        ),
+        rubric_data=ExamQuestionRubric(
+            criteria=[
+                ExamQuestionRubricCriterion(
+                    name="정답 선택",
+                    description="지도학습 정의 선택",
+                    points=5.0,
+                )
+            ]
+        ),
         source_material_ids=[MATERIAL_ID],
     )
     exam.add_question(
@@ -1135,6 +1234,87 @@ async def test_run_next_queued_job_completes_exam_generation_job():
 
 
 @pytest.mark.asyncio
+async def test_run_next_queued_job_persists_structured_question_fields():
+    job = make_exam_generation_job()
+    exam = make_exam()
+    material = make_completed_material()
+    file = make_file()
+    from app.exam.domain.entity import (
+        ExamQuestionAnswerKey,
+        ExamQuestionAnswerOption,
+        ExamQuestionRubric,
+        ExamQuestionRubricCriterion,
+    )
+
+    generation_port = FakeExamQuestionGenerationPort(
+        drafts=[
+            GeneratedExamQuestionDraft(
+                question_number=1,
+                max_score=1.0,
+                question_type=ExamQuestionType.MULTIPLE_CHOICE,
+                bloom_level=BloomLevel.APPLY,
+                difficulty=ExamDifficulty.MEDIUM,
+                question_text="지도학습 설명을 고르세요.",
+                intent_text="개념 구분 능력을 평가합니다.",
+                rubric_text="정답 선택지를 고르면 만점입니다.",
+                answer_options=[
+                    "정답 레이블이 있는 데이터로 학습한다.",
+                    "보상 신호만으로 학습한다.",
+                ],
+                correct_answer_text="정답 레이블이 있는 데이터로 학습한다.",
+                answer_options_data=[
+                    ExamQuestionAnswerOption(
+                        id="a",
+                        label="A",
+                        text="정답 레이블이 있는 데이터로 학습한다.",
+                        is_correct=True,
+                    ),
+                    ExamQuestionAnswerOption(
+                        id="b",
+                        label="B",
+                        text="보상 신호만으로 학습한다.",
+                        is_correct=False,
+                    ),
+                ],
+                answer_key_data=ExamQuestionAnswerKey(
+                    type=ExamQuestionType.MULTIPLE_CHOICE,
+                    correct_option_ids=["a"],
+                ),
+                rubric_data=ExamQuestionRubric(
+                    criteria=[
+                        ExamQuestionRubricCriterion(
+                            name="정답 선택",
+                            description="지도학습 정의 선택",
+                            points=1.0,
+                        )
+                    ]
+                ),
+                source_material_ids=[MATERIAL_ID],
+            )
+        ]
+    )
+    worker = AsyncJobWorker(
+        repository=InMemoryAsyncJobRepository([job]),
+        classroom_repository=InMemoryClassroomRepository([make_classroom()]),
+        material_repository=InMemoryClassroomMaterialRepository([material]),
+        file_usecase=FakeFileUseCase(files={FILE_ID: file}),
+        material_ingest_port=None,
+        exam_repository=InMemoryExamRepository([exam]),
+        question_generation_port=generation_port,
+    )
+
+    handled = await worker.run_next_queued_job()
+
+    assert handled is True
+    assert job.status is AsyncJobStatus.COMPLETED
+    question = exam.questions[0]
+    assert [option.id for option in question.answer_options_data] == ["1", "2"]
+    assert question.answer_options_data[0].is_correct is True
+    assert question.answer_key_data.correct_option_ids == ["1"]
+    assert question.rubric_data.criteria[0].name == "정답 선택"
+
+
+@pytest.mark.asyncio
 async def test_run_next_queued_job_marks_exam_generation_job_failed():
     job = make_exam_generation_job()
     exam = make_exam()
@@ -1334,6 +1514,11 @@ async def test_run_next_queued_job_completes_exam_result_evaluation_job():
         request.questions[0].correct_answer_text
         == exam.questions[0].correct_answer_text
     )
+    assert (
+        request.questions[0].answer_key_data
+        == exam.questions[0].answer_key_data
+    )
+    assert request.questions[0].rubric_data == exam.questions[0].rubric_data
     assert len(request.turns) == 1
     assert request.turns[0].content == turn.content
     assert request.turns[0].metadata == turn.metadata
@@ -1571,14 +1756,49 @@ async def test_run_next_queued_job_fails_evaluation_for_missing_scores():
 
 
 @pytest.mark.asyncio
+async def test_run_next_queued_job_scores_legacy_multiple_choice_by_text():
+    job = make_exam_result_evaluation_job()
+    exam = make_legacy_multiple_choice_exam_for_evaluation()
+    session = make_completed_session()
+    result = make_pending_result()
+    turn = make_turn(
+        content="정답 레이블이 있는 데이터로 학습한다.",
+        metadata={"question_number": "1"},
+    )
+    evaluation_port = FakeExamResultEvaluationPort()
+    worker = AsyncJobWorker(
+        repository=InMemoryAsyncJobRepository([job]),
+        classroom_repository=InMemoryClassroomRepository([make_classroom()]),
+        material_repository=InMemoryClassroomMaterialRepository([]),
+        file_usecase=FakeFileUseCase(),
+        material_ingest_port=None,
+        exam_repository=InMemoryExamRepository([exam]),
+        question_generation_port=None,
+        exam_session_repository=InMemoryExamSessionRepository([session]),
+        exam_result_repository=InMemoryExamResultRepository([result]),
+        exam_turn_repository=InMemoryExamTurnRepository([turn]),
+        result_evaluation_port=evaluation_port,
+    )
+
+    handled = await worker.run_next_queued_job()
+
+    assert handled is True
+    assert job.status is AsyncJobStatus.COMPLETED
+    assert result.status is ExamResultStatus.COMPLETED
+    assert result.overall_score == 100
+    assert result.criteria_results[0].score == 100
+    assert evaluation_port.requests == []
+
+
+@pytest.mark.asyncio
 async def test_run_next_queued_job_scores_multiple_choice_full_credit():
     job = make_exam_result_evaluation_job()
     exam = make_multiple_choice_exam_for_evaluation()
     session = make_completed_session()
     result = make_pending_result()
     turn = make_turn(
-        content="정답 레이블이 있는 데이터로 학습한다.",
-        metadata={"question_number": "1"},
+        content="보기 A",
+        metadata={"question_number": "1", "selected_option_id": "1"},
     )
     evaluation_port = FakeExamResultEvaluationPort()
     worker = AsyncJobWorker(
@@ -1609,6 +1829,172 @@ async def test_run_next_queued_job_scores_multiple_choice_full_credit():
     assert result.criteria_results[0].criterion_id == CRITERION_ID
     assert result.criteria_results[0].score == 100
     assert evaluation_port.requests == []
+
+
+@pytest.mark.asyncio
+async def test_run_next_queued_job_scores_mc_with_question_id_metadata():
+    job = make_exam_result_evaluation_job()
+    exam = make_multiple_choice_exam_for_evaluation()
+    session = make_completed_session()
+    result = make_pending_result()
+    turn = make_turn(
+        content="A. 정답 레이블이 있는 데이터로 학습한다.",
+        metadata={
+            "question_id": str(exam.questions[0].id),
+            "selected_option_id": "1",
+        },
+    )
+    evaluation_port = FakeExamResultEvaluationPort()
+    worker = AsyncJobWorker(
+        repository=InMemoryAsyncJobRepository([job]),
+        classroom_repository=InMemoryClassroomRepository([make_classroom()]),
+        material_repository=InMemoryClassroomMaterialRepository([]),
+        file_usecase=FakeFileUseCase(),
+        material_ingest_port=None,
+        exam_repository=InMemoryExamRepository([exam]),
+        question_generation_port=None,
+        exam_session_repository=InMemoryExamSessionRepository([session]),
+        exam_result_repository=InMemoryExamResultRepository([result]),
+        exam_turn_repository=InMemoryExamTurnRepository([turn]),
+        result_evaluation_port=evaluation_port,
+    )
+
+    handled = await worker.run_next_queued_job()
+
+    assert handled is True
+    assert job.status is AsyncJobStatus.COMPLETED
+    assert result.status is ExamResultStatus.COMPLETED
+    assert result.overall_score == 100
+    assert result.criteria_results[0].score == 100
+    assert evaluation_port.requests == []
+
+
+@pytest.mark.asyncio
+async def test_run_next_queued_job_scores_mc_by_option_id_not_text():
+    job = make_exam_result_evaluation_job()
+    exam = make_multiple_choice_exam_for_evaluation()
+    session = make_completed_session()
+    result = make_pending_result()
+    turn = make_turn(
+        content="정답 레이블이 있는 데이터로 학습한다.",
+        metadata={"question_number": "1", "selected_option_id": "2"},
+    )
+    evaluation_port = FakeExamResultEvaluationPort()
+    worker = AsyncJobWorker(
+        repository=InMemoryAsyncJobRepository([job]),
+        classroom_repository=InMemoryClassroomRepository([make_classroom()]),
+        material_repository=InMemoryClassroomMaterialRepository([]),
+        file_usecase=FakeFileUseCase(),
+        material_ingest_port=None,
+        exam_repository=InMemoryExamRepository([exam]),
+        question_generation_port=None,
+        exam_session_repository=InMemoryExamSessionRepository([session]),
+        exam_result_repository=InMemoryExamResultRepository([result]),
+        exam_turn_repository=InMemoryExamTurnRepository([turn]),
+        result_evaluation_port=evaluation_port,
+    )
+
+    handled = await worker.run_next_queued_job()
+
+    assert handled is True
+    assert job.status is AsyncJobStatus.COMPLETED
+    assert result.status is ExamResultStatus.COMPLETED
+    assert result.overall_score == 0
+    assert result.criteria_results[0].score == 0
+    assert evaluation_port.requests == []
+
+
+@pytest.mark.asyncio
+async def test_run_next_queued_job_maps_structured_evaluation_question_data():
+    exam = make_multiple_choice_exam_for_evaluation()
+    worker = AsyncJobWorker(
+        repository=InMemoryAsyncJobRepository([]),
+        classroom_repository=InMemoryClassroomRepository([]),
+        material_repository=InMemoryClassroomMaterialRepository([]),
+        file_usecase=FakeFileUseCase(),
+        material_ingest_port=None,
+        exam_repository=InMemoryExamRepository([exam]),
+        question_generation_port=None,
+        exam_session_repository=InMemoryExamSessionRepository([
+            make_completed_session()
+        ]),
+        exam_result_repository=InMemoryExamResultRepository([]),
+        exam_turn_repository=InMemoryExamTurnRepository([]),
+        result_evaluation_port=FakeExamResultEvaluationPort(),
+    )
+
+    request = await worker._load_exam_result_evaluation_request(
+        exam=exam,
+        session_id=SESSION_ID,
+        student_id=STUDENT_ID,
+    )
+
+    assert (
+        request.questions[0].answer_key_data
+        == exam.questions[0].answer_key_data
+    )
+    assert request.questions[0].rubric_data == exam.questions[0].rubric_data
+
+
+@pytest.mark.asyncio
+async def test_run_next_queued_job_routes_structured_subjective_to_llm():
+    job = make_exam_result_evaluation_job()
+    exam = make_structured_subjective_exam_for_evaluation()
+    session = make_completed_session()
+    result = make_pending_result()
+    turn = make_turn(
+        content="레이블 데이터",
+        metadata={"question_number": "1"},
+    )
+    evaluation_port = FakeExamResultEvaluationPort(
+        result=EvaluateExamResult(
+            summary="주관식 루브릭 평가가 완료되었습니다.",
+            strengths=["핵심 키워드를 언급했습니다."],
+            weaknesses=[],
+            improvement_suggestions=[],
+            criteria_results=[
+                ExamResultEvaluationCriterionScore(
+                    criterion_id=CRITERION_ID,
+                    score=85,
+                    feedback="모범 답안과 키워드 기준으로 평가했습니다.",
+                )
+            ],
+        )
+    )
+    worker = AsyncJobWorker(
+        repository=InMemoryAsyncJobRepository([job]),
+        classroom_repository=InMemoryClassroomRepository([make_classroom()]),
+        material_repository=InMemoryClassroomMaterialRepository([]),
+        file_usecase=FakeFileUseCase(),
+        material_ingest_port=None,
+        exam_repository=InMemoryExamRepository([exam]),
+        question_generation_port=None,
+        exam_session_repository=InMemoryExamSessionRepository([session]),
+        exam_result_repository=InMemoryExamResultRepository([result]),
+        exam_turn_repository=InMemoryExamTurnRepository([turn]),
+        result_evaluation_port=evaluation_port,
+    )
+
+    handled = await worker.run_next_queued_job()
+
+    assert handled is True
+    assert job.status is AsyncJobStatus.COMPLETED
+    assert result.status is ExamResultStatus.COMPLETED
+    assert result.overall_score == 85
+    assert len(evaluation_port.requests) == 1
+    assert len(evaluation_port.requests[0].questions) == 1
+    assert (
+        evaluation_port.requests[0].questions[0].question_type
+        is ExamQuestionType.SUBJECTIVE
+    )
+    assert (
+        evaluation_port.requests[0].questions[0].answer_key_data
+        == exam.questions[0].answer_key_data
+    )
+    assert (
+        evaluation_port.requests[0].questions[0].rubric_data
+        == exam.questions[0].rubric_data
+    )
 
 
 @pytest.mark.asyncio
@@ -1829,8 +2215,8 @@ async def test_run_next_queued_job_combines_objective_and_oral_scores():
     result = make_pending_result()
     turns = [
         make_turn(
-            content="정답 레이블이 있는 데이터로 학습한다.",
-            metadata={"question_number": "1"},
+            content="보기 A",
+            metadata={"question_number": "1", "selected_option_id": "1"},
         ),
         ExamTurn.create(
             session_id=SESSION_ID,
