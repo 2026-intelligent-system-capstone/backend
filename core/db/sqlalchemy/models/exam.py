@@ -20,6 +20,10 @@ from app.exam.domain.entity import (
     BloomLevel,
     ExamDifficulty,
     ExamGenerationStatus,
+    ExamQuestionAnswerKey,
+    ExamQuestionAnswerOption,
+    ExamQuestionRubric,
+    ExamQuestionRubricCriterion,
     ExamQuestionStatus,
     ExamQuestionType,
     ExamResultStatus,
@@ -30,6 +34,123 @@ from app.exam.domain.entity import (
     ExamType,
 )
 from core.db.sqlalchemy.models.base import BaseTable, metadata
+
+
+class StructuredAnswerOptionsJSON(TypeDecorator):
+    impl = JSON
+    cache_ok = True
+
+    def _parse_bool(self, value) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized == "true":
+                return True
+            if normalized == "false":
+                return False
+        return False
+
+    def process_bind_param(self, value, dialect):
+        del dialect
+        if value is None:
+            return []
+        return [
+            {
+                "id": option.id,
+                "label": option.label,
+                "text": option.text,
+                "is_correct": option.is_correct,
+                "explanation": option.explanation,
+            }
+            for option in value
+        ]
+
+    def process_result_value(self, value, dialect):
+        del dialect
+        return [
+            ExamQuestionAnswerOption(
+                id=str(option.get("id") or ""),
+                label=str(option.get("label") or ""),
+                text=str(option.get("text") or ""),
+                is_correct=self._parse_bool(option.get("is_correct", False)),
+                explanation=option.get("explanation"),
+            )
+            for option in value or []
+        ]
+
+
+class StructuredAnswerKeyJSON(TypeDecorator):
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        del dialect
+        if value is None:
+            return {}
+        return {
+            "type": value.type.value,
+            "correct_option_ids": list(value.correct_option_ids),
+            "model_answer": value.model_answer,
+            "acceptable_answers": list(value.acceptable_answers),
+            "required_keywords": list(value.required_keywords),
+            "expected_points": list(value.expected_points),
+            "follow_up_questions": list(value.follow_up_questions),
+        }
+
+    def process_result_value(self, value, dialect):
+        del dialect
+        if not value:
+            return None
+        raw_type = value.get("type")
+        if raw_type is None:
+            return None
+        return ExamQuestionAnswerKey(
+            type=ExamQuestionType(raw_type),
+            correct_option_ids=list(value.get("correct_option_ids") or []),
+            model_answer=value.get("model_answer"),
+            acceptable_answers=list(value.get("acceptable_answers") or []),
+            required_keywords=list(value.get("required_keywords") or []),
+            expected_points=list(value.get("expected_points") or []),
+            follow_up_questions=list(value.get("follow_up_questions") or []),
+        )
+
+
+class StructuredRubricJSON(TypeDecorator):
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        del dialect
+        if value is None:
+            return {}
+        return {
+            "criteria": [
+                {
+                    "name": criterion.name,
+                    "description": criterion.description,
+                    "points": criterion.points,
+                }
+                for criterion in value.criteria
+            ],
+            "evidence_policy": value.evidence_policy,
+        }
+
+    def process_result_value(self, value, dialect):
+        del dialect
+        if not value:
+            return ExamQuestionRubric()
+        return ExamQuestionRubric(
+            criteria=[
+                ExamQuestionRubricCriterion(
+                    name=str(criterion.get("name") or ""),
+                    description=str(criterion.get("description") or ""),
+                    points=float(criterion.get("points") or 0),
+                )
+                for criterion in value.get("criteria") or []
+            ],
+            evidence_policy=value.get("evidence_policy"),
+        )
 
 
 class UUIDListJSON(TypeDecorator):
@@ -229,6 +350,24 @@ exam_question_table = BaseTable(
     Column("rubric_text", String(12000), nullable=False),
     Column("answer_options", JSON(), nullable=False, default=list),
     Column("correct_answer_text", String(2000), nullable=True),
+    Column(
+        "answer_options_data",
+        StructuredAnswerOptionsJSON(),
+        nullable=False,
+        default=list,
+    ),
+    Column(
+        "answer_key_data",
+        StructuredAnswerKeyJSON(),
+        nullable=False,
+        default=dict,
+    ),
+    Column(
+        "rubric_data",
+        StructuredRubricJSON(),
+        nullable=False,
+        default=dict,
+    ),
     Column("scope_text", String(1000), nullable=True),
     Column("evaluation_objective", String(2000), nullable=True),
     Column("answer_key", String(5000), nullable=True),

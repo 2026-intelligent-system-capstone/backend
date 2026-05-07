@@ -283,6 +283,9 @@ class ExamQuestion(Entity):
                 self.max_score = max_score
             if question_type is not None:
                 self.question_type = question_type
+                if question_type is not previous_question_type:
+                    self.answer_key_data = None
+                    self.rubric_data = ExamQuestionRubric()
             if bloom_level is not None:
                 self.bloom_level = bloom_level
             if difficulty is not None:
@@ -331,11 +334,11 @@ class ExamQuestion(Entity):
             raise ValueError("max_score must be greater than 0")
 
     def _ensure_structured_answer_defaults(self) -> None:
-        if not hasattr(self, "answer_options_data"):
+        if getattr(self, "answer_options_data", None) is None:
             self.answer_options_data = []
         if not hasattr(self, "answer_key_data"):
             self.answer_key_data = None
-        if not hasattr(self, "rubric_data"):
+        if getattr(self, "rubric_data", None) is None:
             self.rubric_data = ExamQuestionRubric()
 
     def _normalize_answer_fields(self) -> None:
@@ -351,19 +354,10 @@ class ExamQuestion(Entity):
             and self.correct_answer_text.strip()
             else None
         )
+        self._promote_legacy_structured_answer_fields()
         self._normalize_structured_answer_fields()
         if self.question_type is ExamQuestionType.MULTIPLE_CHOICE:
-            if self.answer_options_data:
-                self._validate_structured_multiple_choice_answer()
-                return
-            if self.answer_options and (
-                self.correct_answer_text is None
-                or self.correct_answer_text not in self.answer_options
-            ):
-                raise ValueError(
-                    "multiple_choice correct_answer_text must match one of "
-                    "answer_options"
-                )
+            self._validate_structured_multiple_choice_answer()
             return
         self.answer_options = []
         if self.question_type is ExamQuestionType.SUBJECTIVE:
@@ -371,6 +365,64 @@ class ExamQuestion(Entity):
         if self.question_type is ExamQuestionType.ORAL:
             self.correct_answer_text = None
             self._validate_structured_oral_answer()
+
+    def _promote_legacy_structured_answer_fields(self) -> None:
+        if self.question_type is ExamQuestionType.MULTIPLE_CHOICE:
+            if not self.answer_options_data and self.answer_options:
+                self.answer_options_data = [
+                    ExamQuestionAnswerOption(
+                        id=str(index),
+                        label=str(index),
+                        text=option_text,
+                        is_correct=option_text == self.correct_answer_text,
+                    )
+                    for index, option_text in enumerate(
+                        self.answer_options,
+                        start=1,
+                    )
+                ]
+            if self.answer_options_data and self.answer_key_data is None:
+                correct_option = next(
+                    (
+                        option
+                        for option in self.answer_options_data
+                        if option.is_correct
+                    ),
+                    None,
+                )
+                if correct_option is not None:
+                    self.answer_key_data = ExamQuestionAnswerKey(
+                        type=ExamQuestionType.MULTIPLE_CHOICE,
+                        correct_option_ids=[correct_option.id],
+                    )
+            return
+        if (
+            self.question_type is ExamQuestionType.SUBJECTIVE
+            and self.answer_key_data is None
+            and self.correct_answer_text is not None
+        ):
+            self.answer_key_data = ExamQuestionAnswerKey(
+                type=ExamQuestionType.SUBJECTIVE,
+                model_answer=self.correct_answer_text,
+            )
+            return
+        if (
+            self.question_type is ExamQuestionType.ORAL
+            and self.answer_key_data is None
+            and self.rubric_text.strip()
+        ):
+            self.answer_key_data = ExamQuestionAnswerKey(
+                type=ExamQuestionType.ORAL,
+            )
+            self.rubric_data = ExamQuestionRubric(
+                criteria=[
+                    ExamQuestionRubricCriterion(
+                        name="구술 평가 기준",
+                        description=self.rubric_text,
+                        points=self.max_score,
+                    )
+                ]
+            )
 
     def _normalize_structured_answer_fields(self) -> None:
         self._ensure_structured_answer_defaults()
@@ -437,6 +489,39 @@ class ExamQuestion(Entity):
     def _normalize_text_list(values: Sequence[str]) -> list[str]:
         return [str(value).strip() for value in values if str(value).strip()]
 
+    def _renumber_multiple_choice_options(self, correct_option_id: str) -> None:
+        correct_numbered_id = ""
+        renumbered_options = []
+        for index, option in enumerate(self.answer_options_data, start=1):
+            numbered_id = str(index)
+            is_correct = option.id == correct_option_id
+            if is_correct:
+                correct_numbered_id = numbered_id
+            renumbered_options.append(
+                ExamQuestionAnswerOption(
+                    id=numbered_id,
+                    label=numbered_id,
+                    text=option.text,
+                    is_correct=is_correct,
+                    explanation=option.explanation,
+                )
+            )
+        self.answer_options_data = renumbered_options
+        if self.answer_key_data is not None:
+            self.answer_key_data = ExamQuestionAnswerKey(
+                type=self.answer_key_data.type,
+                correct_option_ids=[correct_numbered_id],
+                model_answer=self.answer_key_data.model_answer,
+                acceptable_answers=list(
+                    self.answer_key_data.acceptable_answers
+                ),
+                required_keywords=list(self.answer_key_data.required_keywords),
+                expected_points=list(self.answer_key_data.expected_points),
+                follow_up_questions=list(
+                    self.answer_key_data.follow_up_questions
+                ),
+            )
+
     def _validate_structured_multiple_choice_answer(self) -> None:
         if not self.answer_options_data:
             raise ValueError("multiple_choice answer_options_data is required")
@@ -473,6 +558,7 @@ class ExamQuestion(Entity):
             raise ValueError(
                 "correct_option_ids must match the correct answer option"
             )
+        self._renumber_multiple_choice_options(correct_option_id)
 
     def _validate_structured_rubric(self) -> None:
         for criterion in self.rubric_data.criteria:
@@ -491,7 +577,7 @@ class ExamQuestion(Entity):
         if self.answer_options_data:
             raise ValueError("subjective answer_options_data must be empty")
         if self.answer_key_data is None:
-            return
+            raise ValueError("subjective answer_key_data is required")
         if self.answer_key_data.type is not ExamQuestionType.SUBJECTIVE:
             raise ValueError("answer_key_data.type must be subjective")
         if self.answer_key_data.model_answer is None:
@@ -501,9 +587,11 @@ class ExamQuestion(Entity):
         if self.answer_options_data:
             raise ValueError("oral answer_options_data must be empty")
         if self.answer_key_data is None:
-            return
+            raise ValueError("oral answer_key_data is required")
         if self.answer_key_data.type is not ExamQuestionType.ORAL:
             raise ValueError("answer_key_data.type must be oral")
+        if self.answer_key_data.model_answer:
+            raise ValueError("oral model_answer must be empty")
         if (
             not self.answer_key_data.expected_points
             and not self.rubric_data.criteria
@@ -659,6 +747,9 @@ class Exam(AggregateRoot):
         rubric_text: str,
         answer_options: Sequence[str] | None = None,
         correct_answer_text: str | None = None,
+        answer_options_data: Sequence[ExamQuestionAnswerOption] | None = None,
+        answer_key_data: ExamQuestionAnswerKey | None = None,
+        rubric_data: ExamQuestionRubric | None = None,
         source_material_ids: Sequence[UUID],
     ) -> ExamQuestion:
         question = ExamQuestion(
@@ -673,6 +764,9 @@ class Exam(AggregateRoot):
             rubric_text=rubric_text,
             answer_options=list(answer_options or []),
             correct_answer_text=correct_answer_text,
+            answer_options_data=list(answer_options_data or []),
+            answer_key_data=answer_key_data,
+            rubric_data=rubric_data or ExamQuestionRubric(),
             source_material_ids=list(source_material_ids),
             status=ExamQuestionStatus.GENERATED,
         )
@@ -701,6 +795,9 @@ class Exam(AggregateRoot):
         rubric_text: str | None = None,
         answer_options: Sequence[str] | None = None,
         correct_answer_text: str | None = None,
+        answer_options_data: Sequence[ExamQuestionAnswerOption] | None = None,
+        answer_key_data: ExamQuestionAnswerKey | None = None,
+        rubric_data: ExamQuestionRubric | None = None,
         source_material_ids: Sequence[UUID] | None = None,
     ) -> ExamQuestion:
         question = self.find_question(question_id)
@@ -715,6 +812,9 @@ class Exam(AggregateRoot):
             rubric_text=rubric_text,
             answer_options=answer_options,
             correct_answer_text=correct_answer_text,
+            answer_options_data=answer_options_data,
+            answer_key_data=answer_key_data,
+            rubric_data=rubric_data,
             source_material_ids=source_material_ids,
         )
         return question

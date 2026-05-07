@@ -7,6 +7,10 @@ from app.exam.domain.constants import MAX_QUESTION_TYPE_QUESTION_COUNT
 from app.exam.domain.entity import (
     BloomLevel,
     ExamDifficulty,
+    ExamQuestionAnswerKey,
+    ExamQuestionAnswerOption,
+    ExamQuestionRubric,
+    ExamQuestionRubricCriterion,
     ExamQuestionType,
     ExamQuestionTypeStrategy,
     ExamTurnEventType,
@@ -49,6 +53,70 @@ class CreateExamCommand(BaseModel):
         return self
 
 
+class ExamQuestionAnswerOptionCommand(BaseModel):
+    id: str = Field(..., min_length=1, max_length=100)
+    label: str = Field(..., min_length=1, max_length=20)
+    text: str = Field(..., min_length=1, max_length=2000)
+    is_correct: bool = False
+    explanation: str | None = Field(None, max_length=2000)
+
+    def to_domain(self) -> ExamQuestionAnswerOption:
+        return ExamQuestionAnswerOption(
+            id=self.id,
+            label=self.label,
+            text=self.text,
+            is_correct=self.is_correct,
+            explanation=self.explanation,
+        )
+
+
+class ExamQuestionAnswerKeyCommand(BaseModel):
+    type: ExamQuestionType
+    correct_option_ids: list[str] = Field(default_factory=list)
+    model_answer: str | None = Field(None, max_length=5000)
+    acceptable_answers: list[str] = Field(default_factory=list)
+    required_keywords: list[str] = Field(default_factory=list)
+    expected_points: list[str] = Field(default_factory=list)
+    follow_up_questions: list[str] = Field(default_factory=list)
+
+    def to_domain(self) -> ExamQuestionAnswerKey:
+        return ExamQuestionAnswerKey(
+            type=self.type,
+            correct_option_ids=list(self.correct_option_ids),
+            model_answer=self.model_answer,
+            acceptable_answers=list(self.acceptable_answers),
+            required_keywords=list(self.required_keywords),
+            expected_points=list(self.expected_points),
+            follow_up_questions=list(self.follow_up_questions),
+        )
+
+
+class ExamQuestionRubricCriterionCommand(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str = Field(..., min_length=1, max_length=2000)
+    points: float = Field(..., gt=0)
+
+    def to_domain(self) -> ExamQuestionRubricCriterion:
+        return ExamQuestionRubricCriterion(
+            name=self.name,
+            description=self.description,
+            points=self.points,
+        )
+
+
+class ExamQuestionRubricCommand(BaseModel):
+    criteria: list[ExamQuestionRubricCriterionCommand] = Field(
+        default_factory=list
+    )
+    evidence_policy: str | None = Field(None, max_length=5000)
+
+    def to_domain(self) -> ExamQuestionRubric:
+        return ExamQuestionRubric(
+            criteria=[criterion.to_domain() for criterion in self.criteria],
+            evidence_policy=self.evidence_policy,
+        )
+
+
 class UpdateExamQuestionCommand(BaseModel):
     question_number: int | None = Field(None, ge=1, le=500)
     max_score: float | None = Field(None, gt=0)
@@ -60,6 +128,13 @@ class UpdateExamQuestionCommand(BaseModel):
     rubric_text: str | None = Field(None, max_length=12000)
     answer_options: list[str] | None = None
     correct_answer_text: str | None = Field(None, max_length=2000)
+    answer_options_data: (
+        list[ExamQuestionAnswerOptionCommand | ExamQuestionAnswerOption] | None
+    ) = None
+    answer_key_data: (
+        ExamQuestionAnswerKeyCommand | ExamQuestionAnswerKey | None
+    ) = None
+    rubric_data: ExamQuestionRubricCommand | ExamQuestionRubric | None = None
     source_material_ids: list[UUID] | None = None
 
     @model_validator(mode="after")
@@ -77,14 +152,27 @@ class UpdateExamQuestionCommand(BaseModel):
             for option in (self.answer_options or [])
             if option.strip()
         ]
-        if self.question_type is ExamQuestionType.ORAL and not rubric_text:
+        has_structured_answer_key = self.answer_key_data is not None
+        has_structured_rubric = self.rubric_data is not None
+        if (
+            self.question_type is ExamQuestionType.ORAL
+            and not rubric_text
+            and not has_structured_answer_key
+            and not has_structured_rubric
+        ):
             raise ValueError("oral rubric_text is required")
         if (
             self.question_type is ExamQuestionType.SUBJECTIVE
             and not correct_answer_text
+            and not has_structured_answer_key
         ):
             raise ValueError("subjective correct_answer_text is required")
         if self.question_type is not ExamQuestionType.MULTIPLE_CHOICE:
+            return self
+        has_structured_multiple_choice = (
+            bool(self.answer_options_data) and self.answer_key_data is not None
+        )
+        if has_structured_multiple_choice:
             return self
         if len(normalized_answer_options) < 2:
             raise ValueError(

@@ -98,9 +98,10 @@ def test_multiple_choice_accepts_structured_options_and_key_by_id():
         ),
     )
 
-    assert question.answer_options_data[0].id == "option-a"
+    assert question.answer_options_data[0].id == "1"
+    assert question.answer_options_data[0].label == "1"
     assert question.answer_key_data is not None
-    assert question.answer_key_data.correct_option_ids == ["option-a"]
+    assert question.answer_key_data.correct_option_ids == ["1"]
 
 
 def test_revise_restores_missing_structured_defaults_for_orm_loaded_question():
@@ -111,10 +112,39 @@ def test_revise_restores_missing_structured_defaults_for_orm_loaded_question():
 
     question.revise(question_text="수정된 질문")
 
-    assert question.answer_options_data == []
-    assert question.answer_key_data is None
+    assert question.answer_options_data == [
+        ExamQuestionAnswerOption(
+            id="1",
+            label="1",
+            text="선택 A",
+            is_correct=True,
+        ),
+        ExamQuestionAnswerOption(id="2", label="2", text="선택 B"),
+    ]
+    assert question.answer_key_data == ExamQuestionAnswerKey(
+        type=ExamQuestionType.MULTIPLE_CHOICE,
+        correct_option_ids=["1"],
+    )
     assert question.rubric_data == ExamQuestionRubric()
     assert question.status is ExamQuestionStatus.REVIEWED
+
+
+def test_multiple_choice_promotes_legacy_options_to_numbered_ids():
+    question = _question()
+
+    assert question.answer_options_data == [
+        ExamQuestionAnswerOption(
+            id="1",
+            label="1",
+            text="선택 A",
+            is_correct=True,
+        ),
+        ExamQuestionAnswerOption(id="2", label="2", text="선택 B"),
+    ]
+    assert question.answer_key_data == ExamQuestionAnswerKey(
+        type=ExamQuestionType.MULTIPLE_CHOICE,
+        correct_option_ids=["1"],
+    )
 
 
 def test_revise_multiple_choice_replaces_structured_options_and_key():
@@ -158,11 +188,28 @@ def test_revise_multiple_choice_replaces_structured_options_and_key():
         ),
     )
 
-    assert question.answer_options_data[0].id == "option-c"
-    assert question.answer_options_data[0].label == "C"
+    assert question.answer_options_data[0].id == "1"
+    assert question.answer_options_data[0].label == "1"
     assert question.answer_options_data[0].text == "선택 C"
     assert question.answer_key_data is not None
-    assert question.answer_key_data.correct_option_ids == ["option-c"]
+    assert question.answer_key_data.correct_option_ids == ["1"]
+
+
+def test_oral_rejects_fixed_model_answer():
+    with pytest.raises(
+        ValueError,
+        match="oral model_answer must be empty",
+    ):
+        _question(
+            question_type=ExamQuestionType.ORAL,
+            answer_options=[],
+            correct_answer_text=None,
+            answer_key_data=ExamQuestionAnswerKey(
+                type=ExamQuestionType.ORAL,
+                model_answer="고정 정답",
+                expected_points=["핵심 개념"],
+            ),
+        )
 
 
 def test_revise_to_oral_rejects_stale_structured_options():
@@ -397,7 +444,7 @@ def test_structured_choice_ignores_legacy_correct_answer_text_match():
 
     assert question.correct_answer_text is None
     assert question.answer_key_data is not None
-    assert question.answer_key_data.correct_option_ids == ["option-a"]
+    assert question.answer_key_data.correct_option_ids == ["1"]
 
 
 def test_subjective_requires_model_answer():

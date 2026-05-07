@@ -1,6 +1,9 @@
+import importlib.util
+import json
 import uuid
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -31,6 +34,9 @@ from app.exam.domain.entity import (
     Exam,
     ExamDifficulty,
     ExamQuestion,
+    ExamQuestionAnswerKey,
+    ExamQuestionAnswerOption,
+    ExamQuestionRubric,
     ExamQuestionStatus,
     ExamQuestionType,
     ExamResultStatus,
@@ -254,6 +260,71 @@ async def test_exam_repository_round_trips_question_count_and_difficulty(
     assert loaded.difficulty is ExamDifficulty.HARD
 
 
+@pytest.mark.asyncio
+async def test_exam_repository_round_trips_structured_question_answers(
+    db_session,
+):
+    await seed_exam_context(db_session)
+    exam = make_exam(question_count=1, difficulty=ExamDifficulty.MEDIUM)
+    exam.add_question(
+        question_number=1,
+        max_score=1.0,
+        question_type=ExamQuestionType.MULTIPLE_CHOICE,
+        bloom_level=BloomLevel.APPLY,
+        difficulty=ExamDifficulty.MEDIUM,
+        question_text="지도학습 유형을 고르세요.",
+        intent_text="회귀와 분류 구분",
+        rubric_text="정답 보기 선택",
+        answer_options_data=[
+            ExamQuestionAnswerOption(
+                id="1",
+                label="1",
+                text="회귀",
+                is_correct=False,
+            ),
+            ExamQuestionAnswerOption(
+                id="2",
+                label="2",
+                text="분류",
+                is_correct=True,
+            ),
+        ],
+        answer_key_data=ExamQuestionAnswerKey(
+            type=ExamQuestionType.MULTIPLE_CHOICE,
+            correct_option_ids=["2"],
+        ),
+        rubric_data=ExamQuestionRubric(criteria=[]),
+        source_material_ids=[],
+    )
+
+    await ExamSQLAlchemyRepository().save(exam)
+    await db_session.commit()
+    db_session.expunge_all()
+    loaded = await ExamSQLAlchemyRepository().get_by_id(exam.id)
+
+    assert loaded is not None
+    loaded_question = loaded.questions[0]
+    assert loaded_question.answer_options_data == [
+        ExamQuestionAnswerOption(
+            id="1",
+            label="1",
+            text="회귀",
+            is_correct=False,
+        ),
+        ExamQuestionAnswerOption(
+            id="2",
+            label="2",
+            text="분류",
+            is_correct=True,
+        ),
+    ]
+    assert loaded_question.answer_key_data == ExamQuestionAnswerKey(
+        type=ExamQuestionType.MULTIPLE_CHOICE,
+        correct_option_ids=["2"],
+    )
+    assert loaded_question.rubric_data == ExamQuestionRubric(criteria=[])
+
+
 def test_exam_table_uses_sqlalchemy_enum_columns():
     assert_enum_column(exam_table.c.exam_type, ExamType)
     assert_enum_column(exam_table.c.status, ExamStatus)
@@ -311,6 +382,18 @@ def test_exam_question_table_keeps_legacy_columns_for_backfill_compatibility():
     assert exam_question_table.c.scoring_criteria.nullable is True
 
 
+def test_exam_question_table_contains_structured_answer_json_columns():
+    assert exam_question_table.c.answer_options_data.nullable is False
+    assert exam_question_table.c.answer_options_data.default is not None
+    assert callable(exam_question_table.c.answer_options_data.default.arg)
+    assert exam_question_table.c.answer_key_data.nullable is False
+    assert exam_question_table.c.answer_key_data.default is not None
+    assert callable(exam_question_table.c.answer_key_data.default.arg)
+    assert exam_question_table.c.rubric_data.nullable is False
+    assert exam_question_table.c.rubric_data.default is not None
+    assert callable(exam_question_table.c.rubric_data.default.arg)
+
+
 def test_exam_question_table_contains_non_nullable_max_score_column():
     assert exam_question_table.c.max_score.nullable is False
     assert exam_question_table.c.max_score.default is not None
@@ -331,25 +414,229 @@ def test_exam_question_table_contains_positive_max_score_check_constraint():
     )
 
 
-def test_legacy_multiple_choice_question_without_options_still_loads():
-    question = ExamQuestion(
-        exam_id=UUID("11111111-1111-1111-1111-111111111111"),
-        question_number=1,
-        max_score=1.0,
-        question_type=ExamQuestionType.MULTIPLE_CHOICE,
-        bloom_level=BloomLevel.APPLY,
-        difficulty=ExamDifficulty.MEDIUM,
-        question_text="기존 객관식 문항",
-        intent_text="기존 의도",
-        rubric_text="기존 루브릭",
-        answer_options=[],
-        correct_answer_text="회귀",
-        source_material_ids=[],
+def load_structured_answer_migration():
+    migration_path = Path(__file__).parents[6] / (
+        "alembic/versions/f8a9b0c1d2e3_add_structured_exam_question_answers.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "structured_answer_migration",
+        migration_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    return migration
+
+
+async def insert_legacy_question(
+    db_session,
+    *,
+    question_id: UUID,
+    question_type: str,
+    answer_options: list[str],
+    correct_answer_text: str | None,
+    rubric_text: str,
+) -> None:
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO t_exam_question (
+                id,
+                exam_id,
+                question_number,
+                max_score,
+                question_type,
+                bloom_level,
+                difficulty,
+                question_text,
+                intent_text,
+                rubric_text,
+                answer_options,
+                correct_answer_text,
+                answer_options_data,
+                answer_key_data,
+                rubric_data,
+                source_material_ids,
+                status,
+                created_at,
+                updated_at,
+                version_id
+            ) VALUES (
+                :id,
+                :exam_id,
+                1,
+                1.0,
+                :question_type,
+                'apply',
+                'medium',
+                '기존 문항',
+                '기존 의도',
+                :rubric_text,
+                CAST(:answer_options AS json),
+                :correct_answer_text,
+                '[]'::json,
+                '{}'::json,
+                '{}'::json,
+                '[]'::json,
+                'generated',
+                now(),
+                now(),
+                0
+            )
+            """
+        ),
+        {
+            "id": question_id,
+            "exam_id": UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            "question_type": question_type,
+            "rubric_text": rubric_text,
+            "answer_options": json.dumps(answer_options),
+            "correct_answer_text": correct_answer_text,
+        },
     )
 
-    assert question.question_type is ExamQuestionType.MULTIPLE_CHOICE
-    assert question.answer_options == []
-    assert question.correct_answer_text == "회귀"
+
+@pytest.mark.asyncio
+async def test_structured_answer_migration_accepts_valid_legacy_rows(
+    db_session,
+):
+    await seed_exam_context(db_session)
+    await db_session.execute(
+        exam_table.insert().values(
+            id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            classroom_id=CLASSROOM_ID,
+            title="기존 시험",
+            description=None,
+            exam_type="midterm",
+            status="ready",
+            duration_minutes=60,
+            starts_at=STARTS_AT,
+            ends_at=ENDS_AT,
+            max_attempts=1,
+            week=1,
+            question_count=3,
+            difficulty="medium",
+            max_follow_ups=2,
+            generation_status="idle",
+        )
+    )
+    await insert_legacy_question(
+        db_session,
+        question_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1"),
+        question_type="multiple_choice",
+        answer_options=["회귀", "분류"],
+        correct_answer_text="회귀",
+        rubric_text="정답 선택",
+    )
+    await insert_legacy_question(
+        db_session,
+        question_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2"),
+        question_type="subjective",
+        answer_options=[],
+        correct_answer_text="회귀",
+        rubric_text="단답 평가",
+    )
+    await insert_legacy_question(
+        db_session,
+        question_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3"),
+        question_type="oral",
+        answer_options=[],
+        correct_answer_text=None,
+        rubric_text="구술 평가",
+    )
+
+    migration = load_structured_answer_migration()
+
+    await db_session.execute(
+        migration.build_invalid_legacy_rows_validation_sql()
+    )
+    for statement in migration.build_structured_answer_backfill_sql():
+        await db_session.execute(statement)
+
+    result = await db_session.execute(
+        text(
+            """
+            SELECT question_type,
+                   rubric_data->'criteria'->0->>'description' AS description
+            FROM t_exam_question
+            WHERE id IN (
+                'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
+                'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2',
+                'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3'
+            )
+            ORDER BY question_type
+            """
+        )
+    )
+    descriptions_by_type = {
+        row.question_type: row.description for row in result
+    }
+
+    assert descriptions_by_type == {
+        "multiple_choice": "정답 선택",
+        "oral": "구술 평가",
+        "subjective": "단답 평가",
+    }
+
+
+@pytest.mark.asyncio
+async def test_structured_answer_migration_rejects_invalid_legacy_rows(
+    db_session,
+):
+    await seed_exam_context(db_session)
+    await db_session.execute(
+        exam_table.insert().values(
+            id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            classroom_id=CLASSROOM_ID,
+            title="기존 시험",
+            description=None,
+            exam_type="midterm",
+            status="ready",
+            duration_minutes=60,
+            starts_at=STARTS_AT,
+            ends_at=ENDS_AT,
+            max_attempts=1,
+            week=1,
+            question_count=3,
+            difficulty="medium",
+            max_follow_ups=2,
+            generation_status="idle",
+        )
+    )
+    await insert_legacy_question(
+        db_session,
+        question_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1"),
+        question_type="multiple_choice",
+        answer_options=["회귀", "분류"],
+        correct_answer_text="없는 정답",
+        rubric_text="정답 선택",
+    )
+
+    migration = load_structured_answer_migration()
+
+    with pytest.raises(Exception, match="invalid legacy exam question rows"):
+        await db_session.execute(
+            migration.build_invalid_legacy_rows_validation_sql()
+        )
+
+
+def test_legacy_multiple_choice_question_requires_structured_options():
+    with pytest.raises(ValueError, match="answer_options_data is required"):
+        ExamQuestion(
+            exam_id=UUID("11111111-1111-1111-1111-111111111111"),
+            question_number=1,
+            max_score=1.0,
+            question_type=ExamQuestionType.MULTIPLE_CHOICE,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="기존 객관식 문항",
+            intent_text="기존 의도",
+            rubric_text="기존 루브릭",
+            answer_options=[],
+            correct_answer_text="회귀",
+            source_material_ids=[],
+        )
 
 
 def test_exam_question_table_serializes_source_material_ids_as_json_strings():
