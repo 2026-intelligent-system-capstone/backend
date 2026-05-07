@@ -56,7 +56,9 @@ class StructuredAnswerOptionsJSON(TypeDecorator):
         if value is None:
             return []
         return [
-            {
+            option
+            if isinstance(option, dict)
+            else {
                 "id": option.id,
                 "label": option.label,
                 "text": option.text,
@@ -88,6 +90,8 @@ class StructuredAnswerKeyJSON(TypeDecorator):
         del dialect
         if value is None:
             return {}
+        if isinstance(value, dict):
+            return value
         return {
             "type": value.type.value,
             "correct_option_ids": list(value.correct_option_ids),
@@ -124,6 +128,8 @@ class StructuredRubricJSON(TypeDecorator):
         del dialect
         if value is None:
             return {}
+        if isinstance(value, dict):
+            return value
         return {
             "criteria": [
                 {

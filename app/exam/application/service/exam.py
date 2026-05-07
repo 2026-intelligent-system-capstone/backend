@@ -397,13 +397,47 @@ class ExamService(ExamUseCase):
             )
             if is_type_change and command.answer_options_data is None:
                 answer_options_data = []
+            if command.answer_options is not None:
+                answer_options_data = [
+                    ExamQuestionAnswerOption(
+                        id=str(index),
+                        label=str(index),
+                        text=option,
+                        is_correct=option == command.correct_answer_text,
+                    )
+                    for index, option in enumerate(
+                        command.answer_options,
+                        start=1,
+                    )
+                ]
             if (
-                is_type_change
-                and command.answer_key_data is None
-                and command.question_type is ExamQuestionType.MULTIPLE_CHOICE
+                command.answer_key_data is None
                 and command.correct_answer_text is not None
+                and (command.question_type or current_question.question_type)
+                is ExamQuestionType.MULTIPLE_CHOICE
             ):
-                answer_key_data = None
+                base_options = answer_options_data or list(
+                    current_question.answer_options_data
+                )
+                answer_options_data = [
+                    ExamQuestionAnswerOption(
+                        id=option.id,
+                        label=option.label,
+                        text=option.text,
+                        is_correct=option.text == command.correct_answer_text,
+                        explanation=option.explanation,
+                    )
+                    for option in base_options
+                ]
+                correct_option = next(
+                    option
+                    for option in answer_options_data
+                    if option.is_correct
+                )
+                answer_key_data = ExamQuestionAnswerKey(
+                    type=ExamQuestionType.MULTIPLE_CHOICE,
+                    correct_option_ids=[correct_option.id],
+                )
             if (
                 command.question_type is ExamQuestionType.SUBJECTIVE
                 and command.question_type is not current_question.question_type
@@ -487,21 +521,26 @@ class ExamService(ExamUseCase):
         if not edited_legacy_answer:
             return
 
-        answer_options = command.answer_options or []
+        answer_options = (
+            command.answer_options
+            if command.answer_options is not None
+            else question.answer_options
+        )
         normalized_options = [
             option.strip() for option in answer_options if option.strip()
         ]
-        correct_answer_text = (command.correct_answer_text or "").strip()
+        correct_answer_text = (
+            command.correct_answer_text
+            if command.correct_answer_text is not None
+            else question.correct_answer_text
+        )
+        normalized_correct_answer = (correct_answer_text or "").strip()
         has_full_legacy_contract = (
             len(normalized_options) >= 2
-            and bool(correct_answer_text)
-            and correct_answer_text in normalized_options
+            and bool(normalized_correct_answer)
+            and normalized_correct_answer in normalized_options
         )
-        has_full_structured_contract = (
-            bool(command.answer_options_data)
-            and command.answer_key_data is not None
-        )
-        if not has_full_legacy_contract and not has_full_structured_contract:
+        if not has_full_legacy_contract:
             raise ValueError(
                 "multiple_choice answer update requires a full answer contract"
             )

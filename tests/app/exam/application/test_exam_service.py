@@ -1185,8 +1185,35 @@ async def test_update_mc_rejects_answer_edit_without_full_contract():
                 role=UserRole.PROFESSOR,
                 user_id=PROFESSOR_ID,
             ),
-            command=UpdateExamQuestionCommand(correct_answer_text="분류"),
+            command=UpdateExamQuestionCommand(correct_answer_text="군집화"),
         )
+
+
+@pytest.mark.asyncio
+async def test_update_mc_allows_correct_answer_only_when_options_match():
+    exam = make_exam()
+    created = exam.add_question(**make_multiple_choice_question_payload())
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    question = await service.update_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        question_id=created.id,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateExamQuestionCommand(correct_answer_text="분류"),
+    )
+
+    assert question.correct_answer_text == "분류"
+    assert question.answer_key_data is not None
+    assert question.answer_key_data.correct_option_ids == ["2"]
+    assert [option.is_correct for option in question.answer_options_data] == [
+        False,
+        True,
+        False,
+    ]
 
 
 @pytest.mark.asyncio

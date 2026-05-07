@@ -394,6 +394,16 @@ def test_exam_question_table_contains_structured_answer_json_columns():
     assert callable(exam_question_table.c.rubric_data.default.arg)
 
 
+def test_structured_answer_json_types_bind_default_values():
+    answer_options_type = exam_question_table.c.answer_options_data.type
+    answer_key_type = exam_question_table.c.answer_key_data.type
+    rubric_type = exam_question_table.c.rubric_data.type
+
+    assert answer_options_type.process_bind_param([], None) == []
+    assert answer_key_type.process_bind_param({}, None) == {}
+    assert rubric_type.process_bind_param({}, None) == {}
+
+
 def test_exam_question_table_contains_non_nullable_max_score_column():
     assert exam_question_table.c.max_score.nullable is False
     assert exam_question_table.c.max_score.default is not None
