@@ -11,6 +11,7 @@ from app.exam.domain.service import (
     EvaluateExamResultRequest,
     ExamResultEvaluationCriterionScore,
     ExamResultEvaluationPort,
+    ExamResultEvaluationQuestion,
 )
 from core.config import config
 
@@ -87,14 +88,7 @@ class LLMExamResultEvaluationAdapter(ExamResultEvaluationPort):
             for criterion in request.criteria
         )
         questions_text = "\n".join(
-            (
-                f"- question_number: {question.question_number}\n"
-                f"  question_type: {question.question_type.value}\n"
-                f"  difficulty: {question.difficulty.value}\n"
-                f"  question_text: {question.question_text}\n"
-                f"  intent_text: {question.intent_text}\n"
-                f"  rubric_text: {question.rubric_text}"
-            )
+            self._build_question_prompt_block(question=question)
             for question in request.questions
         )
         turns_text = "\n".join(
@@ -122,6 +116,72 @@ class LLMExamResultEvaluationAdapter(ExamResultEvaluationPort):
             "위 정보를 바탕으로 criterion별 점수와 피드백, 전체 요약, "
             "강점, 약점, 개선 제안을 생성하세요."
         )
+
+    def _build_question_prompt_block(
+        self,
+        *,
+        question: ExamResultEvaluationQuestion,
+    ) -> str:
+        lines = [
+            f"- question_number: {question.question_number}",
+            f"  question_type: {question.question_type.value}",
+            f"  difficulty: {question.difficulty.value}",
+            f"  question_text: {question.question_text}",
+            f"  intent_text: {question.intent_text}",
+            f"  rubric_text: {question.rubric_text}",
+        ]
+        if question.answer_options_data:
+            lines.append("  answer_options:")
+            for option in question.answer_options_data:
+                lines.extend([
+                    f"    - id: {option.id}",
+                    f"      label: {option.label}",
+                    f"      text: {option.text}",
+                    f"      is_correct: {option.is_correct}",
+                ])
+        if question.answer_key_data is not None:
+            answer_key = question.answer_key_data
+            lines.append(f"  answer_key_type: {answer_key.type.value}")
+            if answer_key.correct_option_ids:
+                lines.append(
+                    "  correct_option_ids: "
+                    f"{', '.join(answer_key.correct_option_ids)}"
+                )
+            if answer_key.model_answer:
+                lines.append(f"  model_answer: {answer_key.model_answer}")
+            if answer_key.acceptable_answers:
+                lines.append(
+                    "  acceptable_answers: "
+                    f"{', '.join(answer_key.acceptable_answers)}"
+                )
+            if answer_key.required_keywords:
+                lines.append(
+                    "  required_keywords: "
+                    f"{', '.join(answer_key.required_keywords)}"
+                )
+            if answer_key.expected_points:
+                lines.append(
+                    "  expected_points: "
+                    f"{', '.join(answer_key.expected_points)}"
+                )
+            if answer_key.follow_up_questions:
+                lines.append(
+                    "  follow_up_questions: "
+                    f"{', '.join(answer_key.follow_up_questions)}"
+                )
+        if question.rubric_data.criteria:
+            lines.append("  rubric_criteria:")
+            for criterion in question.rubric_data.criteria:
+                lines.extend([
+                    f"    - name: {criterion.name}",
+                    f"      description: {criterion.description}",
+                    f"      points: {criterion.points}",
+                ])
+        if question.rubric_data.evidence_policy:
+            lines.append(
+                f"  evidence_policy: {question.rubric_data.evidence_policy}"
+            )
+        return "\n".join(lines)
 
     def _parse_response(
         self,

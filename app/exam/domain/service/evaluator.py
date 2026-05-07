@@ -6,6 +6,9 @@ from uuid import UUID
 
 from app.exam.domain.entity import (
     ExamDifficulty,
+    ExamQuestionAnswerKey,
+    ExamQuestionAnswerOption,
+    ExamQuestionRubric,
     ExamQuestionType,
     ExamTurnEventType,
     ExamTurnRole,
@@ -26,6 +29,7 @@ class ExamResultEvaluationCriterion:
 
 @dataclass(frozen=True)
 class ExamResultEvaluationQuestion:
+    question_id: UUID
     question_number: int
     max_score: float
     question_type: ExamQuestionType
@@ -35,6 +39,11 @@ class ExamResultEvaluationQuestion:
     rubric_text: str
     answer_options: list[str] = field(default_factory=list)
     correct_answer_text: str | None = None
+    answer_options_data: list[ExamQuestionAnswerOption] = field(
+        default_factory=list
+    )
+    answer_key_data: ExamQuestionAnswerKey | None = None
+    rubric_data: ExamQuestionRubric = field(default_factory=ExamQuestionRubric)
 
 
 @dataclass(frozen=True)

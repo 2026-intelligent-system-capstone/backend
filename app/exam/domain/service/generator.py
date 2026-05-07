@@ -10,6 +10,9 @@ from app.exam.domain.entity import (
     BloomLevel,
     ExamDifficulty,
     ExamGenerationStatus,
+    ExamQuestionAnswerKey,
+    ExamQuestionAnswerOption,
+    ExamQuestionRubric,
     ExamQuestionType,
     ExamType,
 )
@@ -126,6 +129,11 @@ class GeneratedExamQuestionDraft:
     rubric_text: str
     answer_options: list[str] = field(default_factory=list)
     correct_answer_text: str | None = None
+    answer_options_data: list[ExamQuestionAnswerOption] = field(
+        default_factory=list
+    )
+    answer_key_data: ExamQuestionAnswerKey | None = None
+    rubric_data: ExamQuestionRubric = field(default_factory=ExamQuestionRubric)
     source_material_ids: list[UUID] = field(default_factory=list)
 
     def __post_init__(self) -> None:
