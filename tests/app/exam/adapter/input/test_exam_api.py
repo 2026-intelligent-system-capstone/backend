@@ -29,6 +29,8 @@ from app.exam.domain.entity import (
     ExamDifficulty,
     ExamGenerationStatus,
     ExamQuestion,
+    ExamQuestionAnswerKey,
+    ExamQuestionAnswerOption,
     ExamQuestionStatus,
     ExamQuestionType,
     ExamQuestionTypeStrategy,
@@ -412,6 +414,7 @@ def test_list_exams_returns_200_for_student(client, monkeypatch):
                 "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
                 "예시를 설명하면 정답"
             ),
+            correct_answer_text="출력 형태와 문제 목적 차이",
             source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         deleted_question = exam.add_question(
@@ -422,6 +425,7 @@ def test_list_exams_returns_200_for_student(client, monkeypatch):
             question_text="삭제된 문항",
             intent_text="1주차 머신러닝 기초 범위의 삭제 테스트 문항",
             rubric_text="삭제 응답에서 제외되어야 하는 문항",
+            correct_answer_text="출력 형태와 문제 목적 차이",
             source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         deleted_question.delete()
@@ -475,7 +479,7 @@ def test_get_exam_returns_200(client, monkeypatch):
                 "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
                 "예시를 설명하면 정답"
             ),
-            correct_answer_text="출력 변수 예측은 회귀, 범주 예측은 분류",
+            correct_answer_text="출력 형태와 문제 목적 차이",
             source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         exam.add_question(
@@ -506,6 +510,7 @@ def test_get_exam_returns_200(client, monkeypatch):
             question_text="모델 성능 저하 원인을 말로 설명하세요.",
             intent_text="성능 저하 원인을 분석적으로 설명하는지 평가",
             rubric_text="과적합, 데이터 편향, 피처 품질 저하를 언급하면 우수",
+            correct_answer_text="출력 형태와 문제 목적 차이",
             source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         deleted_question = exam.add_question(
@@ -516,6 +521,7 @@ def test_get_exam_returns_200(client, monkeypatch):
             question_text="삭제된 문항",
             intent_text="1주차 머신러닝 기초 범위의 삭제 테스트 문항",
             rubric_text="삭제 응답에서 제외되어야 하는 문항",
+            correct_answer_text="출력 형태와 문제 목적 차이",
             source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         deleted_question.delete()
@@ -570,10 +576,7 @@ def test_get_exam_returns_200(client, monkeypatch):
         == "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 예시를 "
         "설명하면 정답"
     )
-    assert (
-        questions[0]["correct_answer_text"]
-        == "출력 변수 예측은 회귀, 범주 예측은 분류"
-    )
+    assert questions[0]["correct_answer_text"] == "출력 형태와 문제 목적 차이"
     assert questions[0]["answer_options"] == []
     assert questions[1]["question_type"] == "multiple_choice"
     assert questions[1]["max_score"] == 3.0
@@ -648,6 +651,7 @@ def test_list_exams_hides_answers_for_student(client, monkeypatch):
                 "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
                 "예시를 설명하면 정답"
             ),
+            correct_answer_text="출력 형태와 문제 목적 차이",
             source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         return [exam]
@@ -682,6 +686,7 @@ def test_get_exam_hides_answers_for_student(client, monkeypatch):
                 "출력 형태와 문제 목적 차이를 포함하고 핵심 개념과 "
                 "예시를 설명하면 정답"
             ),
+            correct_answer_text="출력 형태와 문제 목적 차이",
             source_material_ids=[UUID("99999999-9999-9999-9999-999999999999")],
         )
         return exam
@@ -1808,13 +1813,41 @@ def test_get_student_exam_session_sheet_returns_safe_questions(
 ):
     async def get_session_sheet_stub(*_args, **_kwargs):
         exam = make_exam()
-        exam.questions = [
-            make_question(
-                question_type=ExamQuestionType.MULTIPLE_CHOICE,
-                answer_options=["회귀", "분류"],
-                correct_answer_text="분류",
-            )
-        ]
+        question = ExamQuestion(
+            exam_id=EXAM_ID,
+            question_number=1,
+            max_score=1.0,
+            question_type=ExamQuestionType.MULTIPLE_CHOICE,
+            bloom_level=BloomLevel.APPLY,
+            difficulty=ExamDifficulty.MEDIUM,
+            question_text="회귀와 분류의 차이를 설명하세요.",
+            intent_text="1주차 머신러닝 기초 범위에서 지도학습 구분 능력 평가",
+            rubric_text="정답 선택 근거를 평가합니다.",
+            answer_options=["회귀", "분류"],
+            correct_answer_text="분류",
+            answer_options_data=[
+                ExamQuestionAnswerOption(
+                    id="1",
+                    label="1",
+                    text="회귀",
+                    is_correct=False,
+                ),
+                ExamQuestionAnswerOption(
+                    id="2",
+                    label="2",
+                    text="분류",
+                    is_correct=True,
+                    explanation="정답 근거는 학생 payload에서 숨깁니다.",
+                ),
+            ],
+            answer_key_data=ExamQuestionAnswerKey(
+                type=ExamQuestionType.MULTIPLE_CHOICE,
+                correct_option_ids=["2"],
+            ),
+            source_material_ids=[],
+        )
+        question.id = UUID("88888888-8888-8888-8888-888888888888")
+        exam.questions = [question]
         return exam
 
     student_user = make_user(role=UserRole.STUDENT, user_id=STUDENT_ID)
@@ -1837,7 +1870,12 @@ def test_get_student_exam_session_sheet_returns_safe_questions(
     question = response.json()["data"]["questions"][0]
     assert question["question_text"] == "회귀와 분류의 차이를 설명하세요."
     assert question["answer_options"] == ["회귀", "분류"]
+    assert question["answer_options_data"] == [
+        {"id": "1", "label": "1", "text": "회귀"},
+        {"id": "2", "label": "2", "text": "분류"},
+    ]
     assert "correct_answer_text" not in question
+    assert "answer_key_data" not in question
     assert "rubric_text" not in question
     assert "intent_text" not in question
 

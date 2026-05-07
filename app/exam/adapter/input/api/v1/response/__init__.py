@@ -14,6 +14,43 @@ class ExamCriterionPayload(BaseModel):
     poor_definition: str | None = None
 
 
+class ExamQuestionAnswerOptionPayload(BaseModel):
+    id: str
+    label: str
+    text: str
+    is_correct: bool = False
+    explanation: str | None = None
+
+
+class StudentExamQuestionAnswerOptionPayload(BaseModel):
+    id: str
+    label: str
+    text: str
+
+
+class ExamQuestionAnswerKeyPayload(BaseModel):
+    type: str
+    correct_option_ids: list[str] = Field(default_factory=list)
+    model_answer: str | None = None
+    acceptable_answers: list[str] = Field(default_factory=list)
+    required_keywords: list[str] = Field(default_factory=list)
+    expected_points: list[str] = Field(default_factory=list)
+    follow_up_questions: list[str] = Field(default_factory=list)
+
+
+class ExamQuestionRubricCriterionPayload(BaseModel):
+    name: str
+    description: str
+    points: float
+
+
+class ExamQuestionRubricPayload(BaseModel):
+    criteria: list[ExamQuestionRubricCriterionPayload] = Field(
+        default_factory=list
+    )
+    evidence_policy: str | None = None
+
+
 class ExamQuestionPayload(BaseModel):
     id: str
     exam_id: str
@@ -27,6 +64,13 @@ class ExamQuestionPayload(BaseModel):
     rubric_text: str
     answer_options: list[str] = Field(default_factory=list)
     correct_answer_text: str | None = None
+    answer_options_data: list[ExamQuestionAnswerOptionPayload] = Field(
+        default_factory=list
+    )
+    answer_key_data: ExamQuestionAnswerKeyPayload | None = None
+    rubric_data: ExamQuestionRubricPayload = Field(
+        default_factory=ExamQuestionRubricPayload
+    )
     source_material_ids: list[str]
     status: str
 
@@ -108,6 +152,9 @@ class StudentExamSessionQuestionPayload(BaseModel):
     difficulty: str
     question_text: str
     answer_options: list[str] = Field(default_factory=list)
+    answer_options_data: list[StudentExamQuestionAnswerOptionPayload] = Field(
+        default_factory=list
+    )
     status: str
 
 

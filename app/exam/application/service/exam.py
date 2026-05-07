@@ -36,6 +36,9 @@ from app.exam.domain.entity import (
     Exam,
     ExamGenerationStatus,
     ExamQuestion,
+    ExamQuestionAnswerKey,
+    ExamQuestionAnswerOption,
+    ExamQuestionRubric,
     ExamQuestionStatus,
     ExamQuestionType,
     ExamQuestionTypeStrategy,
@@ -374,66 +377,52 @@ class ExamService(ExamUseCase):
             raise AuthForbiddenException()
         try:
             current_question = exam.find_question(question_id)
-            effective_question_type = (
-                command.question_type or current_question.question_type
+            self._validate_exam_question_answer_update(
+                question=current_question,
+                command=command,
             )
-            effective_answer_options = (
-                command.answer_options
-                if "answer_options" in command.model_fields_set
-                else current_question.answer_options
+            answer_options_data = (
+                [
+                    self._to_answer_option(option)
+                    for option in command.answer_options_data
+                ]
+                if command.answer_options_data is not None
+                else None
             )
-            effective_correct_answer_text = (
-                command.correct_answer_text
-                if "correct_answer_text" in command.model_fields_set
-                else current_question.correct_answer_text
+            answer_key_data = self._to_answer_key(command.answer_key_data)
+            rubric_data = self._to_rubric(command.rubric_data)
+            is_type_change = (
+                command.question_type is not None
+                and command.question_type is not current_question.question_type
             )
-            effective_rubric_text = (
-                command.rubric_text
-                if "rubric_text" in command.model_fields_set
-                else current_question.rubric_text
-            )
-            should_validate_oral = (
-                effective_question_type is ExamQuestionType.ORAL
-                and (
-                    command.question_type is ExamQuestionType.ORAL
-                    or "rubric_text" in command.model_fields_set
-                )
-            )
+            if is_type_change and command.answer_options_data is None:
+                answer_options_data = []
             if (
-                should_validate_oral
-                and not (effective_rubric_text or "").strip()
+                is_type_change
+                and command.answer_key_data is None
+                and command.question_type is ExamQuestionType.MULTIPLE_CHOICE
+                and command.correct_answer_text is not None
             ):
-                raise ExamQuestionInvalidPayloadException()
-            should_validate_subjective = (
-                effective_question_type is ExamQuestionType.SUBJECTIVE
-                and (
-                    command.question_type is ExamQuestionType.SUBJECTIVE
-                    or "correct_answer_text" in command.model_fields_set
-                )
-            )
+                answer_key_data = None
             if (
-                should_validate_subjective
-                and not (effective_correct_answer_text or "").strip()
+                command.question_type is ExamQuestionType.SUBJECTIVE
+                and command.question_type is not current_question.question_type
+                and command.answer_key_data is None
+                and command.correct_answer_text is not None
             ):
-                raise ExamQuestionInvalidPayloadException()
-            should_validate_multiple_choice = (
-                effective_question_type is ExamQuestionType.MULTIPLE_CHOICE
-                and (
-                    command.question_type is ExamQuestionType.MULTIPLE_CHOICE
-                    or "answer_options" in command.model_fields_set
-                    or "correct_answer_text" in command.model_fields_set
+                answer_key_data = ExamQuestionAnswerKey(
+                    type=ExamQuestionType.SUBJECTIVE,
+                    model_answer=command.correct_answer_text,
                 )
-            )
-            if should_validate_multiple_choice:
-                if not effective_answer_options:
-                    raise ExamQuestionInvalidPayloadException()
-                if effective_correct_answer_text is None:
-                    raise ExamQuestionInvalidPayloadException()
-                if (
-                    effective_correct_answer_text
-                    not in effective_answer_options
-                ):
-                    raise ExamQuestionInvalidPayloadException()
+            if (
+                command.question_type is ExamQuestionType.ORAL
+                and command.question_type is not current_question.question_type
+                and command.answer_key_data is None
+                and rubric_data is not None
+            ):
+                answer_key_data = ExamQuestionAnswerKey(
+                    type=ExamQuestionType.ORAL,
+                )
             question = exam.update_question(
                 question_id=question_id,
                 question_number=command.question_number,
@@ -446,6 +435,9 @@ class ExamService(ExamUseCase):
                 rubric_text=command.rubric_text,
                 answer_options=command.answer_options,
                 correct_answer_text=command.correct_answer_text,
+                answer_options_data=answer_options_data,
+                answer_key_data=answer_key_data,
+                rubric_data=rubric_data,
                 source_material_ids=command.source_material_ids,
             )
         except ExamQuestionNotFoundDomainException as exc:
@@ -454,6 +446,65 @@ class ExamService(ExamUseCase):
             raise ExamQuestionInvalidPayloadException() from exc
         await self.repository.save(exam)
         return question
+
+    @staticmethod
+    def _to_answer_option(
+        option,
+    ) -> ExamQuestionAnswerOption:
+        if isinstance(option, ExamQuestionAnswerOption):
+            return option
+        return option.to_domain()
+
+    @staticmethod
+    def _to_answer_key(answer_key) -> ExamQuestionAnswerKey | None:
+        if answer_key is None:
+            return None
+        if isinstance(answer_key, ExamQuestionAnswerKey):
+            return answer_key
+        return answer_key.to_domain()
+
+    @staticmethod
+    def _to_rubric(rubric) -> ExamQuestionRubric | None:
+        if rubric is None:
+            return None
+        if isinstance(rubric, ExamQuestionRubric):
+            return rubric
+        return rubric.to_domain()
+
+    def _validate_exam_question_answer_update(
+        self,
+        *,
+        question: ExamQuestion,
+        command: UpdateExamQuestionCommand,
+    ) -> None:
+        next_type = command.question_type or question.question_type
+        if next_type is not ExamQuestionType.MULTIPLE_CHOICE:
+            return
+
+        edited_legacy_answer = bool(
+            {"answer_options", "correct_answer_text"} & command.model_fields_set
+        )
+        if not edited_legacy_answer:
+            return
+
+        answer_options = command.answer_options or []
+        normalized_options = [
+            option.strip() for option in answer_options if option.strip()
+        ]
+        correct_answer_text = (command.correct_answer_text or "").strip()
+        has_full_legacy_contract = (
+            len(normalized_options) >= 2
+            and bool(correct_answer_text)
+            and correct_answer_text in normalized_options
+        )
+        has_full_structured_contract = (
+            bool(command.answer_options_data)
+            and command.answer_key_data is not None
+        )
+        if not has_full_legacy_contract and not has_full_structured_contract:
+            raise ValueError(
+                "multiple_choice answer update requires a full answer contract"
+            )
 
     @transactional
     async def generate_exam_questions(

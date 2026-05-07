@@ -201,6 +201,41 @@ def test_create_classroom_returns_200_for_professor(client, monkeypatch):
     assert response.json()["data"]["allow_student_material_access"] is True
 
 
+def test_create_classroom_accepts_null_description(client, monkeypatch):
+    async def create_stub_classroom(*_args, **kwargs):
+        assert kwargs["command"].description is None
+        classroom = make_classroom(professor_ids=[PROFESSOR_ID])
+        classroom.description = None
+        return classroom
+
+    professor_user = make_user(role=UserRole.PROFESSOR, user_id=PROFESSOR_ID)
+
+    async def get_by_id_stub(*_args, **_kwargs):
+        return professor_user
+
+    monkeypatch.setattr(
+        ClassroomService, "create_classroom", create_stub_classroom
+    )
+    monkeypatch.setattr(UserSQLAlchemyRepository, "get_by_id", get_by_id_stub)
+    set_access_token_cookie(client, professor_user)
+
+    response = client.post(
+        "/api/classrooms",
+        json={
+            "name": "AI 기초",
+            "professor_ids": [str(PROFESSOR_ID)],
+            "grade": 3,
+            "semester": "1학기",
+            "section": "01",
+            "description": None,
+            "student_ids": [str(STUDENT_ID)],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["description"] is None
+
+
 def test_create_classroom_returns_403_for_student(client, monkeypatch):
     student_user = make_user(role=UserRole.STUDENT)
 

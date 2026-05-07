@@ -7,6 +7,8 @@ from core.common.request.base import BaseRequest
 
 
 class CreateClassroomRequest(BaseRequest):
+    null_fields = {"description"}
+
     name: str = Field(..., min_length=2, max_length=100)
     professor_ids: list[UUID] = Field(..., min_length=1)
     grade: int = Field(..., ge=1, le=6)

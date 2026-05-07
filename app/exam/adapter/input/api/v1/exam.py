@@ -17,10 +17,14 @@ from app.exam.adapter.input.api.v1.response import (
     ExamCriterionPayload,
     ExamListResponse,
     ExamPayload,
+    ExamQuestionAnswerKeyPayload,
+    ExamQuestionAnswerOptionPayload,
     ExamQuestionGenerationSubmitPayload,
     ExamQuestionGenerationSubmitResponse,
     ExamQuestionPayload,
     ExamQuestionResponse,
+    ExamQuestionRubricCriterionPayload,
+    ExamQuestionRubricPayload,
     ExamResponse,
     ExamResultCriterionPayload,
     ExamResultListResponse,
@@ -32,6 +36,7 @@ from app.exam.adapter.input.api.v1.response import (
     ExamTurnResponse,
     StudentExamListResponse,
     StudentExamPayload,
+    StudentExamQuestionAnswerOptionPayload,
     StudentExamResponse,
     StudentExamSessionQuestionPayload,
     StudentExamSessionSheetPayload,
@@ -41,6 +46,10 @@ from app.exam.container import ExamContainer
 from app.exam.domain.command import (
     CompleteExamSessionCommand,
     CreateExamCommand,
+    ExamQuestionAnswerKeyCommand,
+    ExamQuestionAnswerOptionCommand,
+    ExamQuestionRubricCommand,
+    ExamQuestionRubricCriterionCommand,
     FinalizeExamResultCommand,
     GenerateExamFollowUpCommand,
     GenerateExamQuestionsCommand,
@@ -65,6 +74,56 @@ def _should_expose_question_answer(current_user: CurrentUser) -> bool:
     return current_user.role in {UserRole.PROFESSOR, UserRole.ADMIN}
 
 
+def _build_answer_option_payload(option) -> ExamQuestionAnswerOptionPayload:
+    return ExamQuestionAnswerOptionPayload(
+        id=option.id,
+        label=option.label,
+        text=option.text,
+        is_correct=option.is_correct,
+        explanation=option.explanation,
+    )
+
+
+def _build_student_answer_option_payload(
+    option,
+) -> StudentExamQuestionAnswerOptionPayload:
+    return StudentExamQuestionAnswerOptionPayload(
+        id=option.id,
+        label=option.label,
+        text=option.text,
+    )
+
+
+def _build_answer_key_payload(
+    answer_key,
+) -> ExamQuestionAnswerKeyPayload | None:
+    if answer_key is None:
+        return None
+    return ExamQuestionAnswerKeyPayload(
+        type=answer_key.type.value,
+        correct_option_ids=list(answer_key.correct_option_ids),
+        model_answer=answer_key.model_answer,
+        acceptable_answers=list(answer_key.acceptable_answers),
+        required_keywords=list(answer_key.required_keywords),
+        expected_points=list(answer_key.expected_points),
+        follow_up_questions=list(answer_key.follow_up_questions),
+    )
+
+
+def _build_rubric_payload(rubric) -> ExamQuestionRubricPayload:
+    return ExamQuestionRubricPayload(
+        criteria=[
+            ExamQuestionRubricCriterionPayload(
+                name=criterion.name,
+                description=criterion.description,
+                points=criterion.points,
+            )
+            for criterion in rubric.criteria
+        ],
+        evidence_policy=rubric.evidence_policy,
+    )
+
+
 def _build_exam_question_payload(
     question,
     *,
@@ -85,6 +144,24 @@ def _build_exam_question_payload(
         answer_options=(list(question.answer_options) if expose_answer else []),
         correct_answer_text=(
             question.correct_answer_text if expose_answer else None
+        ),
+        answer_options_data=(
+            [
+                _build_answer_option_payload(option)
+                for option in question.answer_options_data
+            ]
+            if expose_answer
+            else []
+        ),
+        answer_key_data=(
+            _build_answer_key_payload(question.answer_key_data)
+            if expose_answer
+            else None
+        ),
+        rubric_data=(
+            _build_rubric_payload(question.rubric_data)
+            if expose_rubric
+            else ExamQuestionRubricPayload()
         ),
         source_material_ids=[
             str(source_material_id)
@@ -154,6 +231,30 @@ def _build_exam_payload(
             if question.status is not ExamQuestionStatus.DELETED
         ],
     )
+
+
+def _build_update_exam_question_command(
+    request: UpdateExamQuestionRequest,
+) -> UpdateExamQuestionCommand:
+    payload = request.model_dump(exclude_unset=True)
+    if request.answer_options_data is not None:
+        payload["answer_options_data"] = [
+            ExamQuestionAnswerOptionCommand(**option.model_dump())
+            for option in request.answer_options_data
+        ]
+    if request.answer_key_data is not None:
+        payload["answer_key_data"] = ExamQuestionAnswerKeyCommand(
+            **request.answer_key_data.model_dump()
+        )
+    if request.rubric_data is not None:
+        payload["rubric_data"] = ExamQuestionRubricCommand(
+            criteria=[
+                ExamQuestionRubricCriterionCommand(**criterion.model_dump())
+                for criterion in request.rubric_data.criteria
+            ],
+            evidence_policy=request.rubric_data.evidence_policy,
+        )
+    return UpdateExamQuestionCommand(**payload)
 
 
 def _build_exam_question_generation_submit_payload(
@@ -246,6 +347,10 @@ def _build_student_exam_session_sheet_payload(
                 difficulty=question.difficulty.value,
                 question_text=question.question_text,
                 answer_options=list(question.answer_options),
+                answer_options_data=[
+                    _build_student_answer_option_payload(option)
+                    for option in question.answer_options_data
+                ],
                 status=question.status.value,
             )
             for question in exam.questions
@@ -391,9 +496,7 @@ async def update_exam_question(
         exam_id=exam_id,
         question_id=question_id,
         current_user=current_user,
-        command=UpdateExamQuestionCommand(
-            **request.model_dump(exclude_unset=True)
-        ),
+        command=_build_update_exam_question_command(request),
     )
     return ExamQuestionResponse(
         data=_build_exam_question_payload(

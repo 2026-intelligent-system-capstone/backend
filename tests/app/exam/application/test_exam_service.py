@@ -42,6 +42,10 @@ from app.exam.domain.entity import (
     ExamCriterion,
     ExamDifficulty,
     ExamGenerationStatus,
+    ExamQuestionAnswerKey,
+    ExamQuestionAnswerOption,
+    ExamQuestionRubric,
+    ExamQuestionRubricCriterion,
     ExamQuestionStatus,
     ExamQuestionType,
     ExamQuestionTypeStrategy,
@@ -457,6 +461,12 @@ def make_question_payload() -> dict[str, object]:
             "함께 설명하면 정답"
         ),
         "correct_answer_text": "회귀와 분류",
+        "answer_key_data": ExamQuestionAnswerKey(
+            type=ExamQuestionType.SUBJECTIVE,
+            model_answer="회귀는 연속값, 분류는 범주를 예측한다.",
+            acceptable_answers=["연속값과 범주 예측 차이"],
+            required_keywords=["연속값", "범주"],
+        ),
         "source_material_ids": [UUID("99999999-9999-9999-9999-999999999999")],
     }
 
@@ -473,6 +483,31 @@ def make_multiple_choice_question_payload() -> dict[str, object]:
         "rubric_text": "정확한 개념 선택 여부를 평가합니다.",
         "answer_options": ["회귀", "분류", "강화학습"],
         "correct_answer_text": "회귀",
+        "answer_options_data": [
+            ExamQuestionAnswerOption(
+                id="1",
+                label="1",
+                text="회귀",
+                is_correct=True,
+                explanation="연속값 예측은 회귀입니다.",
+            ),
+            ExamQuestionAnswerOption(
+                id="2",
+                label="2",
+                text="분류",
+                is_correct=False,
+            ),
+            ExamQuestionAnswerOption(
+                id="3",
+                label="3",
+                text="강화학습",
+                is_correct=False,
+            ),
+        ],
+        "answer_key_data": ExamQuestionAnswerKey(
+            type=ExamQuestionType.MULTIPLE_CHOICE,
+            correct_option_ids=["1"],
+        ),
         "source_material_ids": [],
     }
 
@@ -1109,21 +1144,9 @@ async def test_update_exam_question_rejects_mc_without_required_answer_fields():
 
 
 @pytest.mark.asyncio
-async def test_update_legacy_multiple_choice_question_allows_text_only_edit():
+async def test_update_multiple_choice_question_allows_text_only_edit():
     exam = make_exam()
-    created = exam.add_question(
-        question_number=1,
-        max_score=1.0,
-        question_type=ExamQuestionType.MULTIPLE_CHOICE,
-        bloom_level=BloomLevel.APPLY,
-        difficulty=ExamDifficulty.MEDIUM,
-        question_text="기존 객관식 문항",
-        intent_text="기존 의도",
-        rubric_text="기존 루브릭",
-        answer_options=[],
-        correct_answer_text="회귀",
-        source_material_ids=[],
-    )
+    created = exam.add_question(**make_multiple_choice_question_payload())
     service, _, _, _, _, _ = build_service(exams=[exam])
 
     question = await service.update_exam_question(
@@ -1134,33 +1157,23 @@ async def test_update_legacy_multiple_choice_question_allows_text_only_edit():
             role=UserRole.PROFESSOR,
             user_id=PROFESSOR_ID,
         ),
-        command=UpdateExamQuestionCommand(
-            question_text="수정된 기존 객관식 문항"
-        ),
+        command=UpdateExamQuestionCommand(question_text="수정된 객관식 문항"),
     )
 
-    assert question.question_text == "수정된 기존 객관식 문항"
+    assert question.question_text == "수정된 객관식 문항"
     assert question.question_type is ExamQuestionType.MULTIPLE_CHOICE
-    assert question.answer_options == []
-    assert question.correct_answer_text == "회귀"
+    assert [option.id for option in question.answer_options_data] == [
+        "1",
+        "2",
+        "3",
+    ]
+    assert question.answer_key_data.correct_option_ids == ["1"]
 
 
 @pytest.mark.asyncio
-async def test_update_legacy_mc_rejects_answer_edit_without_full_contract():
+async def test_update_mc_rejects_answer_edit_without_full_contract():
     exam = make_exam()
-    created = exam.add_question(
-        question_number=1,
-        max_score=1.0,
-        question_type=ExamQuestionType.MULTIPLE_CHOICE,
-        bloom_level=BloomLevel.APPLY,
-        difficulty=ExamDifficulty.MEDIUM,
-        question_text="기존 객관식 문항",
-        intent_text="기존 의도",
-        rubric_text="기존 루브릭",
-        answer_options=[],
-        correct_answer_text="회귀",
-        source_material_ids=[],
-    )
+    created = exam.add_question(**make_multiple_choice_question_payload())
     service, _, _, _, _, _ = build_service(exams=[exam])
 
     with pytest.raises(ExamQuestionInvalidPayloadException):
@@ -1174,6 +1187,33 @@ async def test_update_legacy_mc_rejects_answer_edit_without_full_contract():
             ),
             command=UpdateExamQuestionCommand(correct_answer_text="분류"),
         )
+
+
+@pytest.mark.asyncio
+async def test_update_subjective_to_legacy_multiple_choice_resets_answer_key():
+    exam = make_exam()
+    created = exam.add_question(**make_question_payload())
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    question = await service.update_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        question_id=created.id,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateExamQuestionCommand(
+            question_type=ExamQuestionType.MULTIPLE_CHOICE,
+            question_text="지도학습 예시를 고르세요.",
+            answer_options=["회귀", "군집화"],
+            correct_answer_text="회귀",
+        ),
+    )
+
+    assert question.question_type is ExamQuestionType.MULTIPLE_CHOICE
+    assert [option.id for option in question.answer_options_data] == ["1", "2"]
+    assert question.answer_key_data.correct_option_ids == ["1"]
 
 
 @pytest.mark.asyncio
@@ -1203,6 +1243,165 @@ async def test_update_mc_question_to_subjective_keeps_exact_answer():
         question.correct_answer_text
         == "입력과 출력의 관계를 예측하는 지도학습 방식"
     )
+
+
+@pytest.mark.asyncio
+async def test_update_exam_question_accepts_structured_mc_payload():
+    exam = make_exam()
+    created = exam.add_question(**make_multiple_choice_question_payload())
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    question = await service.update_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        question_id=created.id,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateExamQuestionCommand(
+            answer_options_data=[
+                ExamQuestionAnswerOption(
+                    id="1",
+                    label="1",
+                    text="선형 회귀",
+                    is_correct=False,
+                ),
+                ExamQuestionAnswerOption(
+                    id="2",
+                    label="2",
+                    text="로지스틱 회귀",
+                    is_correct=True,
+                    explanation="분류 문제에 사용할 수 있습니다.",
+                ),
+            ],
+            answer_key_data=ExamQuestionAnswerKey(
+                type=ExamQuestionType.MULTIPLE_CHOICE,
+                correct_option_ids=["2"],
+            ),
+        ),
+    )
+
+    assert [option.id for option in question.answer_options_data] == ["1", "2"]
+    assert question.answer_options_data[1].is_correct is True
+    assert question.answer_key_data is not None
+    assert question.answer_key_data.correct_option_ids == ["2"]
+    assert question.status is ExamQuestionStatus.REVIEWED
+
+
+@pytest.mark.asyncio
+async def test_update_exam_question_accepts_structured_subjective_payload():
+    exam = make_exam()
+    created = exam.add_question(**make_question_payload())
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    question = await service.update_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        question_id=created.id,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateExamQuestionCommand(
+            answer_key_data=ExamQuestionAnswerKey(
+                type=ExamQuestionType.SUBJECTIVE,
+                model_answer="회귀는 연속값을 예측하고 분류는 범주를 예측한다.",
+                acceptable_answers=["연속값 예측과 범주 예측의 차이"],
+                required_keywords=["연속값", "범주"],
+            )
+        ),
+    )
+
+    assert question.answer_key_data is not None
+    assert question.answer_key_data.model_answer == (
+        "회귀는 연속값을 예측하고 분류는 범주를 예측한다."
+    )
+    assert question.answer_key_data.acceptable_answers == [
+        "연속값 예측과 범주 예측의 차이"
+    ]
+    assert question.answer_key_data.required_keywords == ["연속값", "범주"]
+
+
+@pytest.mark.asyncio
+async def test_update_exam_question_accepts_structured_oral_payload():
+    exam = make_exam()
+    created = exam.add_question(**make_question_payload())
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    question = await service.update_exam_question(
+        classroom_id=CLASSROOM_ID,
+        exam_id=EXAM_ID,
+        question_id=created.id,
+        current_user=make_current_user(
+            role=UserRole.PROFESSOR,
+            user_id=PROFESSOR_ID,
+        ),
+        command=UpdateExamQuestionCommand(
+            question_type=ExamQuestionType.ORAL,
+            answer_key_data=ExamQuestionAnswerKey(
+                type=ExamQuestionType.ORAL,
+                expected_points=["지도학습 문제 유형을 구분한다."],
+                follow_up_questions=["각 방식의 실제 예시는 무엇인가요?"],
+            ),
+            rubric_data=ExamQuestionRubric(
+                criteria=[
+                    ExamQuestionRubricCriterion(
+                        name="개념 정확성",
+                        description="회귀와 분류의 차이를 정확히 설명한다.",
+                        points=1.0,
+                    )
+                ],
+                evidence_policy="근거와 예시를 함께 확인합니다.",
+            ),
+        ),
+    )
+
+    assert question.question_type is ExamQuestionType.ORAL
+    assert question.correct_answer_text is None
+    assert question.answer_key_data is not None
+    assert question.answer_key_data.expected_points == [
+        "지도학습 문제 유형을 구분한다."
+    ]
+    assert question.answer_key_data.follow_up_questions == [
+        "각 방식의 실제 예시는 무엇인가요?"
+    ]
+    assert question.rubric_data.criteria[0].name == "개념 정확성"
+    assert (
+        question.rubric_data.evidence_policy == "근거와 예시를 함께 확인합니다."
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_exam_question_maps_structured_value_error_to_service_exception():  # noqa: E501
+    exam = make_exam()
+    created = exam.add_question(**make_multiple_choice_question_payload())
+    service, _, _, _, _, _ = build_service(exams=[exam])
+
+    with pytest.raises(ExamQuestionInvalidPayloadException):
+        await service.update_exam_question(
+            classroom_id=CLASSROOM_ID,
+            exam_id=EXAM_ID,
+            question_id=created.id,
+            current_user=make_current_user(
+                role=UserRole.PROFESSOR,
+                user_id=PROFESSOR_ID,
+            ),
+            command=UpdateExamQuestionCommand(
+                answer_options_data=[
+                    ExamQuestionAnswerOption(
+                        id="1",
+                        label="1",
+                        text="회귀",
+                        is_correct=True,
+                    )
+                ],
+                answer_key_data=ExamQuestionAnswerKey(
+                    type=ExamQuestionType.MULTIPLE_CHOICE,
+                    correct_option_ids=["missing-option"],
+                ),
+            ),
+        )
 
 
 @pytest.mark.asyncio
